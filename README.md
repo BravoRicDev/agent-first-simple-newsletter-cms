@@ -22,6 +22,60 @@ Multi-tenant CMS for managing multiple websites from a single admin panel, desig
 - **Tracking & Analytics** (`/admin/settings/tracking`): Google Analytics 4, Google Tag Manager, Meta Pixel + server-side Conversions API, Microsoft Clarity, Search Console verification — with an auto-generated GDPR consent banner (Google Consent Mode v2) as soon as anything is configured.
 - **AI-generated content disclosure** (AI Act Article 50, optional): configurable footer notice for sites publishing AI content without human editorial review on matters of public interest.
 
+## CRM, pipeline and call management
+
+Beyond site management, the CMS ships a **full CRM** that can be enabled per site via optional modules (`site_modules`, toggle in `admin/sites/:id/edit`). There are two modules: **Sales pipeline** (`sales_pipeline`) and **Calls** (`call_scheduling`). All CRM data (contacts, opportunities, quotes, calls) is always tied to a site (`site_id`) and governed by granular RBAC permissions.
+
+### Contacts (CRM-lite)
+
+- **Origin**: contacts are derived automatically from public form submissions (tags, status, notes), with cross-form search.
+- **Contact record** (`/admin/contacts/:email`): status, tags, notes, activity history, columns linked to the pipeline/calls module when enabled.
+- **Operations**: add/remove notes, edit fields, export, delete.
+
+### Sales pipeline (module `sales_pipeline`)
+
+- **Purpose**: track the commercial progress of contacts across fixed stages.
+- **Fixed stages** (vocabulary in `src/constants/pipeline.js`): `lead` → `contattato` → `chiamata_fissata` → `proposta_inviata` → `vinto` / `perso`. A contact whose status is not one of these keys (empty, or pre-existing free text) appears in the "To assign" column.
+- **Kanban board** view (`/admin/pipeline`) to move contacts between stages, with the associated estimated deal value.
+- **Stage change with validation**: unknown stages are rejected.
+
+### Opportunities and quotes
+
+- **Opportunities/deals** (`/admin/opportunities`, board `/admin/opportunities/board`, drag & drop kanban): each opportunity is tied to a contact and to a pipeline with **customizable stages** (`pipelines`, `db/043`); it carries a title, amount, probability (0-100), status (`open`/`won`/`lost`), expected close date and notes.
+- **Notes & history** on each opportunity (dedicated API endpoints), stage movement via API (for drag & drop and automations).
+- **Quotes** (`/admin/quotes`): documents linked to an opportunity and a contact, with line items (`items` JSONB: description, quantity, price), a progressive number, and a status that progresses `draft` → `sent` → `viewed` → `signed`.
+- **Public token**: each quote has a unique token for the customer-facing link (`pref_token` pattern), so the customer can view/sign it without credentials.
+
+### Call management (module `call_scheduling`)
+
+- **Call log**: schedule and record calls from the contact record, with outcome.
+- **Calendars** (`/admin/calls/calendars`): create, edit, delete availability calendars for calls.
+- **Weekly availability** (`/admin/calls/availability`): recurring weekly slots.
+- **Public self-booking** (`/book/:siteId/:calendarSlug`): the contact can book a slot autonomously; booking cancellation via token.
+- **Protection**: rate limiting on public booking endpoints.
+
+### Call recordings
+
+- **Upload** (`/admin/call-recordings`): upload audio files, search and manage.
+- **Processing** (`process`): automatic extraction of information from the recording (via LLM).
+- **Review** single or bulk (`review`, `bulk-review`): review and validate the extracted transcriptions.
+- **Settler** (`/admin/call-recordings/settler`): weekly settler commission report, with history for the last weeks.
+- **Protection**: rate limiting on processing.
+
+### Other CRM tools (`/admin/crm`)
+
+- **CRM dashboard** with activity summary.
+- **Segments** (`segments`): define sets of contacts.
+- **Workflows** (`workflows`): automations/rules.
+- **Tasks** (`tasks`): to-do management with status.
+- **Funnel** (`funnel`): conversion flow analysis view.
+- **Conversations** (`conversations`): thread management with messages and status.
+
+### Newsletter and social
+
+- **Newsletter** (`/admin/newsletter`): subscriber management (with export), campaigns, email templates, SMTP settings with **connection test**.
+- **Social poster** (`/admin/social`): **currently a stub** (only checks the token is present, does not actually publish).
+
 ## Stack
 
 Node.js (Express, ESM) + EJS + PostgreSQL, containerized with Docker. Authentication via magic link + email OTP (no passwords).

@@ -22,6 +22,60 @@ CMS multi-tenant per la gestione di più siti web da un unico pannello di ammini
 - **Tracking & Analytics** (`/admin/settings/tracking`): Google Analytics 4, Google Tag Manager, Meta Pixel + Conversions API (lato server), Microsoft Clarity, verifica Search Console — con banner di consenso GDPR (Google Consent Mode v2) generato automaticamente appena configurato qualcosa.
 - **Trasparenza contenuti IA** (AI Act art. 50, opzionale): dicitura configurabile in footer per chi pubblica contenuti IA senza revisione editoriale umana su temi di interesse pubblico.
 
+## CRM, pipeline e gestione delle chiamate
+
+Oltre alla gestione dei siti, il CMS include un **CRM completo** attivabile per sito tramite moduli opzionali (`site_modules`, toggle in `admin/sites/:id/edit`). Ci sono due moduli: **Pipeline vendite** (`sales_pipeline`) e **Chiamate** (`call_scheduling`). I dati CRM (contatti, opportunità, preventivi, chiamate) sono sempre legati a un sito (`site_id`) e gestiti con permessi RBAC granulari.
+
+### Contatti (CRM-lite)
+
+- **Origine**: i contatti vengono dedotti automaticamente dagli invii dei form pubblici (tag, stato, note) ed è possibile la ricerca cross-form.
+- **Scheda contatto** (`/admin/contacts/:email`): stato, tag, note, storico attività, colonne collegate al modulo pipeline/chiamate quando attivi.
+- **Operazioni**: aggiunta/rimozione note, modifica campi, export, eliminazione.
+
+### Pipeline vendite (modulo `sales_pipeline`)
+
+- **Scopo**: tenere traccia dell'avanzamento commerciale dei contatti su stadi fissi.
+- **Stadi fissi** (vocabolario definito in `src/constants/pipeline.js`): `lead` → `contattato` → `chiamata_fissata` → `proposta_inviata` → `vinto` / `perso`. Un contatto con uno status non incluso in queste chiavi (vuoto o testo libero pre-esistente) compare nella colonna "Da assegnare".
+- **Vista kanban** board (`/admin/pipeline`) per spostare i contatti tra gli stadi; valore stimato dell'affare associato.
+- **Modifica stadio** con validazione: gli stadi sconosciuti vengono rifiutati.
+
+### Opportunità e preventivi
+
+- **Opportunità/affari** (`/admin/opportunities`, board `/admin/opportunities/board`, kanban con spostamento drag & drop): ogni opportunità è legata a un contatto e a una pipeline con **stadi personalizzabili** (`pipelines`, `db/043`); porta titolo, importo (`amount`), probabilità (`probability` 0-100), stato (`open`/`won`/`lost`), data di chiusura attesa e note.
+- **Note & storico** su ogni opportunità (endpoint API dedicati), movimento tra stadi via API (per drag & drop e automazioni).
+- **Preventivi** (`/admin/quotes`): documenti legati a un'opportunità e a un contatto, con righe (`items` JSONB: descrizione, quantità, prezzo), numero progressivo e stato che progredisce `draft` → `sent` → `viewed` → `signed`.
+- **Token pubblico**: ogni preventivo ha un token univoco per il link al cliente (pattern `pref_token`), così il cliente può vederlo/firmarlo senza credenziali.
+
+### Gestione chiamate (modulo `call_scheduling`)
+
+- **Log chiamate**: programmazione e registrazione delle chiamate dalla scheda contatto, con esito (`outcome`).
+- **Calendari** (`/admin/calls/calendars`): creazione, modifica, eliminazione di calendari di disponibilità per la chiamata.
+- **Disponibilità settimanale** (`/admin/calls/availability`): slot ricorrenti settimanali.
+- **Autoprenotazione pubblica** (`/book/:siteId/:calendarSlug`): il contatto può prenotarsi uno slot in autonomia; cancellazione della prenotazione via token.
+- **Protezione**: rate limiting sugli endpoint pubblici di prenotazione.
+
+### Registrazioni chiamate (call recordings)
+
+- **Caricamento** (`/admin/call-recordings`): upload di file audio, ricerca e gestione.
+- **Processamento** (`process`): estrazione automatica delle informazioni dalla registrazione (via LLM).
+- **Review** singola o bulk (`review`, `bulk-review`): revisione e validazione delle trascrizioni estratte.
+- **Settler** (`/admin/call-recordings/settler`): report settimanale delle provvigioni setter, con storico delle ultime settimane.
+- **Protezione**: rate limiting sul processamento.
+
+### Altri strumenti CRM (`/admin/crm`)
+
+- **Dashboard** CRM con riepilogo attività.
+- **Segmenti** (`segments`): definizione di insiemi di contatti.
+- **Workflow** (`workflows`): automazioni/regole.
+- **Attività/task** (`tasks`): gestione to-do con stato.
+- **Funnel** (`funnel`): vista di analisi del flusso di conversione.
+- **Conversazioni** (`conversations`): gestione thread con messaggi e stato.
+
+### Newsletter e social
+
+- **Newsletter** (`/admin/newsletter`): gestione iscritti (con export), campagne, template email, impostazioni SMTP con **test di connessione**.
+- **Social poster** (`/admin/social`): **attualmente uno stub** (verifica la presenza del token, non pubblica realmente).
+
 ## Stack
 
 Node.js (Express, ESM) + EJS + PostgreSQL, containerizzato con Docker. Autenticazione via magic link + OTP email (nessuna password).
