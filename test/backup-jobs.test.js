@@ -1,5 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
+import path from "path";
 import express from "express";
 import { Router } from "express";
 import { query } from "../src/db.js";
@@ -8,6 +9,7 @@ import { createApiToken } from "../src/services/api-tokens.js";
 import { requireAuth } from "../src/middleware/auth.js";
 import { requireAgent } from "../src/routes/agent-helpers.js";
 import { registerBackupJobsRoutes } from "../src/routes/agent-backup-jobs.js";
+import { BACKUP_DIR } from "../src/services/backup-jobs.js";
 
 // Feature 43 — Backup automatici con storico.
 // Il job viene registrato in backup_jobs SEMPRE (anche failed: se pg_dump
@@ -128,7 +130,7 @@ describe("crm: backup automatici con storico", () => {
     assert.ok(job_id, "job creato per la delete");
     if (job.file_path.startsWith("backups/")) {
       const fs = await import("fs");
-      assert.ok(fs.existsSync(`/app/backups/${job.file_path.slice("backups/".length)}`), "file fisico presente prima della delete");
+      assert.ok(fs.existsSync(path.join(BACKUP_DIR, job.file_path.slice("backups/".length))), "file fisico presente prima della delete");
     }
 
     const del = await fetch(jobsUrl(`/${job_id}`), { method: "DELETE", headers: auth() });
@@ -143,7 +145,7 @@ describe("crm: backup automatici con storico", () => {
 
     if (job.file_path.startsWith("backups/")) {
       const fs = await import("fs");
-      assert.ok(!fs.existsSync(`/app/backups/${job.file_path.slice("backups/".length)}`), "file fisico rimosso dalla delete");
+      assert.ok(!fs.existsSync(path.join(BACKUP_DIR, job.file_path.slice("backups/".length))), "file fisico rimosso dalla delete");
     }
 
     // Seconda delete → 404.
