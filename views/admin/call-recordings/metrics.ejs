@@ -1,4 +1,4 @@
-<h1>Report settimanale — Provvigioni Setter</h1>
+<h1>Metriche chiamate — settimanale</h1>
 <a href="/admin/call-recordings?site_id=<%= siteId %>">← Torna alle registrazioni</a>
 
 <% if (isSuperadmin && sites.length > 0) { %>
@@ -24,7 +24,7 @@
   <div style="flex:1;min-width:150px;background:#fff;border:1px solid #eef0f4;border-radius:10px;padding:16px;text-align:center;">
     <div style="font-size:12px;color:#065f46;">✓ Valide</div>
     <div style="font-size:28px;font-weight:800;color:#065f46;"><%= cur.validi %></div>
-    <div style="font-size:12px;color:#6b7280;">gettone <%= cur.gettone.toFixed(2).replace('.', ',') %> €</div>
+    <div style="font-size:12px;color:#6b7280;">risposta sensata</div>
   </div>
   <div style="flex:1;min-width:150px;background:#fff;border:1px solid #eef0f4;border-radius:10px;padding:16px;text-align:center;">
     <div style="font-size:12px;color:#92400e;">? Dubbie</div>
@@ -34,12 +34,12 @@
   <div style="flex:1;min-width:150px;background:#fff;border:1px solid #eef0f4;border-radius:10px;padding:16px;text-align:center;">
     <div style="font-size:12px;color:#991b1b;">✗ Non valide</div>
     <div style="font-size:28px;font-weight:800;color:#991b1b;"><%= cur.non_valide %></div>
-    <div style="font-size:12px;color:#6b7280;">non pagabili</div>
+    <div style="font-size:12px;color:#6b7280;">rifiuto/a vuoto</div>
   </div>
   <div style="flex:1;min-width:170px;background:#4f46e5;border-radius:10px;padding:16px;text-align:center;color:#fff;">
-    <div style="font-size:12px;opacity:.85;">💰 Importo maturato</div>
-    <div style="font-size:28px;font-weight:800;"><%= new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(cur.importo_totale) %> / <%= cur.cap %></div>
-    <div style="font-size:12px;opacity:.85;"><%= cur.cap_raggiunto ? 'CAP RAGGIUNTO' : ('residuo ' + new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(cur.residuo_cap)) %></div>
+    <div style="font-size:12px;opacity:.85;">📈 Tasso di validità</div>
+    <div style="font-size:28px;font-weight:800;"><%= cur.tasso_validita %>%</div>
+    <div style="font-size:12px;opacity:.85;">valide / totale</div>
   </div>
 </div>
 
@@ -53,8 +53,7 @@
         <th>Valide</th>
         <th>Dubbie</th>
         <th>Non valide</th>
-        <th>Importo (2€/valida)</th>
-        <th>Cap</th>
+        <th>Tasso validità</th>
       </tr>
     </thead>
     <tbody>
@@ -65,13 +64,14 @@
           <td><strong><%= w.validi %></strong></td>
           <td><%= w.dubbie %></td>
           <td><%= w.non_valide %></td>
-          <td><%= new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(w.importo_totale) %></td>
-          <td><%= w.cap_raggiunto ? '✔ raggiunto' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(w.residuo_cap) + ' residuo' %></td>
+          <td><%= w.tasso_validita %>%</td>
         </tr>
       <% }) %>
     </tbody>
   </table>
   <p style="font-size:12px;color:#6b7280;margin-bottom:0;">
-    💡 Il saldo avviene il giovedì. Solo le chiamate <strong>valide</strong> (verdetto <code>si</code> confermato, non scartate) contano per il pagamento.
+    💡 Una chiamata è <strong>valida</strong> quando c'è stata una risposta sensata e un interesse reale del lead
+    (verdetto <code>si</code> confermato, non scartata). Le metriche sono oggettive e indipendenti da
+    qualsiasi calcolo di compensi: eventuali provvigioni vengono calcolate esternamente da chi le adotta.
   </p>
 </div>

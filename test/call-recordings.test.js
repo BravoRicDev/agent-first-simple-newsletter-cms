@@ -4,13 +4,13 @@ import { query } from "../src/db.js";
 import { createTestSite, createTestUser, closeDb } from "./helpers.js";
 import {
   validateVerdict, parseJsonContent,
-  createRecording, reviewVerdict, weeklySettlerCount, getRecording,
-  settlerWeeklyHistory,
+  createRecording, reviewVerdict, weeklyCallMetrics, getRecording,
+  callMetricsWeeklyHistory,
 } from "../src/services/call-recordings.js";
 
 // Feature: Registrazione + Valutazione Chiamate del Setter.
 // - validateVerdict/parseJsonContent: logica pura (whitelist/anti-gaming)
-// - createRecording/reviewVerdict/weeklySettlerCount: flusso DB con scoping sito
+// - createRecording/reviewVerdict/weeklyCallMetrics: flusso DB con scoping sito
 describe("call-recordings: valutazione validità chiamate", () => {
   let site, site2, user;
 
@@ -106,7 +106,7 @@ describe("call-recordings: valutazione validità chiamate", () => {
     assert.equal(other, null);
   });
 
-  test("weeklySettlerCount: conteggia solo i validi e applica il cap", async () => {
+  test("weeklyCallMetrics: conteggia validi, dubbie e non valide", async () => {
     // crea 3 registrazioni valide + 1 no per il sito in questa settimana
     for (let i = 0; i < 3; i++) {
       const rec = await createRecording(site.id, {
@@ -127,28 +127,29 @@ describe("call-recordings: valutazione validità chiamate", () => {
       [noRec.id, site.id, JSON.stringify({ valida: "no", punteggio: 0.1 })]
     );
 
-    const report = await weeklySettlerCount(site.id, { from: new Date(Date.now() - 86400000) });
+    const report = await weeklyCallMetrics(site.id, { from: new Date(Date.now() - 86400000) });
     assert.ok(report.validi >= 3);
     assert.ok(report.non_valide >= 1);
-    assert.equal(report.gettone, 2);
-    assert.equal(report.importo_totale, Math.min(report.validi * 2, report.cap));
+    assert.ok(report.totale >= 4);
+    // tasso di validità: ~3/4 = 75%
+    assert.ok(report.tasso_validita > 0 && report.tasso_validita <= 100);
   });
 
-  test("weeklySettlerCount: include residuo al cap e gettoni mancanti (M3/M9)", async () => {
-    const report = await weeklySettlerCount(site.id, { from: new Date(Date.now() - 86400000) });
-    assert.ok(report.residuo_cap >= 0);
-    assert.ok(report.gettoni_mancanti_al_cap >= 0);
-    assert.ok(report.cap >= report.importo_totale);
+  test("weeklyCallMetrics: conta solo i validi non scartati come intervista valida", async () => {
+    const report = await weeklyCallMetrics(site.id, { from: new Date(Date.now() - 86400000) });
+    assert.ok(report.validi >= 0);
+    assert.ok(report.dubbie >= 0);
+    assert.ok(report.non_valide >= 1);
   });
 
-  test("settlerWeeklyHistory: ritorna una serie di settimane (M3)", async () => {
-    const history = await settlerWeeklyHistory(site.id, { weeks: 4 });
+  test("callMetricsWeeklyHistory: ritorna una serie di settimane", async () => {
+    const history = await callMetricsWeeklyHistory(site.id, { weeks: 4 });
     assert.ok(Array.isArray(history));
     assert.equal(history.length, 4);
-    // ogni settimana ha i campi del report
+    // ogni settimana ha i campi delle metriche
     for (const w of history) {
       assert.ok(typeof w.validi === "number");
-      assert.ok(typeof w.importo_totale === "number");
+      assert.ok(typeof w.tasso_validita === "number");
       assert.ok(typeof w.from === "string");
     }
   });

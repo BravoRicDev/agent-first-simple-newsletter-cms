@@ -43,10 +43,6 @@ export default {
   groqApiKey: process.env.GROQ_API_KEY || "",
   groqBaseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
   whisperModel: process.env.WHISPER_MODEL || "whisper-large-v3",
-
-  // Provvigione setter (contratto): gettone per chiamata valida e cap settimanale.
-  settlerTokenEur: parseFloat(process.env.SETTLER_TOKEN_EUR || "2"),
-  settlerCapEur: parseFloat(process.env.SETTLER_CAP_EUR || "100"),
   // Retention audio: giorni dopo i quali l'audio viene eliminato tenendo solo
   // trascrizione+verdetto (minimizzazione dati personali). 0 = mai.
   audioRetentionDays: parseInt(process.env.AUDIO_RETENTION_DAYS || "0", 10),

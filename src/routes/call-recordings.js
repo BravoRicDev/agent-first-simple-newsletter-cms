@@ -11,8 +11,8 @@ import { query } from "../db.js";
 import { logger } from "../services/logger.js";
 import {
   listRecordings, getRecording, createRecording, updateRecording,
-  processRecording, reviewVerdict, weeklySettlerCount,
-  settlerWeeklyHistory, listRevisionQueue,
+  processRecording, reviewVerdict, weeklyCallMetrics,
+  callMetricsWeeklyHistory, listRevisionQueue,
 } from "../services/call-recordings.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,7 +23,7 @@ fs.mkdirSync(CALLS_DIR, { recursive: true });
 const router = Router();
 
 // Rate limit sul processing (upload/valutazione) per evitare invio massivo
-// di audio per gonfiare il conteggio dei gettoni.
+// di audio per gonfiare le metriche.
 const processLimiter = rateLimit({
   windowMs: 60 * 1000, max: 10,
   message: (req, res) => ({ error: "Troppe richieste. Attendi qualche secondo." }),
@@ -80,16 +80,16 @@ router.get("/admin/call-recordings", requireAuth, authorize("forms", "read"), as
   } catch (err) { next(err); }
 });
 
-// ── Admin: report settimanale provvigioni setter (M3) ───────────────────
-// PRIMA di /:id (path fisso) — altrimenti "settler" verrebbe catturato come :id.
-router.get("/admin/call-recordings/settler", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+// ── Admin: metriche settimanali chiamate ─────────────────────────────────
+// PRIMA di /:id (path fisso) — altrimenti "metrics" verrebbe catturato come :id.
+router.get("/admin/call-recordings/metrics", requireAuth, authorize("forms", "read"), async (req, res, next) => {
   try {
     const isSuperadmin = req.user.role === "superadmin";
     const siteId = req.moduleSiteId;
-    const report = await weeklySettlerCount(siteId, {});
-    const history = await settlerWeeklyHistory(siteId, { weeks: 8 });
+    const report = await weeklyCallMetrics(siteId, {});
+    const history = await callMetricsWeeklyHistory(siteId, { weeks: 8 });
     const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];
-    res.render("admin/call-recordings/settler", {
+    res.render("admin/call-recordings/metrics", {
       report, history, siteId, sites, isSuperadmin,
     });
   } catch (err) { next(err); }

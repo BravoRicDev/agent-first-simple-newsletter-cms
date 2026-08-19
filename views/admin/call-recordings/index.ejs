@@ -15,7 +15,7 @@
 
 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
   <a class="btn btn-primary" href="/admin/call-recordings/new?site_id=<%= siteId %>">+ Nuova registrazione</a>
-  <a class="btn" href="/admin/call-recordings/settler?site_id=<%= siteId %>">📊 Report settimanale</a>
+  <a class="btn" href="/admin/call-recordings/metrics?site_id=<%= siteId %>">📊 Metriche chiamate</a>
   <a class="btn <%= reviewQueue ? 'btn-primary' : '' %>" href="/admin/call-recordings?site_id=<%= siteId %>&review=1">⏳ Coda revisione (<%= recordings.filter(r => r.review_status === 'revisione').length %>)</a>
   <a class="btn <%= !reviewQueue ? 'btn-primary' : '' %>" href="/admin/call-recordings?site_id=<%= siteId %>">Tutte</a>
 </div>

@@ -59,7 +59,7 @@ Beyond site management, the CMS ships a **full CRM** that can be enabled per sit
 - **Upload** (`/admin/call-recordings`): upload audio files, search and manage.
 - **Processing** (`process`): automatic extraction of information from the recording (via LLM).
 - **Review** single or bulk (`review`, `bulk-review`): review and validate the extracted transcriptions.
-- **Settler** (`/admin/call-recordings/settler`): weekly settler commission report, with history for the last weeks.
+- **Call metrics** (`/admin/call-recordings/metrics`): weekly report with valid/doubtful/invalid counts and validity rate, with history for the last weeks.
 - **Protection**: rate limiting on processing.
 
 ### Other CRM tools (`/admin/crm`)

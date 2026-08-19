@@ -59,7 +59,7 @@ Oltre alla gestione dei siti, il CMS include un **CRM completo** attivabile per 
 - **Caricamento** (`/admin/call-recordings`): upload di file audio, ricerca e gestione.
 - **Processamento** (`process`): estrazione automatica delle informazioni dalla registrazione (via LLM).
 - **Review** singola o bulk (`review`, `bulk-review`): revisione e validazione delle trascrizioni estratte.
-- **Settler** (`/admin/call-recordings/settler`): report settimanale delle provvigioni setter, con storico delle ultime settimane.
+- **Metriche chiamate** (`/admin/call-recordings/metrics`): report settimanale con conteggio valide/dubbie/non valide e tasso di validità, con storico delle ultime settimane.
 - **Protezione**: rate limiting sul processamento.
 
 ### Altri strumenti CRM (`/admin/crm`)
