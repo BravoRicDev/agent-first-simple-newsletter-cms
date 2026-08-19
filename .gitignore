@@ -40,3 +40,7 @@ __pycache__/
 # Log/OS
 *.log
 .DS_Store
+
+# Documenti interni di lavoro (non per il repo pubblico)
+ROADMAP-crm.md
+UPGRADE-INSTRUCTIONS.md
