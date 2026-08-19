@@ -1,0 +1,28 @@
+<h1>Usa template — <strong><%= template.name %></strong></h1>
+<% const ph = Array.isArray(template.placeholders) ? template.placeholders : JSON.parse(template.placeholders || '[]'); %>
+<form method="POST" action="/admin/templates/<%= template.id %>/instantiate">
+  <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+  <div class="form-group">
+    <label>URL path della nuova pagina</label>
+    <input type="text" name="url_path" required placeholder="es. /prodotti/scarpa-rossa">
+  </div>
+  <div class="form-group">
+    <label>Titolo pagina</label>
+    <input type="text" name="title" placeholder="es. Scarpa Rossa">
+  </div>
+  <% if (ph.length > 0) { %>
+  <hr style="margin:15px 0;">
+  <h3 style="font-size:15px;margin-bottom:10px;">Compila i placeholder</h3>
+  <% ph.forEach(p => { %>
+  <div class="form-group">
+    <label><code>{{<%= p %>}}</code></label>
+    <input type="text" name="values[<%= p %>]" placeholder="<%= p %>">
+  </div>
+  <% }) %>
+  <% } %>
+  <div class="form-group">
+    <label><input type="checkbox" name="published" value="true"> Pubblica subito</label>
+  </div>
+  <button type="submit" class="btn">Crea pagina</button>
+  <a href="/admin/templates?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

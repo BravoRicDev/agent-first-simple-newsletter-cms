@@ -1,0 +1,37 @@
+<% if (typeof canonicalUrl !== 'undefined' && canonicalUrl) { %>
+<link rel="canonical" href="<%= canonicalUrl %>">
+<% } %>
+<% if (typeof noindex !== 'undefined' && noindex) { %>
+<meta name="robots" content="noindex,follow">
+<% } %>
+<% if (typeof meta_keywords !== 'undefined' && meta_keywords) { %>
+<meta name="keywords" content="<%= meta_keywords %>">
+<% } %>
+<% var _ogTitle = (typeof meta_title !== 'undefined' && meta_title) ? meta_title : (typeof title !== 'undefined' && title ? title : (typeof brandName !== 'undefined' ? brandName : '')); %>
+<% var _ogDesc = typeof meta_description !== 'undefined' ? meta_description : ''; %>
+<meta property="og:type" content="website">
+<% if (_ogTitle) { %><meta property="og:title" content="<%= _ogTitle %>">
+<% } %>
+<% if (_ogDesc) { %><meta property="og:description" content="<%= _ogDesc %>">
+<% } %>
+<% if (typeof canonicalUrl !== 'undefined' && canonicalUrl) { %><meta property="og:url" content="<%= canonicalUrl %>">
+<% } %>
+<% if (typeof brandName !== 'undefined' && brandName) { %><meta property="og:site_name" content="<%= brandName %>">
+<% } %>
+<% if (typeof ogImage !== 'undefined' && ogImage) { %><meta property="og:image" content="<%= ogImage %>">
+<% } %>
+<meta name="twitter:card" content="<%= (typeof ogImage !== 'undefined' && ogImage) ? 'summary_large_image' : 'summary' %>">
+<% if (_ogTitle) { %><meta name="twitter:title" content="<%= _ogTitle %>">
+<% } %>
+<% if (_ogDesc) { %><meta name="twitter:description" content="<%= _ogDesc %>">
+<% } %>
+<% if (typeof ogImage !== 'undefined' && ogImage) { %><meta name="twitter:image" content="<%= ogImage %>">
+<% } %>
+<% if (typeof twitterHandle !== 'undefined' && twitterHandle) { %><meta name="twitter:site" content="<%= twitterHandle.startsWith('@') ? twitterHandle : '@' + twitterHandle %>">
+<% } %>
+<% if (typeof websiteJsonLd !== 'undefined' && websiteJsonLd) { %>
+<script type="application/ld+json"><%- websiteJsonLd %></script>
+<% } %>
+<% if (typeof webpageJsonLd !== 'undefined' && webpageJsonLd) { %>
+<script type="application/ld+json"><%- webpageJsonLd %></script>
+<% } %>

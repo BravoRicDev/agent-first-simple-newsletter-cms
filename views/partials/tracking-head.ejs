@@ -1,0 +1,44 @@
+<% if (typeof searchConsoleVerification !== 'undefined' && searchConsoleVerification) { %>
+<meta name="google-site-verification" content="<%= searchConsoleVerification %>">
+<% } %>
+
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking) { %>
+<!-- Consent Mode v2: default negato, aggiornato dal banner sotto. Deve
+     essere impostato PRIMA che GTM/gtag/pixel vengano caricati. -->
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){ dataLayer.push(arguments); }
+gtag('consent', 'default', {
+  'ad_storage': 'denied',
+  'analytics_storage': 'denied',
+  'ad_user_data': 'denied',
+  'ad_personalization': 'denied',
+  'wait_for_update': 500
+});
+</script>
+
+<% if (typeof gtmId !== 'undefined' && gtmId) { %>
+<!-- Google Tag Manager -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','<%= gtmId %>');</script>
+<% } %>
+
+<% if (typeof ga4Id !== 'undefined' && ga4Id) { %>
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=<%= ga4Id %>"></script>
+<script>gtag('js', new Date()); gtag('config', '<%= ga4Id %>');</script>
+<% } %>
+
+<% if (typeof metaPixelId !== 'undefined' && metaPixelId) { %>
+<!-- Meta Pixel: NON caricato finché il consenso marketing non è concesso.
+     Prima lo script connect.facebook.net partiva subito (connessione a terzi
+     pre-consenso) e fbq('track','PageView') veniva eseguito prima della scelta. -->
+<script>
+function loadMetaPixel() {
+  if (window.fbq) return;
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('consent', 'revoke');
+  fbq('init', '<%= metaPixelId %>');
+}
+</script>
+<% } %>
+<% } %>

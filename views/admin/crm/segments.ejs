@@ -1,0 +1,95 @@
+<h1>Segmenti dinamici — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">✅ Segmento salvato.</div>
+<% } %>
+
+<div style="display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap;">
+  <div style="flex:1;min-width:300px;">
+    <h2 style="font-size:16px;">Segmenti esistenti</h2>
+    <% if (segments.length === 0) { %>
+      <p style="color:#999;font-size:14px;">Nessun segmento. I segmenti filtrano i contatti in base a regole (tag, stato, punteggio, eventi).</p>
+    <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Regole</th><th>Membri</th><th>Stato</th><th></th></tr></thead>
+      <tbody>
+        <% segments.forEach(s => { %>
+        <tr>
+          <td><%= s.name %></td>
+          <td style="font-size:12px;max-width:260px;"><%= JSON.stringify(s.rules) %></td>
+          <td><%= s.members %></td>
+          <td><% if (s.enabled) { %><span class="badge badge-active">Attivo</span><% } else { %><span class="badge badge-disabled">Off</span><% } %></td>
+          <td>
+            <form method="POST" action="/admin/segments/<%= s.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare il segmento?');">
+              <input type="hidden" name="site_id" value="<%= siteId %>">
+              <button class="btn btn-sm btn-danger">Elimina</button>
+            </form>
+          </td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } %>
+  </div>
+
+  <div style="flex:1;min-width:320px;">
+    <h2 style="font-size:16px;">Nuovo segmento</h2>
+    <form method="POST" action="/admin/segments">
+      <input type="hidden" name="site_id" value="<%= siteId %>">
+      <input type="hidden" name="rules_json" id="rules_json" value="">
+      <div class="form-group">
+        <label>Nome</label>
+        <input type="text" name="name" required placeholder="Es. Lead caldi">
+      </div>
+      <div class="form-group">
+        <label>Descrizione (opzionale)</label>
+        <input type="text" name="description" placeholder="Es. Contatti con punteggio alto">
+      </div>
+      <div class="form-group">
+        <label>Match mode</label>
+        <select name="match_mode">
+          <option value="all">TUTTE le regole (AND)</option>
+          <option value="any">ALMENO UNA regola (OR)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Regole (una per riga, formato: <code>campo|operatore|valore|giorni?</code>)</label>
+        <textarea id="rules_text" style="min-height:140px;font-family:monospace;font-size:12px;" placeholder="tag|has|qualifica-lead&#10;score|gte|50&#10;event|gte_days_ago|quiz_completed|30&#10;status|eq|lead&#10;utm_source|eq|facebook"></textarea>
+        <div style="font-size:11px;color:#999;margin-top:4px;">
+          Campi: tag, status, score, value_estimate, email, notes, utm_source, utm_medium, utm_campaign, first_source, pref_email/sms/phone/whatsapp/marketing, event<br>
+          Operatori: has, eq, neq, gt, gte, lt, lte, contains, not_contains — per event: gte_days_ago, lt_days_ago, exists
+        </div>
+      </div>
+      <button class="btn">Salva segmento</button>
+    </form>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('form[action="/admin/segments"]');
+  form.addEventListener('submit', () => {
+    const lines = document.getElementById('rules_text').value.split('\n').map(s => s.trim()).filter(Boolean);
+    const rules = lines.map(line => {
+      const parts = line.split('|').map(s => s.trim());
+      const rule = { field: parts[0], op: parts[1], value: parts[2] || '' };
+      if (parts[3]) rule.days = parseInt(parts[3], 10);
+      return rule;
+    });
+    document.getElementById('rules_json').value = JSON.stringify(rules);
+  });
+});
+</script>

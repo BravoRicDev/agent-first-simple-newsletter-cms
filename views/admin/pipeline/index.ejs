@@ -1,0 +1,56 @@
+<h1>Pipeline vendite</h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/contacts?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Contatti</a>
+</div>
+
+<form method="POST" action="/admin/pipeline/new" style="margin:15px 0;display:flex;gap:8px;align-items:flex-end;max-width:450px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;flex:1;">
+    <label>Nuovo lead (email)</label>
+    <input type="email" name="email" required placeholder="nome@esempio.it">
+  </div>
+  <button type="submit" class="btn">+ Aggiungi</button>
+</form>
+
+<div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;">
+  <% [{ key: "", label: "Da assegnare" }, ...stages].forEach(stage => { %>
+  <% const cards = board[stage.key] || []; %>
+  <% const total = cards.reduce((sum, c) => sum + (parseFloat(c.value_estimate) || 0), 0); %>
+  <div style="flex:0 0 260px;background:#f9fafb;border-radius:8px;padding:10px;">
+    <div style="font-weight:600;font-size:13px;margin-bottom:4px;"><%= stage.label %> <span style="color:#999;font-weight:400;">(<%= cards.length %>)</span></div>
+    <% if (total > 0) { %><div style="font-size:12px;color:#059669;margin-bottom:8px;">€ <%= total.toLocaleString('it-IT') %></div><% } %>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <% cards.forEach(c => { %>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:12px;">
+        <a href="/admin/contacts/<%= encodeURIComponent(c.email) %>?site_id=<%= siteId %>" style="font-weight:600;word-break:break-all;"><%= c.email %></a>
+        <% if (c.value_estimate) { %><div style="color:#059669;margin-top:2px;">€ <%= parseFloat(c.value_estimate).toLocaleString('it-IT') %></div><% } %>
+        <% (c.tags || []).forEach(tag => { %><span style="display:inline-block;background:#e0e7ff;color:#3730a3;font-size:10px;padding:1px 5px;border-radius:4px;margin:4px 3px 0 0;"><%= tag %></span><% }) %>
+        <form method="POST" action="/admin/pipeline/<%= encodeURIComponent(c.email) %>/stage" style="margin-top:6px;">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <select name="stage" onchange="this.form.submit()" style="width:100%;font-size:11px;padding:3px;">
+            <option value="">— nessuno stadio —</option>
+            <% stages.forEach(s => { %>
+              <option value="<%= s.key %>" <%= c.status === s.key ? 'selected' : '' %>><%= s.label %></option>
+            <% }) %>
+          </select>
+        </form>
+      </div>
+      <% }) %>
+    </div>
+  </div>
+  <% }) %>
+</div>

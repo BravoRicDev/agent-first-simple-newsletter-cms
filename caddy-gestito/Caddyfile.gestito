@@ -1,0 +1,29 @@
+:8080 {
+    handle_path /media/* {
+        root * /app/media
+        file_server
+    }
+
+    handle {
+        @static_file file {
+            try_files {path} {path}.html {path}/index.html
+            root /app/static/{host}
+        }
+        handle @static_file {
+            root * /app/static/{host}
+            rewrite * {http.matchers.file.relative}
+            file_server
+        }
+        reverse_proxy gestione-siti:3000
+    }
+
+    handle_errors {
+        @backend_down expression {http.error.status_code} >= 502
+        handle @backend_down {
+            root * /app/static/{host}
+            try_files /404.html
+            rewrite * /404.html
+            file_server
+        }
+    }
+}

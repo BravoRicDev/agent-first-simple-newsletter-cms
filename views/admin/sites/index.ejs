@@ -1,0 +1,28 @@
+<h1>Siti</h1>
+<div class="actions">
+  <a href="/admin/sites/new" class="btn">Nuovo sito</a>
+</div>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Dominio</th><th>Template</th><th>Creato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% if (sites.length === 0) { %>
+      <tr><td colspan="5" style="text-align:center;color:#999;">Nessun sito trovato</td></tr>
+    <% } %>
+    <% sites.forEach(s => { %>
+      <tr>
+        <td><%= s.name %></td>
+        <td><%= s.domain %></td>
+        <td><%= s.layout_template %></td>
+        <td><%= new Date(s.created_at).toLocaleDateString('it-IT') %></td>
+        <td>
+          <a href="/admin/sites/<%= s.id %>/edit" class="btn btn-sm">Modifica</a>
+          <a href="/admin/pages?site_id=<%= s.id %>" class="btn btn-sm">Pagine</a>
+          <a href="/admin/snippets?site_id=<%= s.id %>" class="btn btn-sm">Snippet</a>
+          <a href="/admin/sites/<%= s.id %>/sitemap" class="btn btn-sm" style="background:#6b7280;">Struttura</a>
+        </td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>

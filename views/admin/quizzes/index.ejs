@@ -1,0 +1,80 @@
+<h1>Questionari — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">
+  ✅ Questionario salvato correttamente.
+</div>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/quizzes/new?site_id=<%= siteId %>" class="btn">Nuovo questionario</a>
+</div>
+
+<% if (quizzes.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun questionario creato. I questionari hanno domande con punteggi e mostrano un verdetto in base al totale (es. qualifica lead).</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Slug</th><th>Stato</th><th>Risultati</th><th>Ultimo risultato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% quizzes.forEach(q => { %>
+    <tr>
+      <td><%= q.name %></td>
+      <td><code><%= q.slug %></code></td>
+      <td><% if (q.enabled) { %><span class="badge badge-active">Attivo</span><% } else { %><span class="badge badge-disabled">Disattivato</span><% } %></td>
+      <td><%= q.total %></td>
+      <td><%= q.last_submission ? new Date(q.last_submission).toLocaleString('it-IT') : '—' %></td>
+      <td style="white-space:nowrap;">
+        <a href="/admin/quizzes/<%= q.slug %>/edit?site_id=<%= siteId %>" class="btn btn-sm">Modifica</a>
+        <a href="/admin/quizzes/<%= q.slug %>/submissions?site_id=<%= siteId %>" class="btn btn-sm">Risultati</a>
+        <button class="btn btn-sm quiz-copy" style="background:#059669;" data-quiz-slug="<%= q.slug %>">📋 Copia tag</button>
+        <form method="POST" action="/admin/quizzes/<%= q.slug %>/delete" style="display:inline;"
+          class="quiz-delete-form" data-quiz-name="<%= q.name %>">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<p style="font-size:12px;color:#666;margin-top:8px;">
+  Per mostrare un questionario in una pagina, incolla il suo tag (es. <code>{{quiz:qualifica-lead}}</code>, usa "Copia tag") nel contenuto della pagina. Il punteggio e il verdetto vengono calcolati al submit; i risultati finiscono qui.
+</p>
+<% } %>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.quiz-copy').forEach(btn => {
+    btn.addEventListener('click', function() {
+      var tag = '{{quiz:' + btn.dataset.quizSlug + '}}';
+      navigator.clipboard.writeText(tag).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = '✅ Copiato!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+      });
+    });
+  });
+  document.querySelectorAll('.quiz-delete-form').forEach(form => {
+    form.addEventListener('submit', function(event) {
+      if (!confirm('Eliminare il questionario "' + form.dataset.quizName + '"? I risultati già ricevuti restano salvati.')) {
+        event.preventDefault();
+      }
+    });
+  });
+});
+</script>

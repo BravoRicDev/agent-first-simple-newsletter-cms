@@ -1,0 +1,62 @@
+<h1>Sequenza — <%= sequence.name %></h1>
+
+<div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+  <a href="/admin/newsletter/sequences?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Sequenze</a>
+  <span class="badge <%= sequence.active ? 'badge-active' : 'badge-disabled' %>"><%= sequence.active ? 'attiva' : 'disattiva' %></span>
+  <form method="POST" action="/admin/newsletter/sequences/<%= sequence.id %>/toggle" style="display:inline;">
+    <input type="hidden" name="site_id" value="<%= siteId %>">
+    <button type="submit" class="btn btn-sm"><%= sequence.active ? 'Disattiva' : 'Attiva' %></button>
+  </form>
+  <form method="POST" action="/admin/newsletter/sequences/<%= sequence.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare questa sequenza e tutto lo storico invii?')">
+    <input type="hidden" name="site_id" value="<%= siteId %>">
+    <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+  </form>
+</div>
+
+<form method="POST" action="/admin/newsletter/sequences/<%= sequence.id %>/target-tag" style="margin-top:15px;display:flex;gap:8px;align-items:flex-end;max-width:400px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;flex:1;">
+    <label>Segmento (tag contatto)</label>
+    <select name="target_tag">
+      <option value="">Tutti gli iscritti confermati</option>
+      <% tags.forEach(tag => { %>
+        <option value="<%= tag %>" <%= sequence.target_tag === tag ? 'selected' : '' %>><%= tag %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn btn-sm">Salva segmento</button>
+</form>
+
+<% if (steps.length === 0) { %>
+  <p style="color:#999;font-size:14px;margin-top:15px;">Nessuno step definito — usa l'agente AI per aggiungerli (<code>PUT .../sequences/<%= sequence.id %>/steps</code>).</p>
+<% } else { %>
+<table style="margin-top:15px;">
+  <thead>
+    <tr><th>#</th><th>Ritardo</th><th>Oggetto</th><th>Inviate</th><th>Aperture</th><th></th><th></th><th>Prova</th></tr>
+  </thead>
+  <tbody>
+    <% steps.forEach(s => { %>
+    <tr>
+      <td><%= s.step_order %></td>
+      <td><%= s.delay_days %> gg dalla conferma</td>
+      <td><%= s.subject %></td>
+      <td><%= s.sent_count %></td>
+      <td><%= s.opened_count %></td>
+      <td><a href="/admin/newsletter/sequences/<%= sequence.id %>/steps/<%= s.id %>/recipients?site_id=<%= siteId %>" class="btn btn-sm">Destinatari</a></td>
+      <td><a href="/admin/newsletter/sequences/<%= sequence.id %>/steps/<%= s.id %>/preview?site_id=<%= siteId %>" target="_blank" class="btn btn-sm" style="background:#6b7280;">👁 Anteprima</a></td>
+      <td>
+        <form method="POST" action="/admin/newsletter/sequences/<%= sequence.id %>/steps/<%= s.id %>/test-send" style="display:flex;gap:4px;">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <input type="email" name="email" placeholder="<%= user.email %>" value="<%= user.email %>" style="width:160px;padding:4px 8px;font-size:12px;">
+          <button type="submit" class="btn btn-sm" style="background:#0891b2;">✉</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
+
+<% if (typeof test_sent !== 'undefined' && test_sent) { %>
+<div class="alert alert-info" style="margin-top:15px;">Email di prova inviata a <%= test_sent %>.</div>
+<% } %>

@@ -1,0 +1,93 @@
+<h1><%= campaign ? (campaign.status === 'draft' ? 'Modifica campagna' : 'Dettagli campagna') : 'Nuova campagna' %></h1>
+
+<div class="actions">
+  <a href="/admin/newsletter/campaigns?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Campagne</a>
+  <% if (campaign && campaign.status !== 'draft') { %>
+    <a href="/admin/newsletter/campaigns/<%= campaign.id %>/recipients?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Destinatari</a>
+  <% } %>
+</div>
+
+<% if (typeof test_sent !== 'undefined' && test_sent) { %>
+<div class="alert alert-info" style="margin-top:15px;">Email di prova inviata a <%= test_sent %>.</div>
+<% } %>
+
+<% if (campaign) { %>
+<form method="POST" action="/admin/newsletter/campaigns/<%= campaign.id %>/test-send" style="margin-top:15px;max-width:700px;display:flex;gap:8px;align-items:flex-end;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;flex:1;">
+    <label>Invia una prova a</label>
+    <input type="email" name="email" placeholder="<%= user.email %>" value="<%= user.email %>">
+  </div>
+  <button type="submit" class="btn" style="background:#0891b2;">✉ Invia prova</button>
+</form>
+<% } %>
+
+<% if (!campaign || campaign.status === 'draft') { %>
+<form method="POST" action="<%= campaign ? '/admin/newsletter/campaigns/' + campaign.id : '/admin/newsletter/campaigns' %>" style="max-width:700px;margin-top:15px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group">
+    <label>Oggetto</label>
+    <input type="text" name="subject" value="<%= campaign ? campaign.subject : '' %>" required>
+  </div>
+  <div class="form-group">
+    <label>Segmento (tag contatto)</label>
+    <select name="target_tag">
+      <option value="">Tutti gli iscritti confermati</option>
+      <% tags.forEach(tag => { %>
+        <option value="<%= tag %>" <%= campaign && campaign.target_tag === tag ? 'selected' : '' %>><%= tag %></option>
+      <% }) %>
+    </select>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Solo i contatti con questo tag (assegnabile da <a href="/admin/contacts?site_id=<%= siteId %>">Contatti</a>) riceveranno la campagna. Vuoto = tutti.
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Contenuto HTML</label>
+    <textarea name="html_content" id="htmlContent" style="min-height:300px;"><%= campaign ? campaign.html_content : '' %></textarea>
+    <p style="font-size:12px;color:#999;margin-top:4px;">Puoi comporre il contenuto riusando i blocchi già gestiti per il sito con <code>{{snippet:nome}}</code> e <code>{{var:chiave}}</code> — stesso motore usato nelle pagine, espanso al momento dell'invio. Firma, link di disiscrizione e pixel di tracciamento apertura vengono aggiunti automaticamente in fondo all'email dal server (la firma si configura una volta nelle <a href="/admin/newsletter/settings?site_id=<%= siteId %>">impostazioni</a>).</p>
+  </div>
+  <button type="submit" class="btn"><%= campaign ? 'Salva bozza' : 'Crea bozza' %></button>
+  <% if (campaign) { %><button type="button" class="btn" style="background:#6b7280;" onclick="refreshPreview()">👁 Aggiorna anteprima</button><% } %>
+</form>
+
+<% if (campaign) { %>
+<div style="margin-top:15px;max-width:700px;">
+  <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px;">Anteprima (snippet e variabili espansi, firma inclusa)</label>
+  <iframe id="previewFrame" sandbox style="width:100%;height:400px;border:1px solid #ddd;border-radius:6px;background:#fff;"></iframe>
+</div>
+<script>
+async function refreshPreview() {
+  const r = await fetch('/admin/newsletter/campaigns/<%= campaign.id %>/preview?site_id=<%= siteId %>', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ html_content: document.getElementById('htmlContent').value }),
+  });
+  if (!r.ok) return;
+  const { html } = await r.json();
+  document.getElementById('previewFrame').srcdoc = html;
+}
+document.addEventListener('DOMContentLoaded', refreshPreview);
+</script>
+<% } %>
+
+<% if (campaign) { %>
+<form method="POST" action="/admin/newsletter/campaigns/<%= campaign.id %>/send" style="margin-top:15px;" onsubmit="return confirm('Mettere in coda questa campagna per l\'invio? Verrà spedita rispettando la quota oraria configurata.')">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <button type="submit" class="btn" style="background:#059669;">🚀 Metti in coda per l'invio</button>
+</form>
+<% } %>
+
+<% } else { %>
+<div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);max-width:700px;margin-top:15px;">
+  <p><strong>Oggetto:</strong> <%= campaign.subject %></p>
+  <p><strong>Stato:</strong> <%= campaign.status %></p>
+  <p><strong>Segmento:</strong> <%= campaign.target_tag || 'Tutti gli iscritti confermati' %></p>
+  <% if (campaign.sent_at) { %><p><strong>Inviata il:</strong> <%= new Date(campaign.sent_at).toLocaleString('it-IT') %></p><% } %>
+  <hr style="margin:15px 0;">
+  <!-- XSS stored: html_content è input utente non sanitizzato. Renderizzarlo
+       come HTML nel pannello eseguirebbe <script> nel browser di chiunque
+       apra il dettaglio. iframe sandbox (senza allow-scripts) = display
+       sicuro, stesso pattern della preview qui sopra. -->
+  <iframe sandbox style="width:100%;min-height:200px;border:1px solid #eee;border-radius:6px;background:#fff;" srcdoc="<%= escapeAttr(campaign.html_content) %>"></iframe>
+</div>
+<% } %>

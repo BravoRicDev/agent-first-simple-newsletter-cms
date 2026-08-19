@@ -1,0 +1,96 @@
+<h1>Chiamate (Setter) — Registrazioni</h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:16px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+  <a class="btn btn-primary" href="/admin/call-recordings/new?site_id=<%= siteId %>">+ Nuova registrazione</a>
+  <a class="btn" href="/admin/call-recordings/settler?site_id=<%= siteId %>">📊 Report settimanale</a>
+  <a class="btn <%= reviewQueue ? 'btn-primary' : '' %>" href="/admin/call-recordings?site_id=<%= siteId %>&review=1">⏳ Coda revisione (<%= recordings.filter(r => r.review_status === 'revisione').length %>)</a>
+  <a class="btn <%= !reviewQueue ? 'btn-primary' : '' %>" href="/admin/call-recordings?site_id=<%= siteId %>">Tutte</a>
+</div>
+
+<% if (saved === '1') { %><div class="alert alert-success">Salvato.</div><% } %>
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+<% if (reviewQueue) { %><div class="alert" style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;">Revisione umana: conferma (→ si) o scarta (→ no) le chiamate in blocco con i pulsanti sotto la tabella.</div><% } %>
+
+<form method="POST" action="/admin/call-recordings/bulk-review?site_id=<%= siteId %>" id="bulkForm">
+<table class="table">
+  <thead>
+    <tr>
+      <th><% if (reviewQueue) { %><input type="checkbox" id="selectAll"><% } %></th>
+      <th>#</th>
+      <th>Data</th>
+      <th>Settr.</th>
+      <th>Opportunità</th>
+      <th>Contatto</th>
+      <th>Verdetto</th>
+      <th>Stato</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (recordings.length === 0) { %>
+      <tr><td colspan="9" style="color:#9ca3af;"><%= reviewQueue ? 'Nessuna chiamata in attesa di revisione. 🎉' : 'Nessuna registrazione. Caricane una con "+ Nuova registrazione".' %></td></tr>
+    <% } %>
+    <% recordings.forEach(r => { %>
+      <% const v = r.verdict && typeof r.verdict === 'object' ? r.verdict : {}; %>
+      <% const valida = v.valida || r.verdict_valida || ''; %>
+      <tr>
+        <td><% if (reviewQueue) { %><input type="checkbox" name="ids" value="<%= r.id %>" class="rowChk"><% } %></td>
+        <td><%= r.id %></td>
+        <td><%= new Date(r.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) %></td>
+        <td><%= r.setter_name || '—' %></td>
+        <td><a href="/admin/opportunities/<%= r.opportunity_id %>?site_id=<%= siteId %>"><%= r.opportunity_title || ('#' + (r.opportunity_id || '—')) %></a></td>
+        <td><%= r.contact_name || r.contact_email || '—' %></td>
+        <td>
+          <% if (!valida) { %>
+            <span style="color:#9ca3af;">—</span>
+          <% } else if (valida === 'si') { %>
+            <span style="display:inline-block;padding:1px 10px;border-radius:10px;background:#d1fae5;color:#065f46;font-weight:700;">SI</span>
+          <% } else if (valida === 'no') { %>
+            <span style="display:inline-block;padding:1px 10px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:700;">NO</span>
+          <% } else { %>
+            <span style="display:inline-block;padding:1px 10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:700;">DUBBIA</span>
+          <% } %>
+          <% if (v.eval_error) { %><span title="Errore tecnico di valutazione" style="margin-left:4px;cursor:help;color:#b45309;">⚠️</span><% } %>
+          <% if (reviewQueue && v.motivazione) { %><div style="font-size:11px;color:#6b7280;margin-top:3px;"><%= v.motivazione %></div><% } %>
+        </td>
+        <td><%= r.status %><% if (r.review_status === 'revisione') { %> <span style="color:#b45309;font-weight:700;">⏳ rev.</span><% } %></td>
+        <td><a class="btn btn-sm" href="/admin/call-recordings/<%= r.id %>?site_id=<%= siteId %>">Apri</a></td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<% if (reviewQueue && recordings.length > 0) { %>
+<div style="display:flex;gap:8px;align-items:center;margin-top:12px;">
+  <span style="font-size:13px;color:#6b7280;">Con le <span id="selCount">0</span> selezionate:</span>
+  <button type="submit" name="action" value="si" class="btn" style="background:#d1fae5;color:#065f46;font-weight:700;">✓ Conferma (→ paga)</button>
+  <button type="submit" name="action" value="no" class="btn" style="background:#fee2e2;color:#991b1b;font-weight:700;">✗ Scarta (→ non paga)</button>
+</div>
+<% } %>
+</form>
+
+<script>
+  document.getElementById('selectAll')?.addEventListener('change', function () {
+    document.querySelectorAll('.rowChk').forEach(c => c.checked = this.checked);
+    updateCount();
+  });
+  document.querySelectorAll('.rowChk').forEach(c => c.addEventListener('change', updateCount));
+  function updateCount() {
+    const n = document.querySelectorAll('.rowChk:checked').length;
+    const el = document.getElementById('selCount');
+    if (el) el.textContent = n;
+  }
+</script>

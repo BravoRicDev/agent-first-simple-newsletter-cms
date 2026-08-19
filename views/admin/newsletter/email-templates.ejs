@@ -1,0 +1,65 @@
+<h1>Email template per il sito<%= site ? ' — ' + site.name : '' %></h1>
+
+<p style="color:#666;font-size:13px;max-width:900px;">
+  Override di <strong>oggetto</strong> e <strong>corpo</strong> delle email automatiche del sistema,
+  specifici per questo sito. Se non configurati, viene usato il testo standard di default.
+  Placeholder (sostituiti all'invio): <code>{siteName}</code>, <code>{siteDomain}</code>,
+  <code>{confirmUrl}</code>, <code>{cancelUrl}</code>, <code>{when}</code>, <code>{formSlug}</code>,
+  <code>{fieldsHtml}</code>, <code>{title}</code>, <code>{url}</code>, <code>{urlPath}</code>,
+  <code>{date}</code>, <code>{pageList}</code>, <code>{note}</code>, <code>{siteId}</code>.
+</p>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= s.id === siteId ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:16px;">
+
+  <% kinds.forEach(k => { %>
+    <% const tpl = byKind[k.kind] || null; %>
+    <form method="post" action="/admin/newsletter/email-templates/<%= k.kind %>"
+          style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);">
+      <input type="hidden" name="site_id" value="<%= siteId %>">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <strong style="font-family:monospace;font-size:13px;"><%= k.kind %></strong>
+        <% if (k.configured) { %>
+          <span style="background:#e8f5e9;color:#2e7d32;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;">personalizzato</span>
+        <% } else { %>
+          <span style="background:#eee;color:#666;font-size:11px;padding:2px 8px;border-radius:10px;">default</span>
+        <% } %>
+      </div>
+      <div class="form-group" style="margin-bottom:8px;">
+        <label style="font-size:12px;color:#666;">Oggetto (vuoto = default)</label>
+        <input type="text" name="subject" value="<%= tpl && tpl.subject ? tpl.subject : '' %>"
+               placeholder="Es. {siteName}: benvenuto!" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+      </div>
+      <div class="form-group" style="margin-bottom:8px;">
+        <label style="font-size:12px;color:#666;">Corpo HTML (vuoto = default)</label>
+        <textarea name="body_html" rows="5" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px;font-family:monospace;"
+          placeholder="<p>Ciao! ...</p>"><%= tpl && tpl.body_html ? tpl.body_html : '' %></textarea>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button type="submit" class="btn" style="background:#4f46e5;color:#fff;border:none;padding:7px 14px;border-radius:5px;cursor:pointer;font-size:13px;">Salva</button>
+        <% if (k.configured) { %>
+          <button type="submit" name="delete" value="1"
+                  onclick="return confirm('Rimuovere il template personalizzato per <%= k.kind %>?')"
+                  style="background:none;border:1px solid #dc3545;color:#dc3545;padding:7px 14px;border-radius:5px;cursor:pointer;font-size:13px;">Ripristina default</button>
+        <% } %>
+      </div>
+    </form>
+  <% }) %>
+
+</div>
+
+<p style="margin-top:20px;font-size:13px;">
+  <a href="/admin/newsletter/settings?site_id=<%= siteId %>">← Torna alle impostazioni newsletter</a>
+</p>

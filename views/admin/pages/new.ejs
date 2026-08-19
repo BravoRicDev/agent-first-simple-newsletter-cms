@@ -1,0 +1,41 @@
+<h1>Nuova pagina — <%= site ? site.name : '' %></h1>
+<form method="POST" action="/admin/pages">
+  <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+  <div class="form-group">
+    <label>URL path</label>
+    <input type="text" name="url_path" required placeholder="es. /chi-siamo /servizi/video-editing">
+  </div>
+  <div class="form-group">
+    <label>Titolo</label>
+    <input type="text" name="title">
+  </div>
+  <div class="form-group">
+    <label>Modalità layout</label>
+    <select name="layout_mode">
+      <option value="wrapped">Wrapped (con layout sito)</option>
+      <option value="standalone">Standalone (HTML puro)</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>
+      <input type="checkbox" name="published" value="true" checked> Pubblicata subito
+    </label>
+  </div>
+  <div class="form-group">
+    <label>Pubblica automaticamente il <span style="font-weight:normal;color:#999;">(opzionale — sovrascrive lo stato bozza)</span></label>
+    <input type="datetime-local" name="publish_at" value="">
+  </div>
+  <div class="form-group">
+    <label>Promemoria revisione il <span style="font-weight:normal;color:#999;">(opzionale)</span></label>
+    <input type="datetime-local" name="review_at" value="">
+  </div>
+  <div class="form-group">
+    <label>Contenuto HTML</label>
+    <div style="font-size:12px;color:#666;margin-bottom:5px;">
+      Usa <code>{{snippet:nome}}</code> per includere uno snippet.
+    </div>
+    <textarea name="content"><%= typeof page !== 'undefined' ? page.content : '' %></textarea>
+  </div>
+  <button type="submit" class="btn">Crea pagina</button>
+  <a href="/admin/pages?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

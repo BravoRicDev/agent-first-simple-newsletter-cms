@@ -1,0 +1,86 @@
+<% const qs = (overrides = {}) => {
+  const p = Object.assign({ mode, site_id: selectedSiteId, user_email: filters.user_email, from: filters.from, to: filters.to }, overrides);
+  return Object.entries(p).filter(([,v]) => v).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+} %>
+<h1>Audit</h1>
+<div style="margin-bottom:15px;">
+  <a href="?<%= qs({ mode: 'readable', page: 1 }) %>" class="btn btn-sm" style="background:<%= mode==='readable' ? '#4f46e5' : '#6b7280' %>">Leggibile</a>
+  <a href="?<%= qs({ mode: 'raw', page: 1 }) %>" class="btn btn-sm" style="background:<%= mode!=='readable' ? '#4f46e5' : '#6b7280' %>">Raw</a>
+</div>
+
+<form method="GET" style="margin-bottom:15px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+  <input type="hidden" name="mode" value="<%= mode %>">
+  <% if (user.role === 'superadmin') { %>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Filtra per sito</label>
+    <select name="site_id">
+      <option value="">Tutti</option>
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <% } %>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Utente (email)</label>
+    <input type="text" name="user_email" value="<%= filters.user_email %>" placeholder="es. mario@...">
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Dal</label>
+    <input type="date" name="from" value="<%= filters.from %>">
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Al</label>
+    <input type="date" name="to" value="<%= filters.to %>">
+  </div>
+  <button type="submit" class="btn">Filtra</button>
+</form>
+
+<% if (mode === 'readable') { %>
+<table>
+  <thead><tr><th>Quando</th><th>Cosa è successo</th></tr></thead>
+  <tbody>
+    <% if (entries.length === 0) { %>
+      <tr><td colspan="2" style="text-align:center;color:#999;">Nessun log trovato</td></tr>
+    <% } %>
+    <% entries.forEach(e => { %>
+    <tr>
+      <td style="white-space:nowrap;font-size:12px;"><%= new Date(e.created_at).toLocaleString('it-IT') %></td>
+      <td style="font-size:14px;"><%= e.message %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Data</th><th>Utente</th><th>Sito</th><th>Entità</th><th>Nome</th><th>Azione</th><th>IP</th></tr>
+  </thead>
+  <tbody>
+    <% if (logs.length === 0) { %>
+      <tr><td colspan="7" style="text-align:center;color:#999;">Nessun log trovato</td></tr>
+    <% } %>
+    <% const entityLabels = { page: 'Pagina', snippet: 'Snippet', user: 'Utente', site: 'Sito' }; %>
+    <% const actionLabels = { create: 'Creato', update: 'Modificato', delete: 'Eliminato', restore: 'Ripristinato' }; %>
+    <% logs.forEach(l => { %>
+      <tr>
+        <td style="white-space:nowrap;"><%= new Date(l.created_at).toLocaleString('it-IT') %></td>
+        <td><%= l.user_email || '—' %></td>
+        <td><%= l.site_name || '—' %></td>
+        <td><%= entityLabels[l.entity_type] || l.entity_type %></td>
+        <td><%= l.entity_name || l.entity_id || '—' %></td>
+        <td><span class="badge badge-<%= l.action === 'delete' ? 'disabled' : l.action === 'create' ? 'active' : 'wrapped' %>"><%= actionLabels[l.action] || l.action %></span></td>
+        <td style="font-size:12px;color:#999;"><%= l.ip_address || '—' %></td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
+
+<% if (totalPages > 1) { %>
+<div style="display:flex;gap:10px;align-items:center;margin-top:15px;font-size:13px;">
+  <% if (page > 1) { %><a href="?<%= qs({ page: page - 1 }) %>" class="btn btn-sm" style="background:#6b7280;">&laquo; Precedente</a><% } %>
+  <span>Pagina <%= page %> di <%= totalPages %> (<%= total %> voci totali)</span>
+  <% if (page < totalPages) { %><a href="?<%= qs({ page: page + 1 }) %>" class="btn btn-sm" style="background:#6b7280;">Successiva &raquo;</a><% } %>
+</div>
+<% } %>

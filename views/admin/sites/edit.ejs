@@ -1,0 +1,132 @@
+<h1>Modifica sito</h1>
+<form method="POST" action="/admin/sites/<%= site.id %>">
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name" value="<%= site.name %>" required>
+  </div>
+  <div class="form-group">
+    <label>Dominio primario</label>
+    <input type="text" name="domain" value="<%= site.domain %>" required placeholder="es. www.ilmiosito.it">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Cambiare il dominio primario aggiorna automaticamente i record di routing.</div>
+  </div>
+  <div class="form-group">
+    <label>Template layout</label>
+    <select name="layout_template">
+      <% layouts.forEach(l => { %>
+        <option value="<%= l %>" <%= site.layout_template === l ? 'selected' : '' %>><%= l %></option>
+      <% }) %>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Pagina homepage (es. /landing)</label>
+    <input type="text" id="homepage_path" name="homepage_path" value="<%= site.homepage_path || '' %>" placeholder="/">
+  </div>
+  <button type="submit" class="btn">Salva</button>
+  <a href="/admin/sites" class="btn" style="background:#6b7280;">Annulla</a>
+</form>
+
+<hr style="margin:30px 0;">
+<h2>Domini alias</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">Domini secondari che puntano allo stesso sito. Il dominio primario (<code><%= site.domain %></code>) è sempre attivo.</p>
+
+<% const aliases = domains.filter(d => d.domain !== site.domain); %>
+<% if (aliases.length === 0) { %>
+  <p style="font-size:14px;color:#999;margin-bottom:15px;">Nessun dominio alias configurato.</p>
+<% } else { %>
+  <table style="max-width:500px;">
+    <thead>
+      <tr><th>Dominio</th><th>Aggiunto il</th><th></th></tr>
+    </thead>
+    <tbody>
+      <% aliases.forEach(d => { %>
+        <tr>
+          <td><code><%= d.domain %></code></td>
+          <td><%= new Date(d.created_at).toLocaleDateString('it-IT') %></td>
+          <td>
+            <form method="POST" action="/admin/sites/<%= site.id %>/domains/<%= d.id %>/delete" style="display:inline;" onsubmit="return confirm('Rimuovere questo alias?')">
+              <button type="submit" class="btn btn-sm btn-danger">Rimuovi</button>
+            </form>
+          </td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+<% } %>
+
+<h3 style="margin-top:20px;font-size:15px;">Aggiungi dominio alias</h3>
+<form method="POST" action="/admin/sites/<%= site.id %>/domains" style="display:flex;gap:10px;align-items:flex-end;max-width:500px;">
+  <div class="form-group" style="flex:1;margin-bottom:0;">
+    <label>Dominio alias</label>
+    <input type="text" name="domain" required placeholder="es. altrodominio.com">
+  </div>
+  <button type="submit" class="btn">Aggiungi</button>
+</form>
+
+
+<% if (typeof siteModulesEnabled !== 'undefined') { %>
+<hr style="margin:30px 0;">
+<h2>Moduli</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">Funzionalità aggiuntive, attivabili solo per questo sito.</p>
+<% Object.entries(modulesRegistry).forEach(([key, mod]) => { %>
+<form method="POST" action="/admin/sites/<%= site.id %>/modules/<%= key %>/toggle" style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;max-width:600px;">
+  <input type="hidden" name="enabled" value="<%= siteModulesEnabled.has(key) ? '0' : '1' %>">
+  <input type="checkbox" <%= siteModulesEnabled.has(key) ? 'checked' : '' %> onchange="this.form.submit()" style="margin-top:3px;">
+  <div>
+    <strong><%= mod.name %></strong>
+    <div style="font-size:12px;color:#666;"><%= mod.description %></div>
+  </div>
+</form>
+<% }) %>
+<% } %>
+
+<hr style="margin:30px 0;">
+<h2>Redirect</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">Redirect HTTP gestiti dal server. Vengono applicati prima del rendering delle pagine per il sito servito dinamicamente da questa applicazione. <strong>Non</strong> vengono applicati se il sito è servito staticamente (export in <code>static/</code>) da un webserver esterno.</p>
+
+<% if (typeof redirects !== 'undefined' && redirects.length > 0) { %>
+<table style="max-width:700px;margin-bottom:20px;">
+  <thead>
+    <tr><th>Da</th><th>A</th><th>Codice</th><th>Creato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% redirects.forEach(r => { %>
+    <tr>
+      <td><code><%= r.from_path %></code></td>
+      <td><code><%= r.to_path %></code></td>
+      <td><span class="badge badge-wrapped"><%= r.code %></span></td>
+      <td><%= new Date(r.created_at).toLocaleDateString('it-IT') %></td>
+      <td>
+        <form method="POST" action="/admin/sites/<%= site.id %>/redirects/<%= r.id %>/delete" style="display:inline;"
+          onsubmit="return confirm('Eliminare questo redirect?')">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } else { %>
+<p style="font-size:14px;color:#999;margin-bottom:15px;">Nessun redirect configurato.</p>
+<% } %>
+
+<h3 style="font-size:15px;margin-bottom:10px;">Aggiungi redirect</h3>
+<form method="POST" action="/admin/sites/<%= site.id %>/redirects" style="display:flex;gap:10px;align-items:flex-end;max-width:700px;flex-wrap:wrap;">
+  <div class="form-group" style="flex:1;min-width:150px;margin-bottom:0;">
+    <label>Da (path)</label>
+    <input type="text" name="from_path" required placeholder="/vecchio-url">
+  </div>
+  <div class="form-group" style="flex:1;min-width:150px;margin-bottom:0;">
+    <label>A (path o URL)</label>
+    <input type="text" name="to_path" required placeholder="/nuovo-url">
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Codice</label>
+    <select name="code" style="width:90px;">
+      <option value="301">301</option>
+      <option value="302">302</option>
+      <option value="307">307</option>
+      <option value="308">308</option>
+    </select>
+  </div>
+  <button type="submit" class="btn">Aggiungi</button>
+</form>

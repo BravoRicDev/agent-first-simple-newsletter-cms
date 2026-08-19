@@ -1,0 +1,105 @@
+<h1>Clienti e servizi — <%= site ? site.name : '' %></h1>
+<% if (saved) { %><p style="color:#16a34a;">Salvato ✓</p><% } %>
+<% if (isSuperadmin) { %>
+  <p style="font-size:12px;color:#6b7280;">
+    Sito:
+    <select onchange="if(this.value) location='/admin/clients?site_id='+this.value">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= s.id === siteId ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </p>
+<% } %>
+
+<h2>Catalogo servizi</h2>
+<form method="POST" action="/admin/clients/services-catalog?site_id=<%= siteId %>" style="border:1px solid #e5e7eb;border-radius:6px;padding:16px;max-width:560px;margin-bottom:16px;">
+  <div style="margin-bottom:8px;">
+    <input name="key" placeholder="chiave (es. portale)" required style="padding:6px;width:100%;box-sizing:border-box;">
+  </div>
+  <div style="margin-bottom:8px;">
+    <input name="label" placeholder="label (es. Portale clienti)" required style="padding:6px;width:100%;box-sizing:border-box;">
+  </div>
+  <div style="margin-bottom:8px;">
+    <textarea name="description" placeholder="descrizione (opzionale)" rows="2" style="padding:6px;width:100%;box-sizing:border-box;"></textarea>
+  </div>
+  <button class="btn" type="submit">Aggiungi servizio</button>
+</form>
+<% if (catalog.length === 0) { %>
+  <p style="color:#6b7280;">Nessun servizio nel catalogo. Aggiungine uno sopra.</p>
+<% } else { %>
+  <table style="border-collapse:collapse;width:100%;max-width:560px;">
+    <tr style="text-align:left;border-bottom:1px solid #e5e7eb;">
+      <th style="padding:6px;">Chiave</th><th style="padding:6px;">Label</th><th style="padding:6px;">Stato</th><th style="padding:6px;"></th>
+    </tr>
+    <% catalog.forEach(s => { %>
+      <tr style="border-bottom:1px solid #f3f4f6;">
+        <td style="padding:6px;"><code><%= s.key %></code></td>
+        <td style="padding:6px;"><%= s.label %></td>
+        <td style="padding:6px;"><%= s.active ? '✅ attivo' : '⛔ disattivo' %></td>
+        <td style="padding:6px;">
+          <form method="POST" action="/admin/clients/services-catalog/<%= s.key %>/delete?site_id=<%= siteId %>" onsubmit="return confirm('Eliminare <%= s.key %>? Le assegnazioni ai clienti verranno rimosse.');">
+            <button class="btn" style="background:#dc2626;">Elimina</button>
+          </form>
+        </td>
+      </tr>
+    <% }) %>
+  </table>
+<% } %>
+
+<h2>Clienti (<%= clients.length %>)</h2>
+<% if (clients.length === 0) { %>
+  <p style="color:#6b7280;">Nessun cliente. Marca un contatto come cliente (oppure vinci un'opportunità: diventa cliente automaticamente).</p>
+<% } else { %>
+  <table style="border-collapse:collapse;width:100%;">
+    <tr style="text-align:left;border-bottom:1px solid #e5e7eb;">
+      <th style="padding:6px;">Email</th>
+      <th style="padding:6px;">Stato</th>
+      <th style="padding:6px;">Servizi attivi</th>
+    </tr>
+    <% clients.forEach(c => { %>
+      <tr style="border-bottom:1px solid #f3f4f6;">
+        <td style="padding:6px;"><%= c.email %></td>
+        <td style="padding:6px;">
+          <form method="POST" action="/admin/clients/<%= c.id %>/mark?site_id=<%= siteId %>" style="display:inline;">
+            <input type="hidden" name="is_client" value="1">
+            <select name="client_status" onchange="this.form.submit()">
+              <option value="active" <%= c.client_status === 'active' ? 'selected' : '' %>>active</option>
+              <option value="suspended" <%= c.client_status === 'suspended' ? 'selected' : '' %>>sospeso</option>
+              <option value="inactive" <%= c.client_status === 'inactive' ? 'selected' : '' %>>inattivo</option>
+            </select>
+          </form>
+          <form method="POST" action="/admin/clients/<%= c.id %>/mark?site_id=<%= siteId %>" style="display:inline;">
+            <input type="hidden" name="is_client" value="0">
+            <button class="btn" style="background:#6b7280;" title="Smarca cliente">✕</button>
+          </form>
+        </td>
+        <td style="padding:6px;">
+          <% if (c.active_services && c.active_services.length) { %>
+            <% c.active_services.forEach(k => { %>
+              <span style="display:inline-block;background:#e0e7ff;border-radius:4px;padding:2px 8px;margin:2px;font-size:12px;">
+                <%= k %>
+                <form method="POST" action="/admin/clients/<%= c.id %>/services/<%= k %>/set?site_id=<%= siteId %>" style="display:inline;">
+                  <input type="hidden" name="active" value="0">
+                  <button style="border:none;background:none;cursor:pointer;color:#dc2626;" title="Disattiva">✕</button>
+                </form>
+              </span>
+            <% }) %>
+          <% } else { %>
+            <span style="color:#9ca3af;">—</span>
+          <% } %>
+          <% if (catalog.length) { %>
+            <form method="POST" action="/admin/clients/<%= c.id %>/services/<%= '__select__' %>/set?site_id=<%= siteId %>" style="display:inline;margin-left:8px;" id="form-add-<%= c.id %>">
+              <select onchange="if(this.value){this.form.action='/admin/clients/<%= c.id %>/services/'+this.value+'/set?site_id=<%= siteId %>';this.form.submit();}">
+                <option value="">+ attiva…</option>
+                <% catalog.filter(s => s.active && !(c.active_services || []).includes(s.key)).forEach(s => { %>
+                  <option value="<%= s.key %>"><%= s.key %></option>
+                <% }) %>
+              </select>
+              <input type="hidden" name="active" value="1">
+            </form>
+          <% } %>
+        </td>
+      </tr>
+    <% }) %>
+  </table>
+<% } %>

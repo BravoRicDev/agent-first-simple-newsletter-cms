@@ -1,0 +1,415 @@
+<h1>Modifica pagina — <code><%= page.url_path %></code></h1>
+
+<% if (query && query.saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:16px;color:#065f46;font-size:14px;">
+  ✅ Pagina salvata correttamente.
+</div>
+<% } %>
+
+<% if (typeof analytics !== 'undefined') { %>
+<div style="display:flex;gap:15px;margin-bottom:20px;flex-wrap:wrap;">
+  <div style="background:#fff;border-radius:8px;padding:15px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);min-width:120px;">
+    <div style="font-size:24px;font-weight:700;color:#4f46e5;"><%= analytics.total_views %></div>
+    <div style="font-size:12px;color:#999;">Visite totali</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:15px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);min-width:120px;">
+    <div style="font-size:24px;font-weight:700;color:#059669;"><%= analytics.views_7d %></div>
+    <div style="font-size:12px;color:#999;">Ultimi 7 giorni</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:15px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);min-width:120px;">
+    <div style="font-size:24px;font-weight:700;color:#d97706;"><%= analytics.views_30d %></div>
+    <div style="font-size:12px;color:#999;">Ultimi 30 giorni</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:15px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);min-width:120px;">
+    <div style="font-size:24px;font-weight:700;color:#6b7280;"><%= analytics.unique_sessions %></div>
+    <div style="font-size:12px;color:#999;">Sessioni uniche</div>
+  </div>
+</div>
+<% if (top_referrers && top_referrers.length > 0) { %>
+<details style="margin-bottom:20px;">
+  <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#4f46e5;">Referrer principali</summary>
+  <table style="margin-top:10px;max-width:600px;">
+    <thead><tr><th>Referrer</th><th>Visite</th></tr></thead>
+    <tbody>
+      <% top_referrers.forEach(r => { %>
+      <tr><td style="font-size:12px;"><%= r.referrer %></td><td><%= r.cnt %></td></tr>
+      <% }) %>
+    </tbody>
+  </table>
+</details>
+<% } %>
+<% } %>
+
+<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#1e40af;">
+  💾 Ogni salvataggio crea automaticamente una versione di backup.
+  <a href="/admin/pages/<%= page.id %>/versions" target="_blank" style="color:#1d4ed8;font-weight:600;">Vedi cronologia versioni →</a>
+</div>
+
+<div class="alert alert-info">
+  <strong>Snippet disponibili:</strong>
+  <% if (snippets.length === 0) { %>
+    Nessuno snippet. <a href="/admin/snippets?site_id=<%= page.site_id %>">Crea snippet</a>
+  <% } else { %>
+    <% snippets.forEach(s => { %>
+      <code style="cursor:pointer;" class="snippet-insert" data-snippet-name="<%= s.name %>">{{snippet:<%= s.name %>}}</code>
+    <% }) %>
+  <% } %>
+</div>
+
+<div style="display:flex; gap:20px; align-items:flex-start;">
+  <div id="editorPane" style="flex:1; min-width:0;">
+    <form method="POST" action="/admin/pages/<%= page.id %>">
+      <div class="form-group">
+        <label>URL path</label>
+        <input type="text" name="url_path" value="<%= page.url_path %>" required>
+      </div>
+      <div class="form-group">
+        <label>Titolo</label>
+        <input type="text" name="title" value="<%= page.title %>">
+      </div>
+      <div class="form-group">
+        <label>Modalità layout</label>
+        <select name="layout_mode">
+          <option value="wrapped" <%= page.layout_mode === 'wrapped' ? 'selected' : '' %>>Wrapped (con layout sito)</option>
+          <option value="standalone" <%= page.layout_mode === 'standalone' ? 'selected' : '' %>>Standalone (HTML puro)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="published" value="true" <%= page.published ? 'checked' : '' %>> Pubblicata subito
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Pubblica automaticamente il</label>
+        <input type="datetime-local" name="publish_at"
+          value="<%= page.publish_at ? new Date(page.publish_at).toISOString().slice(0,16) : '' %>">
+      </div>
+      <div class="form-group">
+        <label>Promemoria revisione il</label>
+        <input type="datetime-local" name="review_at"
+          value="<%= page.review_at ? new Date(page.review_at).toISOString().slice(0,16) : '' %>">
+      </div>
+      <div class="form-group">
+        <label>Meta Title (SEO) <span style="font-weight:normal;color:#999;">(lascia vuoto per usare il titolo pagina)</span></label>
+        <input type="text" name="meta_title" value="<%= page.meta_title || '' %>" maxlength="255" style="width:100%;">
+      </div>
+      <div class="form-group">
+        <label>Meta Description (SEO)</label>
+        <textarea name="meta_description" rows="2" style="width:100%;"><%= page.meta_description || '' %></textarea>
+      </div>
+      <div class="form-group">
+        <label>Meta Keywords (SEO) <span style="font-weight:normal;color:#999;">(separati da virgola)</span></label>
+        <input type="text" name="meta_keywords" value="<%= page.meta_keywords || '' %>" placeholder="es. video editing, creativi, AI">
+      </div>
+      <div class="form-group">
+        <label>Canonical URL <span style="font-weight:normal;color:#999;">(lascia vuoto per usare l'URL della pagina stessa)</span></label>
+        <input type="text" name="canonical_url" value="<%= page.canonical_url || '' %>" placeholder="https://..." style="width:100%;">
+      </div>
+      <div class="form-group">
+        <label>Immagine social (Open Graph / Twitter) <span style="font-weight:normal;color:#999;">(lascia vuoto per usare l'immagine predefinita del sito)</span></label>
+        <input type="text" name="og_image" value="<%= page.og_image || '' %>" placeholder="https://... oppure /media/..." style="width:100%;">
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="noindex" <%= page.noindex ? 'checked' : '' %>>
+          Escludi dai motori di ricerca (noindex)
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Contenuto HTML</label>
+        <textarea name="content" id="pageContent"><%= page.content %></textarea>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="submit" class="btn">Salva</button>
+        <form method="POST" action="/admin/pages/<%= page.id %>/inline-to-files" style="display:inline" onsubmit="return confirm('Convertire tutti gli asset base64 inline in file locali? La pagina verrà aggiornata automaticamente.')"><button type="submit" class="btn" style="background:#7c3aed;">🗜️ Converti inline → file</button></form>
+        <form method="POST" action="/admin/pages/<%= page.id %>/extract-assets" style="display:inline" onsubmit="return confirm('Scaricare tutti gli asset esterni scaricabili in locale? Potrebbero volerci alcuni secondi.')"><button type="submit" class="btn" style="background:#0369a1;">⬇️ Scarica asset esterni</button></form>
+        <button type="button" class="btn" onclick="togglePreview()" style="background:#0369a1;">👁 Anteprima</button>
+        <button type="button" class="btn" onclick="rewriteContent()" style="background:#7c3aed;" title="Riscrivi il testo selezionato con l'AI">✨ Riscrivi con AI</button>
+        <a href="/admin/pages/<%= page.id %>/preview-tab" target="_blank" class="btn" style="background:#059669;">🔗 Apri anteprima pagina</a>
+        <button type="button" class="btn" onclick="loadInternalLinks()" style="background:#0891b2;" id="intLinkBtn">🔗 Suggerisci link interni</button>
+          <% if (page.published && site) { %>
+            <a href="https://<%= site.domain %><%= page.url_path %>" target="_blank" rel="noopener" class="btn" style="background:#059669;">🌐 Vedi sul sito</a>
+          <% } %>
+        <a href="/admin/pages?site_id=<%= page.site_id %>" class="btn" style="background:#6b7280;">Annulla</a>
+        <% if (query && query.converted > 0) { %>
+          <span style="color:#059669;font-size:13px;">✅ <%= query.converted %> asset convertiti
+            <% if (query.reused_conv > 0) { %>(<%= query.reused_conv %> già presenti, riusati)<% } %>
+          </span>
+        <% } %>
+        <% if (query && query.extracted > 0) { %>
+          <span style="color:#059669;font-size:13px;">✅ <%= query.extracted %> URL localizzati
+            <% if (query.reused > 0) { %>(<%= query.reused %> già presenti)<% } %>
+            <% if (query.deduped > 0) { %>, <%= query.deduped %> deduplicati per hash<% } %>
+          </span>
+        <% } %>
+        <% if (query && query.cross_page > 0) { %>
+          <span style="color:#059669;font-size:13px;">🔄 URL aggiornati in <%= query.cross_page %> altra/e pagina/e</span>
+        <% } %>
+        <% if (query && query.too_large > 0) { %>
+          <span style="color:#d97706;font-size:13px;">⚠️ <%= query.too_large %> file >20MB saltati — caricali manualmente</span>
+        <% } %>
+      </div>
+      <div id="internalLinks" style="margin-top:10px;font-size:13px;"></div>
+    </form>
+
+    <hr style="margin:30px 0;">
+    <h3 style="font-size:15px;margin-bottom:10px;">Post social pianificati</h3>
+
+    <% if (typeof social_posts !== 'undefined' && social_posts.length > 0) { %>
+    <table style="max-width:700px;margin-bottom:20px;">
+      <thead><tr><th>Piattaforma</th><th>Messaggio</th><th>Pianificato</th><th>Stato</th><th></th></tr></thead>
+      <tbody>
+        <% social_posts.forEach(p => { %>
+        <tr>
+          <td><span class="badge badge-wrapped"><%= p.platform %></span></td>
+          <td style="font-size:13px;max-width:300px;white-space:pre-wrap;"><%= p.message.slice(0,100) %><%= p.message.length > 100 ? '…' : '' %></td>
+          <td style="font-size:12px;white-space:nowrap;"><%= new Date(p.scheduled_at).toLocaleString('it-IT') %></td>
+          <td>
+            <% if (p.posted_at) { %><span class="badge badge-active">Pubblicato</span>
+            <% } else { %><span class="badge badge-standalone">In attesa</span><% } %>
+          </td>
+          <td>
+            <% if (!p.posted_at) { %>
+            <form method="POST" action="/admin/pages/<%= page.id %>/social/<%= p.id %>/delete" style="display:inline;"
+              onsubmit="return confirm('Annullare questo post?')">
+              <button type="submit" class="btn btn-sm btn-danger">Annulla</button>
+            </form>
+            <% } %>
+          </td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } else { %>
+    <p style="font-size:14px;color:#999;margin-bottom:15px;">Nessun post pianificato.</p>
+    <% } %>
+
+    <h4 style="font-size:14px;margin-bottom:10px;">Pianifica nuovo post</h4>
+    <form method="POST" action="/admin/pages/<%= page.id %>/social" style="max-width:600px;">
+      <div class="form-group">
+        <label>Piattaforma</label>
+        <select name="platform">
+          <option value="twitter">Twitter / X</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="facebook">Facebook</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Messaggio</label>
+        <textarea name="message" required style="min-height:100px;" placeholder="Testo del post..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Data e ora pubblicazione</label>
+        <input type="datetime-local" name="scheduled_at" required>
+      </div>
+      <button type="submit" class="btn">Pianifica</button>
+    </form>
+  </div>
+
+  <div id="previewPane" style="flex:1; min-width:0; display:none; position:sticky; top:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <strong style="font-size:13px;">Anteprima</strong>
+      <button type="button" onclick="closePreview()" class="btn btn-sm" style="background:#6b7280;">✕ Chiudi</button>
+    </div>
+    <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-forms" style="width:100%; height:70vh; border:1px solid #ddd; border-radius:6px; background:#fff;"></iframe>
+  </div>
+</div>
+
+<script>
+async function rewriteContent() {
+  const ta = document.getElementById('pageContent');
+  const selected = ta.value.substring(ta.selectionStart, ta.selectionEnd);
+  if (!selected) { alert('Seleziona prima un testo da riscrivere.'); return; }
+  const action = prompt('Azione: shorter, longer, professional, simple, friendly', 'simple');
+  if (!action) return;
+  ta.disabled = true;
+  try {
+    const res = await fetch('/admin/pages/rewrite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: selected, action })
+    });
+    const data = await res.json();
+    if (data.rewritten) {
+      ta.value = ta.value.substring(0, ta.selectionStart) + data.rewritten + ta.value.substring(ta.selectionEnd);
+    } else {
+      alert('Errore: ' + (data.error || 'Riscrittura fallita'));
+    }
+  } catch (err) {
+    alert('Errore di rete: ' + err.message);
+  }
+  ta.disabled = false;
+}
+
+async function loadInternalLinks() {
+  const btn = document.getElementById('intLinkBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Caricamento...';
+  try {
+    const res = await fetch('/admin/pages/<%= page.id %>/internal-links');
+    const data = await res.json();
+    const div = document.getElementById('internalLinks');
+    div.textContent = ''; // pulizia sicura (mai innerHTML con dati utente)
+    if (data.suggestions && data.suggestions.length > 0) {
+      const strong = document.createElement('strong');
+      strong.textContent = 'Link suggeriti:';
+      div.appendChild(strong);
+      const ul = document.createElement('ul');
+      ul.style.cssText = 'margin:8px 0;padding-left:20px;';
+      for (const s of data.suggestions) {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = s.url;
+        a.target = '_blank';
+        a.textContent = s.title;
+        li.appendChild(a);
+        li.appendChild(document.createTextNode(' (rilevanza: ' + s.score + ') '));
+        const b = document.createElement('button');
+        b.className = 'btn btn-sm';
+        b.textContent = '➕ Inserisci link';
+        // textContent su title/url: nessuna injection in onclick (XSS stored
+        // via titolo pagina con " o < che rompeva l'attributo).
+        b.addEventListener('click', () => insertLink(s.url, s.title));
+        li.appendChild(b);
+        ul.appendChild(li);
+      }
+      div.appendChild(ul);
+    } else {
+      const span = document.createElement('span');
+      span.style.color = '#999';
+      span.textContent = 'Nessun link interno suggerito.';
+      div.appendChild(span);
+    }
+  } catch {
+    const div = document.getElementById('internalLinks');
+    div.textContent = '';
+    const span = document.createElement('span');
+    span.style.color = '#d97706';
+    span.textContent = 'Errore nel caricamento dei suggerimenti.';
+    div.appendChild(span);
+  }
+  btn.disabled = false;
+  btn.textContent = '🔗 Suggerisci link interni';
+}
+
+function insertLink(url, title) {
+  const ta = document.getElementById('pageContent');
+  const link = `<a href="${url}">${title}</a>`;
+  ta.value = ta.value.substring(0, ta.selectionStart) + link + ta.value.substring(ta.selectionEnd);
+}
+
+function insertSnippet(name) {
+  const ta = document.getElementById('pageContent');
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const snippet = '{{snippet:' + name + '}}';
+  ta.value = ta.value.substring(0, start) + snippet + ta.value.substring(end);
+  ta.selectionStart = ta.selectionEnd = start + snippet.length;
+  ta.focus();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.snippet-insert').forEach(el =>
+    el.addEventListener('click', () => insertSnippet(el.dataset.snippetName))
+  );
+});
+
+function togglePreview() {
+  const pane = document.getElementById('previewPane');
+  if (pane.style.display === 'none') {
+    pane.style.display = 'block';
+    updatePreview();
+  } else {
+    closePreview();
+  }
+}
+
+function closePreview() {
+  document.getElementById('previewPane').style.display = 'none';
+}
+
+let previewTimeout;
+function updatePreview() {
+  clearTimeout(previewTimeout);
+  previewTimeout = setTimeout(async () => {
+    const content = document.getElementById('pageContent').value;
+    const layoutMode = document.querySelector('[name="layout_mode"]').value;
+    const resp = await fetch('/admin/pages/<%= page.id %>/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, layout_mode: layoutMode })
+    });
+    const html = await resp.text();
+    const frame = document.getElementById('previewFrame');
+    frame.srcdoc = html;
+  }, 400);
+}
+
+document.getElementById('pageContent').addEventListener('input', () => {
+  if (document.getElementById('previewPane').style.display !== 'none') {
+    updatePreview();
+  }
+});
+
+// ── Sezioni rilevate ────────────────────────────────────────────────────
+(function detectSections() {
+  const ta = document.getElementById('pageContent');
+  if (!ta) return;
+  const panel = document.createElement('div');
+  panel.id = 'sections-panel';
+  panel.style.cssText = 'margin-top:15px;display:none;';
+  panel.innerHTML = '<h4 style="font-size:14px;margin-bottom:10px;">Sezioni rilevate nella pagina</h4><div id="sections-list"></div>';
+  ta.parentNode.appendChild(panel);
+
+  function parseSections(html) {
+    const re = /data-section=["']([^"']+)["']/g;
+    const names = [];
+    let m;
+    while ((m = re.exec(html)) !== null) names.push(m[1]);
+    return [...new Set(names)];
+  }
+
+  function render() {
+    const sections = parseSections(ta.value);
+    const list = document.getElementById('sections-list');
+    if (sections.length === 0) { panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    list.innerHTML = sections.map(name =>
+      `<div style="margin-bottom:8px;">
+        <button type="button" class="btn btn-sm" style="background:#6b7280;" onclick="editSection('${name}')">
+          Modifica sezione: <code>${name}</code>
+        </button>
+      </div>`
+    ).join('');
+  }
+
+  window.editSection = function(name) {
+    const html = ta.value;
+    const re = new RegExp('(<[^>]+data-section=["\']' + name + '["\'][^>]*>)([\\s\\S]*?)(<\\/[^>]+>)', 'i');
+    const m = html.match(re);
+    if (!m) { alert('Sezione non trovata.'); return; }
+    const current = m[2];
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;display:flex;align-items:center;justify-content:center;';
+    modal.innerHTML =
+      '<div style="background:#fff;border-radius:10px;padding:25px;width:700px;max-width:95vw;max-height:80vh;overflow-y:auto;">' +
+      '<h3 style="font-size:16px;margin-bottom:15px;">Modifica sezione: <code>' + name + '</code></h3>' +
+      '<textarea id="section-editor" style="width:100%;min-height:200px;font-family:monospace;font-size:13px;padding:10px;border:1px solid #ddd;border-radius:6px;">' + current + '</textarea>' +
+      '<div style="display:flex;gap:10px;margin-top:15px;">' +
+      '<button class="btn" onclick="applySection(\'' + name + '\')">Applica</button>' +
+      '<button class="btn" style="background:#6b7280;" onclick="this.closest(\'div[style*=fixed]\').remove()">Annulla</button></div></div>';
+    document.body.appendChild(modal);
+  };
+
+  window.applySection = function(name) {
+    const newContent = document.getElementById('section-editor').value;
+    const re = new RegExp('(<[^>]+data-section=["\']' + name + '["\'][^>]*>)([\\s\\S]*?)(<\\/[^>]+>)', 'i');
+    ta.value = ta.value.replace(re, '$1' + newContent + '$3');
+    document.querySelector('div[style*="fixed"]').remove();
+    render();
+  };
+
+  ta.addEventListener('input', render);
+  render();
+})();
+</script>

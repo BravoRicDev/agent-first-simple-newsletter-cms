@@ -1,0 +1,60 @@
+services:
+  gestione-siti:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3000"
+    env_file: .env
+    volumes:
+      - ./media:/app/media
+      # Media PROTETTI (registrazioni, backup, export GDPR): serviti SOLO
+      # dalla route /media-protected/* con autorizzazione — MAI express.static.
+      - ./media-protected:/app/media-protected
+      - ./static:/app/static
+      - ./caddy-config:/app/caddy-config
+      - ./scripts:/app/scripts
+      - ./backups:/app/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      edge_net:
+        aliases:
+          - gestione-siti-cms
+      internal:
+      gestione_siti:
+        aliases:
+          - gestione-siti-cms
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cms_sites}
+      POSTGRES_USER: ${POSTGRES_USER:-cmsuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cmsuser} -d ${POSTGRES_DB:-cms_sites}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+
+networks:
+  edge_net:
+    external: true
+  internal:
+    driver: bridge
+  gestione_siti:
+    external: true

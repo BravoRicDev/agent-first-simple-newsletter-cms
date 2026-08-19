@@ -1,0 +1,55 @@
+<h1>Struttura sito — <%= site.name %></h1>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px;margin-bottom:25px;">
+  <div style="background:#fff;border-radius:8px;padding:15px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <div style="font-size:28px;font-weight:700;color:#4f46e5;"><%= pages.published.length %></div>
+    <div style="font-size:12px;color:#999;">Pagine pubblicate</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:15px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <div style="font-size:28px;font-weight:700;color:#d97706;"><%= pages.drafts.length %></div>
+    <div style="font-size:12px;color:#999;">Bozze</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:15px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <div style="font-size:28px;font-weight:700;color:#7c3aed;"><%= pages.scheduled.length %></div>
+    <div style="font-size:12px;color:#999;">Pianificate</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:15px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <div style="font-size:28px;font-weight:700;color:#059669;"><%= redirects.length %></div>
+    <div style="font-size:12px;color:#999;">Redirect</div>
+  </div>
+</div>
+
+<h3 style="font-size:15px;margin-bottom:10px;">Tutte le pagine</h3>
+<table>
+  <thead><tr><th>Path</th><th>Titolo</th><th>Stato</th><th>Ultima modifica</th><th></th></tr></thead>
+  <tbody>
+    <% [...pages.published, ...pages.drafts, ...pages.scheduled].forEach(p => { %>
+    <tr>
+      <td><code><%= p.url_path %></code></td>
+      <td><%= p.title %></td>
+      <td>
+        <% if (p.published) { %><span class="badge badge-active">Pubblicata</span>
+        <% } else if (p.publish_at) { %><span class="badge badge-wrapped">Pianificata</span>
+        <% } else { %><span class="badge badge-disabled">Bozza</span><% } %>
+      </td>
+      <td style="font-size:12px;"><%= new Date(p.updated_at).toLocaleDateString('it-IT') %></td>
+      <td><a href="/admin/pages/<%= p.id %>/edit" class="btn btn-sm">Modifica</a></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<% if (redirects.length > 0) { %>
+<h3 style="font-size:15px;margin:20px 0 10px;">Redirect attivi</h3>
+<table style="max-width:600px;">
+  <thead><tr><th>Da</th><th>A</th><th>Codice</th></tr></thead>
+  <tbody>
+    <% redirects.forEach(r => { %>
+    <tr>
+      <td><code><%= r.from_path %></code></td>
+      <td><code><%= r.to_path %></code></td>
+      <td><%= r.code %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

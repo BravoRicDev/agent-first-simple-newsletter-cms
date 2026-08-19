@@ -1,0 +1,44 @@
+<h1>Sequenze evergreen<%= site ? ' — ' + site.name : '' %></h1>
+
+<div class="actions">
+  <a href="/admin/newsletter?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Newsletter</a>
+</div>
+
+<div class="alert alert-info" style="margin-top:15px;">
+  Le sequenze si creano e si definiscono (step, ritardi, contenuti) tramite l'agente AI —
+  vedi <a href="/api/agent/guide" target="_blank">AGENT.md, sezione NEWSLETTER</a>.
+  Da qui puoi consultarle, attivarle/disattivarle o eliminarle.
+</div>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin:20px 0;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (sequences.length === 0) { %>
+  <p style="color:#999;font-size:14px;margin-top:15px;">Nessuna sequenza per questo sito.</p>
+<% } else { %>
+<table style="margin-top:15px;">
+  <thead>
+    <tr><th>Nome</th><th>Step</th><th>Stato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% sequences.forEach(s => { %>
+    <tr>
+      <td><%= s.name %></td>
+      <td><%= s.step_count %></td>
+      <td><span class="badge <%= s.active ? 'badge-active' : 'badge-disabled' %>"><%= s.active ? 'attiva' : 'disattiva' %></span></td>
+      <td><a href="/admin/newsletter/sequences/<%= s.id %>?site_id=<%= siteId %>" class="btn btn-sm">Dettagli</a></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

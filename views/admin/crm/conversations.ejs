@@ -1,0 +1,117 @@
+<h1>Conversazioni — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Canale</label>
+    <select name="channel" onchange="this.form.submit()">
+      <option value="">Tutti</option>
+      <option value="email" <%= channel === 'email' ? 'selected' : '' %>>Email</option>
+      <option value="whatsapp" <%= channel === 'whatsapp' ? 'selected' : '' %>>WhatsApp</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Stato</label>
+    <select name="status" onchange="this.form.submit()">
+      <option value="">Tutti</option>
+      <option value="open" <%= status === 'open' ? 'selected' : '' %>>Aperte</option>
+      <option value="pending" <%= status === 'pending' ? 'selected' : '' %>>In attesa</option>
+      <option value="closed" <%= status === 'closed' ? 'selected' : '' %>>Chiuse</option>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div style="display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap;">
+  <div style="flex:0 0 320px;min-width:280px;">
+    <% if (conversations.length === 0) { %>
+      <p style="color:#999;font-size:14px;">Nessuna conversazione.</p>
+    <% } else { %>
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <% conversations.forEach(c => { %>
+      <a href="/admin/conversations?site_id=<%= siteId %>&thread=<%= c.id %>&channel=<%= channel || '' %>&status=<%= status || '' %>"
+         style="display:block;border:1px solid #e5e7eb;border-radius:6px;padding:10px;text-decoration:none;color:inherit;background:<%= thread && thread.conversation && thread.conversation.id === c.id ? '#eef2ff' : '#fff' %>;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <strong style="font-size:13px;"><%= c.channel === 'whatsapp' ? '💬' : '✉️' %> <%= c.contact_email %></strong>
+          <span class="badge <%= c.status === 'closed' ? 'badge-disabled' : 'badge-active' %>"><%= c.status %></span>
+        </div>
+        <div style="font-size:12px;color:#555;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          <%= c.last_subject || c.subject || '(nessun oggetto)' %>
+        </div>
+        <div style="font-size:11px;color:#999;margin-top:3px;">
+          <%= c.messages_count %> messaggio/i · <%= c.last_message_at ? new Date(c.last_message_at).toLocaleString('it-IT') : '' %>
+        </div>
+      </a>
+      <% }) %>
+    </div>
+    <% } %>
+  </div>
+
+  <div style="flex:1;min-width:320px;">
+    <% if (!thread) { %>
+      <p style="color:#999;font-size:14px;">Seleziona una conversazione per leggere il thread.</p>
+    <% } else { %>
+      <div style="border:1px solid #e5e7eb;border-radius:6px;padding:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div>
+            <strong><%= thread.conversation.channel === 'whatsapp' ? '💬' : '✉️' %> <%= thread.conversation.contact_email %></strong>
+            <span style="color:#666;font-size:13px;"> — <%= thread.conversation.subject || '(nessun oggetto)' %></span>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <% ['open','pending','closed'].forEach(s => { %>
+              <form method="POST" action="/admin/conversations/<%= thread.conversation.id %>/status" style="display:inline;">
+                <input type="hidden" name="site_id" value="<%= siteId %>">
+                <input type="hidden" name="status" value="<%= s %>">
+                <button class="btn btn-sm <%= thread.conversation.status === s ? '' : 'btn-secondary' %>"><%= s === 'open' ? 'Aperta' : s === 'pending' ? 'In attesa' : 'Chiusa' %></button>
+              </form>
+            <% }) %>
+            <form method="POST" action="/admin/conversations/<%= thread.conversation.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare la conversazione e tutti i messaggi?');">
+              <input type="hidden" name="site_id" value="<%= siteId %>">
+              <button class="btn btn-sm btn-danger">🗑️</button>
+            </form>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px;max-height:400px;overflow-y:auto;padding-right:4px;">
+          <% if (thread.messages.length === 0) { %>
+            <p style="color:#999;font-size:13px;">Nessun messaggio. Scrivi il primo qui sotto.</p>
+          <% } %>
+          <% thread.messages.forEach(m => { %>
+            <div style="border-radius:8px;padding:10px 12px;max-width:85%;<%= m.direction === 'out' ? 'background:#eef2ff;align-self:flex-end;' : 'background:#f3f4f6;align-self:flex-start;' %>">
+              <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:4px;">
+                <strong style="font-size:12px;"><%= m.direction === 'out' ? '→ inviato' : '← ricevuto' %></strong>
+                <span style="font-size:11px;color:#999;"><%= new Date(m.created_at).toLocaleString('it-IT') %></span>
+              </div>
+              <% if (m.subject) { %><div style="font-size:12px;color:#555;margin-bottom:3px;"><strong><%= m.subject %></strong></div><% } %>
+              <div style="font-size:13px;white-space:pre-wrap;word-break:break-word;"><%= m.body %></div>
+            </div>
+          <% }) %>
+        </div>
+
+        <form method="POST" action="/admin/conversations/<%= thread.conversation.id %>/messages" style="margin-top:14px;display:flex;gap:8px;align-items:flex-end;">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <div class="form-group" style="margin-bottom:0;flex:0 0 120px;">
+            <label>Direzione</label>
+            <select name="direction">
+              <option value="out">→ inviato</option>
+              <option value="in">← ricevuto</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0;flex:1;">
+            <label>Messaggio</label>
+            <textarea name="body" rows="2" required placeholder="Scrivi o registra un messaggio…"></textarea>
+          </div>
+          <button class="btn">Invia</button>
+        </form>
+      </div>
+    <% } %>
+  </div>
+</div>

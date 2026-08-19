@@ -1,0 +1,20 @@
+<h1>Modifica snippet — <code><%= snippet.name %></code></h1>
+<div class="alert alert-info">
+  Per usare questo snippet in una pagina, scrivi <code>{{snippet:<%= snippet.name %>}}</code>
+</div>
+<form method="POST" action="/admin/snippets/<%= snippet.id %>">
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name" value="<%= snippet.name %>" required>
+  </div>
+  <div class="form-group">
+    <label>Descrizione</label>
+    <input type="text" name="description" value="<%= snippet.description %>">
+  </div>
+  <div class="form-group">
+    <label>Contenuto HTML/JS/CSS</label>
+    <textarea name="content" style="min-height:300px;"><%= snippet.content %></textarea>
+  </div>
+  <button type="submit" class="btn">Salva</button>
+  <a href="/admin/snippets?site_id=<%= snippet.site_id %>" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

@@ -1,0 +1,21 @@
+<h1>Nuovo template</h1>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  Scrivi <code>{{nome_campo}}</code> nel contenuto per definire i placeholder da compilare all'istanziazione.
+</p>
+<form method="POST" action="/admin/templates">
+  <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name" required placeholder="es. Scheda prodotto">
+  </div>
+  <div class="form-group">
+    <label>Descrizione</label>
+    <input type="text" name="description" placeholder="es. Template per le pagine prodotto">
+  </div>
+  <div class="form-group">
+    <label>Contenuto HTML</label>
+    <textarea name="content" style="min-height:300px;" placeholder="<h1>{{titolo}}</h1><p>{{descrizione}}</p>"></textarea>
+  </div>
+  <button type="submit" class="btn">Crea template</button>
+  <a href="/admin/templates?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

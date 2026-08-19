@@ -1,0 +1,188 @@
+<h1>Agente AI — Guida rapida</h1>
+<p style="margin-bottom:25px;color:#666;font-size:14px;">Usa questa pagina per configurare un agente AI (Claude Code, OpenCode) che possa leggere e modificare pagine e snippet del CMS automaticamente tramite API.</p>
+
+<!-- URL -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">🌐 Il tuo URL</h3>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">L'agente deve sapere a che URL connettersi. Copia questo indirizzo:</p>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <code id="baseUrlDisplay" style="flex:1;padding:10px 14px;background:#f5f5f5;border-radius:6px;font-size:14px;border:1px solid #ddd;"><%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %></code>
+    <button class="btn" onclick="copyText('<%= typeof baseUrl !== 'undefined' ? baseUrl.replace(/'/g, "\\'") : '' %>')" style="white-space:nowrap;">📋 Copia URL</button>
+  </div>
+</div>
+
+<!-- Istruzioni per l'agente -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">🤖 Istruzioni da dare all'agente</h3>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">Copia questo blocco e dallo all'agente AI all'inizio della conversazione. L'agente ti guiderà passo passo.</p>
+  <div style="background:#f5f5f5;border-radius:6px;padding:14px;border:1px solid #ddd;font-size:13px;line-height:1.6;white-space:pre-wrap;font-family:monospace;margin-bottom:10px;" id="agentInstructionsBlock">
+Sei un assistente AI che gestisce il CMS <%= app.name %> dell'utente.
+URL base: <%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %>
+
+REGOLA 1: Prima di ogni modifica a una pagina o snippet, chiama sempre
+GET {url}/api/agent/sites/{siteId}/pages/{pageId}/versions
+e annota l'id dell'ultima versione. Se la modifica va storta,
+usa POST .../versions/{versionId}/restore per tornare indietro.
+
+REGOLA 2: Non modificare MAI il contenuto HTML intero con PUT.
+Usa sempre find-replace per modifiche testuali.
+
+REGOLA 3: Se trovi URL esterni nella pagina, chiama extract-assets.
+   Se la risposta contiene "tooLarge", chiedi all'utente:
+   "X file superano i 20MB. Posso scaricarli comunque? (forzando il download via force:true)"
+   Se l'utente dice sì, richiama extract-assets con body: { "force": true }.
+   NON scaricare file in locale e caricarli manualmente — usa sempre l'API.
+   Se trovi base64 inline, usa inline-to-files.
+
+Per autenticarti, segui il flusso interattivo:
+
+1. Chiedi all'utente: "Qual è la tua email?"
+2. Chiama POST /api/auth/login con { "email": "..." } per inviare il codice OTP
+3. Chiedi all'utente: "Qual è il codice OTP che hai ricevuto via email?"
+4. Chiama POST /api/agent/verify-otp con { "email": "...", "otp": "..." }
+5. La risposta contiene "token" e "user". Salva il token.
+6. Usa il token come header "Authorization: Bearer &lt;token&gt;" per tutte le chiamate successive.
+
+Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
+  <button class="btn" onclick="copyInstructions()">📋 Copia istruzioni per l'agente</button>
+</div>
+
+<!-- Passo passo -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">📋 Come funziona (passo passo)</h3>
+  <table>
+    <thead>
+      <tr><th style="width:50%;">🤖 L'agente fa questo</th><th style="width:50%;">🧑 Tu fai questo</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Ti chiede: "Qual è la tua email?"</td><td>Rispondi con la tua email</td></tr>
+      <tr><td>Chiama <code>/api/auth/login</code> per inviarti l'OTP</td><td>Controlli la posta, ricevi il codice</td></tr>
+      <tr><td>Ti chiede: "Qual è il codice OTP?"</td><td>Leggi l'email e dici il codice</td></tr>
+      <tr><td>Chiama <code>/api/agent/verify-otp</code> e ottiene il token</td><td>✅ Fatto, non devi fare altro</td></tr>
+      <tr><td style="color:#166534;font-weight:600;">Usa le API per leggere/modificare pagine e snippet</td><td>Controlla il risultato sul sito</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Endpoint -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">🔌 Cosa può fare l'agente</h3>
+  <table>
+    <thead>
+      <tr><th>Endpoint</th><th>Metodo</th><th>Descrizione</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>/api/agent/me</code></td><td>GET</td><td>Utente corrente e scadenza token</td></tr>
+      <tr><td><code>/api/agent/sites</code></td><td>GET</td><td>Lista siti accessibili</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages</code></td><td>GET</td><td>Lista pagine di un sito</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid</code></td><td>GET</td><td>Contenuto completo pagina</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages</code></td><td>POST</td><td>Crea nuova pagina</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid</code></td><td>PUT</td><td>Modifica pagina esistente</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/search?q=...</code></td><td>GET</td><td>Cerca pagine per testo nel contenuto</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/bulk-publish</code></td><td>POST</td><td>Pubblica/nascondi più pagine insieme</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/publish-toggle</code></td><td>POST</td><td>Cambia pubblicazione senza toccare il contenuto</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/duplicate</code></td><td>POST</td><td>Duplica pagina con nuovo URL</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/rename-url</code></td><td>POST</td><td>Rinomina URL senza toccare il contenuto</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/find-replace</code></td><td>POST</td><td>Cerca e sostituisci nel contenuto HTML</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/versions</code></td><td>GET</td><td>Lista versioni precedenti</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/versions/:vid/restore</code></td><td>POST</td><td>Ripristina una versione precedente</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/snippet-usage</code></td><td>GET</td><td>Quali {{snippet:...}} sono usati in questa pagina</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/rendered</code></td><td>GET</td><td>HTML finale con snippet espansi</td></tr>
+      <tr><td><code>/api/agent/sites/:id/pages/:pid/diff/:vid</code></td><td>GET</td><td>Differenza tra pagina corrente e versione</td></tr>
+      <tr><td><code>/api/agent/sites/:id/snippets</code></td><td>GET</td><td>Lista snippet con contenuto</td></tr>
+      <tr><td><code>/api/agent/sites/:id/snippets/:sid</code></td><td>GET</td><td>Snippet singolo</td></tr>
+      <tr><td><code>/api/agent/sites/:id/snippets</code></td><td>POST</td><td>Crea nuovo snippet</td></tr>
+      <tr><td><code>/api/agent/sites/:id/snippets/:sid</code></td><td>PUT</td><td>Modifica snippet esistente</td></tr>
+      <tr><td><code>/api/agent/sites/:id/snippets/:sid/find-replace</code></td><td>POST</td><td>Cerca e sostituisci nel contenuto dello snippet</td></tr>
+      <tr><td><code>/api/agent/sites/:id/media</code></td><td>GET</td><td>Lista file media del sito</td></tr>
+      <tr><td><code>/api/agent/sites/:id/media/upload</code></td><td>POST</td><td>Carica file locale (multipart form-data)</td></tr>
+      <tr><td><code>/api/agent/sites/:id/media/fetch-url</code></td><td>POST</td><td>Scarica URL esterno nei media</td></tr>
+      <tr><td><code>/api/agent/sites/:id/media/:filename</code></td><td>DELETE</td><td>Elimina un file media</td></tr>
+      <tr><td><code>/api/agent/sites/:id/settings</code></td><td>GET</td><td>Impostazioni del sito</td></tr>
+      <tr><td><code>/api/agent/sites/:id/settings/:key</code></td><td>PUT</td><td>Aggiorna impostazione (anche homepage_path)</td></tr>
+      <tr><td><code>/api/agent/sites/:id/audit-log</code></td><td>GET</td><td>Registro attività (filtrabile per entity_type)</td></tr>
+      <tr><td><code>/api/agent/sites/:id/stats</code></td><td>GET</td><td>Riepilogo di pagine, snippet e media</td></tr>
+      <tr><td><code>/api/auth/login</code></td><td>POST</td><td>Invia OTP via email (usato per login interattivo)</td></tr>
+      <tr><td><code>/api/agent/verify-otp</code></td><td>POST</td><td>Verifica email+OTP, restituisce il token (usato per login interattivo)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Cronologia importazioni -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">📥 Ultimi contenuti importati da URL</h3>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">Cronologia delle chiamate a <code>/api/agent/ingest</code> (l'agente scarica una pagina esterna e ne estrae il contenuto).</p>
+  <table>
+    <thead>
+      <tr><th>Quando</th><th>Sito</th><th>Utente</th><th>URL sorgente</th><th>Titolo</th><th>Parole</th></tr>
+    </thead>
+    <tbody>
+      <% if (!ingestLog || ingestLog.length === 0) { %>
+        <tr><td colspan="6" style="text-align:center;color:#999;">Nessuna importazione registrata</td></tr>
+      <% } else { %>
+        <% ingestLog.forEach(l => { %>
+        <tr>
+          <td style="white-space:nowrap;font-size:12px;"><%= new Date(l.created_at).toLocaleString('it-IT') %></td>
+          <td><%= l.site_name || '—' %></td>
+          <td><%= l.user_email || '—' %></td>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="<%= l.source_url %>" target="_blank" rel="noopener"><%= l.source_url %></a></td>
+          <td><%= l.title || '—' %></td>
+          <td><%= l.word_count ?? '—' %></td>
+        </tr>
+        <% }) %>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+
+<!-- File di riferimento -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">📄 File di riferimento</h3>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">Scarica il file <code>AGENT.md</code> e daglielo all'agente dicendo: <em>"Leggi questo file, contiene tutte le API che puoi usare."</em></p>
+  <a href="/api/agent/guide" target="_blank" class="btn" style="background:#059669;">⬇️ Scarica AGENT.md</a>
+  <button class="btn" onclick="copyFullGuide()" style="background:#6b7280;margin-left:8px;">📋 Copia AGENT.md completo</button>
+</div>
+
+<script>
+function copyText(text) {
+  copyToClipboard(text, event.target, '✅ Copiato!');
+}
+
+function copyInstructions() {
+  const text = document.getElementById('agentInstructionsBlock').textContent;
+  copyToClipboard(text, event.target, '✅ Istruzioni copiate!');
+}
+
+async function copyFullGuide() {
+  const btn = event.target;
+  try {
+    const r = await fetch('/api/agent/guide');
+    if (!r.ok) throw new Error('Errore ' + r.status);
+    const text = await r.text();
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      const orig = btn.textContent;
+      btn.textContent = '✅ Copiato!';
+      setTimeout(() => btn.textContent = orig, 2000);
+    } else {
+      window.prompt('Copia questo testo (Ctrl+A, Ctrl+C):', text);
+    }
+  } catch (err) {
+    alert('Impossibile copiare: ' + err.message);
+  }
+}
+
+function copyToClipboard(text, btn, feedback) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = btn.textContent;
+      btn.textContent = feedback;
+      setTimeout(() => btn.textContent = orig, 2000);
+    }).catch(() => {
+      window.prompt('Copia questo testo (Ctrl+A, Ctrl+C):', text);
+    });
+  } else {
+    window.prompt('Copia questo testo (Ctrl+A, Ctrl+C):', text);
+  }
+}
+</script>

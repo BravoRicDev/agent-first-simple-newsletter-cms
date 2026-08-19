@@ -1,0 +1,53 @@
+<h1>Template — <%= site ? site.name : '' %></h1>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  I template sono pagine predefinite con placeholder <code>{{nome_campo}}</code>.
+  Usali per creare pagine simili rapidamente.
+</p>
+
+<div class="actions">
+  <a href="/admin/templates/new?site_id=<%= site ? site.id : '' %>" class="btn">Nuovo template</a>
+</div>
+
+<% if (templates.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun template creato.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Descrizione</th><th>Placeholder</th><th>Creato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% templates.forEach(t => { %>
+    <tr>
+      <td><strong><%= t.name %></strong></td>
+      <td><%= t.description || '—' %></td>
+      <td>
+        <% const ph = Array.isArray(t.placeholders) ? t.placeholders : JSON.parse(t.placeholders || '[]'); %>
+        <% ph.forEach(p => { %><code style="margin-right:4px;">{{<%= p %>}}</code><% }) %>
+        <% if (ph.length === 0) { %><span style="color:#999;font-size:12px;">nessuno</span><% } %>
+      </td>
+      <td><%= new Date(t.created_at).toLocaleDateString('it-IT') %></td>
+      <td>
+        <a href="/admin/templates/<%= t.id %>/instantiate?site_id=<%= site ? site.id : '' %>" class="btn btn-sm">Usa</a>
+        <form method="POST" action="/admin/templates/<%= t.id %>/delete" style="display:inline;"
+          class="template-delete-form" data-template-name="<%= t.name %>">
+          <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.template-delete-form').forEach(form => {
+    form.addEventListener('submit', function(event) {
+      if (!confirm('Eliminare il template ' + form.dataset.templateName + '?')) {
+        event.preventDefault();
+      }
+    });
+  });
+});
+</script>

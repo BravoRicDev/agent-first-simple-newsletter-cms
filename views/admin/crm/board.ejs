@@ -1,0 +1,327 @@
+<h1>Opportunità — Board (<%= site ? site.name : '' %>)</h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<!-- Toggle Lista | Board -->
+<div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;">
+  <a class="btn" style="background:#e5e7eb;color:#374151;" href="/admin/opportunities?site_id=<%= siteId %>">☰ Lista</a>
+  <span class="btn" style="background:#4f46e5;">⋮⋮ Board</span>
+</div>
+
+<style>
+  .board-root { display:flex; flex-direction:column; gap:14px; }
+  .pipe-tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .pipe-tab { padding:8px 16px; border-radius:8px; background:#fff; border:1px solid #e5e7eb;
+              color:#4b5563; text-decoration:none; font-size:14px; font-weight:600; cursor:pointer; }
+  .pipe-tab:hover { border-color:#c7d2fe; color:#4f46e5; }
+  .pipe-tab.active { background:#4f46e5; border-color:#4f46e5; color:#fff; }
+
+  .kanban { display:flex; gap:14px; overflow-x:auto; align-items:flex-start; padding-bottom:10px; }
+  .kcol { flex:0 0 280px; min-width:280px; background:#eef0f4; border-radius:10px;
+          display:flex; flex-direction:column; max-height:calc(100vh - 240px); }
+  .kcol-head { padding:12px 14px; font-weight:700; font-size:14px; color:#111827;
+               display:flex; justify-content:space-between; align-items:center; }
+  .kcol-head .count { background:#d7dbe4; color:#374151; border-radius:10px;
+                      padding:1px 9px; font-size:12px; }
+  .kcol-head .sum { font-size:12px; font-weight:600; color:#6b7280; }
+  .kcol-body { padding:0 8px 8px; overflow-y:auto; flex:1; min-height:60px; }
+  .kcol.dragover { background:#e0e7ff; outline:2px dashed #4f46e5; outline-offset:-2px; }
+
+  .kcard { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:12px;
+           margin-bottom:8px; box-shadow:0 1px 2px rgba(0,0,0,0.05); cursor:grab;
+           position:relative; transition:box-shadow .15s ease; }
+  .kcard:hover { box-shadow:0 4px 10px rgba(0,0,0,0.12); }
+  .kcard.dragging { opacity:0.5; }
+  .kcard-title { font-weight:700; font-size:14px; color:#111827; margin-bottom:6px; word-break:break-word; }
+  .kcard-contact { font-size:13px; color:#6b7280; margin-bottom:8px; word-break:break-word; }
+  .kcard-amount { font-size:14px; font-weight:700; color:#111827; }
+  .kcard-meta { display:flex; align-items:center; gap:10px; margin-top:6px; font-size:12px; color:#6b7280; }
+  .kcard-badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+  .badge-open { background:#dbeafe; color:#1d4ed8; }
+  .badge-won { background:#d1fae5; color:#065f46; }
+  .badge-lost { background:#fee2e2; color:#991b1b; }
+  .prob-bar { height:4px; background:#e5e7eb; border-radius:2px; margin-top:6px; }
+  .prob-fill { height:4px; background:#4f46e5; border-radius:2px; }
+  .kcard-icons { position:absolute; top:10px; right:10px; display:flex; gap:6px; }
+  .kicon { background:#f3f4f6; border:none; border-radius:6px; padding:4px 6px; cursor:pointer;
+           font-size:12px; color:#4b5563; text-decoration:none; }
+  .kicon:hover { background:#e0e7ff; color:#4f46e5; }
+  .kcard-footer { margin-top:10px; padding-top:8px; border-top:1px solid #f3f4f6;
+                  display:flex; justify-content:space-between; font-size:11px; color:#9ca3af; }
+
+  /* Panel note */
+  .notes-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.35); display:none;
+                   align-items:center; justify-content:center; z-index:1000; }
+  .notes-overlay.open { display:flex; }
+  .notes-panel { background:#fff; border-radius:12px; width:480px; max-width:92vw;
+                 max-height:80vh; display:flex; flex-direction:column; }
+  .notes-head { padding:16px 18px; border-bottom:1px solid #eef0f4; display:flex;
+                justify-content:space-between; align-items:center; }
+  .notes-head h3 { font-size:15px; color:#111827; margin:0; }
+  .notes-body { padding:14px 18px; overflow-y:auto; flex:1; }
+  .note-item { padding:10px 0; border-bottom:1px solid #f3f4f6; }
+  .note-item:last-child { border-bottom:none; }
+  .note-meta { font-size:11px; color:#9ca3af; margin-bottom:3px; }
+  .note-body { font-size:13px; color:#374151; white-space:pre-wrap; word-break:break-word; }
+  .notes-empty { color:#9ca3af; font-size:13px; text-align:center; padding:20px 0; }
+  .notes-add { padding:12px 18px; border-top:1px solid #eef0f4; display:flex; gap:8px; }
+  .notes-add input { flex:1; padding:9px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:13px; }
+
+  .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); padding:10px 18px;
+           border-radius:8px; color:#fff; font-size:14px; z-index:2000; display:none; box-shadow:0 4px 12px rgba(0,0,0,0.2); }
+  .toast.ok { background:#10b981; } .toast.err { background:#ef4444; }
+</style>
+
+<div class="board-root">
+  <!-- Selettore pipeline (multi-funnel stile CRM) -->
+  <% if (pipelines.length === 0) { %>
+    <p style="color:#9ca3af;font-size:14px;">Nessuna pipeline configurata per questo sito. Creane una nella pagina Pipeline, oppure assegna le opportunità a una pipeline.</p>
+  <% } else { %>
+  <div class="pipe-tabs">
+    <% pipelines.forEach(p => { %>
+      <a class="pipe-tab <%= currentPipeline && currentPipeline.id === p.id ? 'active' : '' %>"
+         href="/admin/opportunities/board?site_id=<%= siteId %>&pipeline_id=<%= p.id %>"><%= p.name || ('Pipeline ' + p.id) %></a>
+    <% }) %>
+  </div>
+
+  <div class="kanban" id="kanban">
+    <% board.forEach(col => { %>
+      <div class="kcol" data-stage="<%= col.key %>">
+        <div class="kcol-head">
+          <span><%= col.label %> <span class="count"><%= col.items.length %></span></span>
+          <span class="sum">
+            <%= new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(
+                  col.items.reduce((s, o) => s + (o.amount || 0), 0)) %>
+          </span>
+        </div>
+        <div class="kcol-body">
+          <% col.items.forEach(o => { %>
+            <div class="kcard" draggable="true" data-id="<%= o.id %>" data-stage="<%= o.stage || '' %>">
+              <div class="kcard-icons">
+                <button class="kicon" title="Note" onclick="openNotes(<%= o.id %>, this)">💬</button>
+                <a class="kicon" title="Dettaglio" href="/admin/opportunities/<%= o.id %>?site_id=<%= siteId %>">↗</a>
+              </div>
+              <div class="kcard-title"><%= o.title %></div>
+              <div class="kcard-contact"><%= o.contact_name || o.contact_email %></div>
+              <div class="kcard-amount"><%= new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(o.amount || 0) %></div>
+              <% if (o.probability != null) { %>
+                <div class="prob-bar"><div class="prob-fill" style="width:<%= Math.min(100, o.probability) %>%"></div></div>
+              <% } %>
+              <div class="kcard-meta">
+                <span class="kcard-badge <%= o.status === 'won' ? 'badge-won' : o.status === 'lost' ? 'badge-lost' : 'badge-open' %>"><%= o.status || 'open' %></span>
+                <% if (o.probability != null) { %><span><%= o.probability %>%</span><% } %>
+              </div>
+              <div class="kcard-footer">
+                <span><%= o.notes_count ? '💬 ' + o.notes_count : '—' %></span>
+                <% if (o.call_verdict && o.call_verdict.valida) { %>
+                  <% const cv = o.call_verdict.valida; %>
+                  <% const vTip = o.call_verdict.motivazione
+                       || (o.call_verdict.criteri
+                           ? 'apertura: ' + (o.call_verdict.criteri.apertura_lead || '-')
+                             + ' | info: ' + ((o.call_verdict.criteri.info_raccolte || []).join(',') || '-')
+                           : ''); %>
+                  <span title="<%= vTip %>" style="cursor:help;"
+                        class="kcard-badge <%= cv === 'si' ? 'badge-won' : cv === 'no' ? 'badge-lost' : 'badge-dubbia' %>"><%= cv === 'si' ? '✓' : cv === 'no' ? '✗' : '?' %> <%= cv %></span>
+                <% } %>
+                <% if (o.expected_close_at) { %>
+                  <span>📅 <%= new Date(o.expected_close_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }) %></span>
+                <% } %>
+                <span>🕒 <%= new Date(o.updated_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) %></span>
+              </div>
+            </div>
+          <% }) %>
+          <% if (col.items.length === 0) { %>
+            <div style="color:#b0b5c0;font-size:12px;text-align:center;padding:14px 0;">Nessuna card</div>
+          <% } %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+  <% } %>
+</div>
+
+<!-- Pannello note -->
+<div class="notes-overlay" id="notesOverlay">
+  <div class="notes-panel">
+    <div class="notes-head">
+      <h3>Note <span id="notesTitle" style="font-weight:400;color:#6b7280;font-size:13px;"></span></h3>
+      <button class="kicon" onclick="closeNotes()">✕</button>
+    </div>
+    <div class="notes-body" id="notesBody"><div class="notes-empty">Caricamento…</div></div>
+    <div class="notes-add">
+      <input id="noteInput" type="text" placeholder="Aggiungi nota…" onkeydown="if(event.key==='Enter')addNote()">
+      <button class="btn btn-sm" onclick="addNote()">Aggiungi</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const SITE_ID = <%= siteId %>;
+  let currentNotesOpp = null;
+
+  function showToast(msg, ok) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'err'); t.style.display = 'block';
+    clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.display = 'none'; }, 2500);
+  }
+
+  // ── Drag & drop (HTML5 nativo) ──────────────────────────────────────
+  const kanban = document.getElementById('kanban');
+  let dragId = null, draggingEl = null;
+
+  document.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.kcard');
+    if (!card) return;
+    draggingEl = card; dragId = card.dataset.id;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.dataset.id);
+  });
+
+  document.addEventListener('dragend', (e) => {
+    if (draggingEl) { draggingEl.classList.remove('dragging'); draggingEl = null; }
+    document.querySelectorAll('.kcol.dragover').forEach(c => c.classList.remove('dragover'));
+    dragId = null;
+  });
+
+  document.querySelectorAll('.kcol-body').forEach(body => {
+    body.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const col = body.closest('.kcol');
+      col.classList.add('dragover');
+      e.dataTransfer.dropEffect = 'move';
+    });
+    body.addEventListener('dragleave', (e) => {
+      if (!body.contains(e.relatedTarget)) body.closest('.kcol').classList.remove('dragover');
+    });
+    body.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const col = body.closest('.kcol');
+      col.classList.remove('dragover');
+      const id = e.dataTransfer.getData('text/plain') || dragId;
+      const newStage = col.dataset.stage;
+      const card = document.querySelector('.kcard[data-id="' + id + '"]');
+      if (!card || !newStage) return;
+
+      // Ottimistico: sposta prima di confermare
+      const prevStage = card.dataset.stage;
+      const newEl = card.cloneNode(true);
+      newEl.setAttribute('data-stage', newStage);
+      body.appendChild(newEl);
+      card.remove();
+
+      fetch('/api/opportunities/' + id + '/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site_id: SITE_ID, stage: newStage === '__unassigned__' ? '' : newStage })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          showToast('Spostata in "' + col.dataset.stage + '"', true);
+          refreshCounts();
+        } else {
+          throw new Error(data.error || 'errore');
+        }
+      })
+      .catch((err) => {
+        // Rollback visivo
+        newEl.remove();
+        const origCol = document.querySelector('.kcol[data-stage="' + prevStage + '"] .kcol-body');
+        origCol.appendChild(card);
+        card.dataset.stage = prevStage;
+        showToast('Errore: ' + err.message, false);
+        refreshCounts();
+      });
+    });
+  });
+
+  function refreshCounts() {
+    document.querySelectorAll('.kcol').forEach(col => {
+      const items = col.querySelectorAll('.kcard');
+      const count = col.querySelector('.count'); if (count) count.textContent = items.length;
+      let sum = 0;
+      items.forEach(c => {
+        const amt = c.querySelector('.kcard-amount');
+        if (amt) sum += parseFloat((amt.textContent || '').replace(/[^\d,.-]/g, '').replace(',', '.')) || 0;
+      });
+      const sumEl = col.querySelector('.sum');
+      if (sumEl) sumEl.textContent = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(sum);
+    });
+  }
+
+  // ── Pannello note ───────────────────────────────────────────────────
+  function openNotes(oppId, btn) {
+    currentNotesOpp = oppId;
+    const title = btn ? btn.closest('.kcard').querySelector('.kcard-title').textContent : '';
+    document.getElementById('notesTitle').textContent = '— ' + title;
+    document.getElementById('notesBody').innerHTML = '<div class="notes-empty">Caricamento…</div>';
+    document.getElementById('notesOverlay').classList.add('open');
+    loadNotes(oppId);
+  }
+
+  function closeNotes() {
+    document.getElementById('notesOverlay').classList.remove('open');
+    currentNotesOpp = null;
+  }
+  document.getElementById('notesOverlay').addEventListener('click', (e) => {
+    if (e.target.id === 'notesOverlay') closeNotes();
+  });
+
+  function loadNotes(oppId) {
+    fetch('/api/opportunities/' + oppId + '/notes?site_id=' + SITE_ID)
+      .then(r => r.json())
+      .then(data => {
+        const body = document.getElementById('notesBody');
+        if (!data.ok || !data.notes.length) {
+          body.innerHTML = '<div class="notes-empty">Nessuna nota.</div>';
+          return;
+        }
+        body.innerHTML = data.notes.map(n =>
+          '<div class="note-item"><div class="note-meta">' + (n.author_name || '—') +
+          ' · ' + new Date(n.created_at).toLocaleString('it-IT') + '</div>' +
+          '<div class="note-body">' + escapeHtml(n.body) + '</div></div>'
+        ).join('');
+      })
+      .catch(() => { document.getElementById('notesBody').innerHTML = '<div class="notes-empty">Errore di caricamento.</div>'; });
+  }
+
+  function addNote() {
+    const input = document.getElementById('noteInput');
+    const val = input.value.trim();
+    if (!val || !currentNotesOpp) return;
+    fetch('/api/opportunities/' + currentNotesOpp + '/note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site_id: SITE_ID, body: val })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        input.value = '';
+        showToast('Nota aggiunta', true);
+        loadNotes(currentNotesOpp);
+      } else {
+        showToast('Errore', false);
+      }
+    })
+    .catch(() => showToast('Errore', false));
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>

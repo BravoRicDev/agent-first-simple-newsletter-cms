@@ -1,0 +1,87 @@
+<h1>Snippet — <%= site ? site.name : '' %></h1>
+
+<% if (query && query.saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">
+  ✅ Snippet salvato correttamente.
+</div>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/snippets/new?site_id=<%= site ? site.id : '' %>" class="btn">Nuovo snippet</a>
+  <a href="/admin/sites" class="btn" style="background:#6b7280;">Torna ai siti</a>
+</div>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Descrizione</th><th>Creato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% if (snippets.length === 0) { %>
+      <tr><td colspan="4" style="text-align:center;color:#999;">Nessuno snippet trovato</td></tr>
+    <% } %>
+    <% snippets.forEach(s => { %>
+      <tr>
+        <td><code><%= s.name %></code></td>
+        <td>
+          <% if (s.description) { %>
+            <%= s.description %>
+          <% } else { %>
+            <span style="color:#f59e0b;font-size:12px;font-style:italic;">⚠️ Nessuna descrizione — <a href="/admin/snippets/<%= s.id %>/edit">aggiungine una</a></span>
+          <% } %>
+        </td>
+        <td><%= new Date(s.created_at).toLocaleDateString('it-IT') %></td>
+        <td>
+          <a href="/admin/snippets/<%= s.id %>/edit" class="btn btn-sm">Modifica</a>
+          <button
+            class="btn btn-sm snippet-copy"
+            style="background:#059669;"
+            data-snippet-name="<%= s.name %>"
+          >📋 Copia tag</button>
+          <form method="POST" action="/admin/snippets/<%= s.id %>/delete" style="display:inline;"
+            class="snippet-delete-form"
+            data-snippet-name="<%= s.name %>">
+            <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+          </form>
+        </td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<script>
+async function checkSnippetUsage(event, snippetId, snippetName) {
+  event.preventDefault();
+  const form = event.target;
+  try {
+    const r = await fetch('/admin/snippets/' + snippetId + '/usage-check');
+    const data = await r.json();
+    let msg = 'Eliminare lo snippet "' + snippetName + '"?';
+    if (data.pages_count > 0) {
+      msg = '⚠️ ATTENZIONE: questo snippet è usato in ' + data.pages_count + ' pagina/e:\n';
+      msg += data.pages.map(function(p) { return '  \u2022 ' + p.url_path; }).join('\n');
+      msg += '\n\nEliminandolo, quelle pagine mostreranno il tag {{snippet:' + snippetName + '}} invece del contenuto.\n\nConfermi comunque?';
+    }
+    if (confirm(msg)) form.submit();
+  } catch {
+    if (confirm('Eliminare questo snippet?')) form.submit();
+  }
+  return false;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.snippet-copy').forEach(btn => {
+    btn.addEventListener('click', function() {
+      var tag = '{{snippet:' + btn.dataset.snippetName + '}}';
+      navigator.clipboard.writeText(tag).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = '✅ Copiato!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+      });
+    });
+  });
+  document.querySelectorAll('.snippet-delete-form').forEach(form => {
+    form.addEventListener('submit', function(event) {
+      return checkSnippetUsage(event, form.action.split('/').slice(-2, -1)[0], form.dataset.snippetName);
+    });
+  });
+});
+</script>

@@ -1,0 +1,25 @@
+<h1>Nuovo sito</h1>
+<form method="POST" action="/admin/sites">
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name" required>
+  </div>
+  <div class="form-group">
+    <label>Dominio</label>
+    <input type="text" name="domain" required placeholder="es. www.ilmiosito.it">
+  </div>
+  <div class="form-group">
+    <label>Template layout</label>
+    <select name="layout_template">
+      <% layouts.forEach(l => { %>
+        <option value="<%= l %>" <%= l === 'site' ? 'selected' : '' %>><%= l %></option>
+      <% }) %>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Pagina homepage (es. /landing)</label>
+    <input type="text" name="homepage_path" placeholder="/">
+  </div>
+  <button type="submit" class="btn">Crea sito</button>
+  <a href="/admin/sites" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

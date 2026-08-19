@@ -1,0 +1,30 @@
+<h1>Utenti</h1>
+<div class="actions">
+  <a href="/admin/users/new" class="btn">Nuovo utente</a>
+</div>
+<table>
+  <thead>
+    <tr><th>Email</th><th>Nome</th><th>Ruolo</th><th>Sito</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% if (users.length === 0) { %>
+      <tr><td colspan="6" style="text-align:center;color:#999;">Nessun utente trovato</td></tr>
+    <% } %>
+    <% users.forEach(u => { %>
+      <tr>
+        <td><%= u.email %></td>
+        <td><%= u.name %></td>
+        <td><%= u.role %></td>
+        <td><%= u.site_name || '—' %></td>
+        <td><span class="badge badge-<%= u.status === 'active' ? 'active' : 'disabled' %>"><%= u.status %></span></td>
+        <td><a href="/admin/users/<%= u.id %>/edit" class="btn btn-sm">Modifica</a>
+          <% if (u.id !== currentUserId) { %>
+          <form method="POST" action="/admin/users/<%= u.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare definitivamente questo utente?');">
+            <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+          </form>
+          <% } %>
+        </td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
