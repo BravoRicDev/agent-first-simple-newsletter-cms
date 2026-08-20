@@ -7,7 +7,11 @@ import {
   updateCustomField, deleteCustomField, listByObjectKey,
 } from "../services/custom-fields.js";
 import { listCapabilities } from "../services/capabilities.js";
-import { getBoardPipelines, listOpportunities, getOpportunity, createOpportunity, updateOpportunity, deleteOpportunity } from "../services/opportunities.js";
+import { getBoardPipelines } from "../services/opportunities.js";
+import {
+  listOpportunities, getOpportunity, createOpportunity,
+  updateOpportunity, deleteOpportunity, upsertOpportunity,
+} from "../services/opportunities-v1.js";
 import {
   createContact, getContact, updateContact, deleteContact,
   listContacts, searchContacts, upsertContactByEmail, findDuplicateContacts,
@@ -575,34 +579,16 @@ router.get("/contacts/:id/workflow", async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// ONDA 1 — Opportunità (riusa services/opportunities.js).
+// ONDA 1 — Opportunità (riusa services/opportunities-v1.js, che aggiunge i
+// custom field al payload via serializeOpportunity).
 // ─────────────────────────────────────────────────────────────────────────
-
-function serializeOpportunity(o) {
-  if (!o) return null;
-  return {
-    id: o.id,
-    contactEmail: o.contact_email,
-    pipelineId: o.pipeline_id,
-    pipelineName: o.pipeline_name || null,
-    stage: o.stage,
-    title: o.title,
-    amount: o.amount !== null && o.amount !== undefined ? Number(o.amount) : 0,
-    probability: o.probability,
-    status: o.status,
-    expectedCloseDate: o.expected_close_at,
-    notes: o.notes,
-    createdAt: o.created_at,
-    updatedAt: o.updated_at,
-  };
-}
 
 router.get("/opportunities", async (req, res, next) => {
   try {
     const { siteId } = req.tenant;
     const { status, stage, contactEmail } = req.query;
     const opportunities = await listOpportunities(siteId, { status, stage, email: contactEmail });
-    res.json({ opportunities: opportunities.map(serializeOpportunity), total: opportunities.length });
+    res.json({ opportunities, total: opportunities.length });
   } catch (err) { next(err); }
 });
 
@@ -619,9 +605,10 @@ router.post("/opportunities", async (req, res, next) => {
       probability: b.probability,
       expected_close_at: b.expectedCloseDate || b.expected_close_at || null,
       notes: b.notes,
+      customFields: b.customFields,
     });
     if (!opp) return res.status(400).json({ error: "Dati opportunità non validi (contactEmail + title obbligatori)" });
-    res.status(201).json({ opportunity: serializeOpportunity(opp) });
+    res.status(201).json({ opportunity: opp });
   } catch (err) { next(err); }
 });
 
@@ -633,7 +620,7 @@ router.post("/opportunities/search", async (req, res, next) => {
       status: b.status || b.filters?.status, stage: b.stage || b.filters?.stage,
       email: b.contactEmail || b.filters?.contactEmail,
     });
-    res.json({ opportunities: opportunities.map(serializeOpportunity), total: opportunities.length });
+    res.json({ opportunities, total: opportunities.length });
   } catch (err) { next(err); }
 });
 
@@ -642,23 +629,9 @@ router.post("/opportunities/upsert", async (req, res, next) => {
     const { siteId } = req.tenant;
     const b = req.body || {};
     if (!b.contactEmail || !b.title) return res.status(400).json({ error: "contactEmail + title obbligatori per upsert" });
-    const list = await listOpportunities(siteId, { email: b.contactEmail });
-    const match = list.find((o) => o.title === String(b.title).trim());
-    if (match) {
-      const opp = await updateOpportunity(siteId, match.id, {
-        stage: b.stage, amount: b.amount, probability: b.probability,
-        status: b.status, pipeline_id: b.pipelineId || b.pipeline_id,
-        expected_close_at: b.expectedCloseDate || b.expected_close_at, notes: b.notes,
-      });
-      return res.json({ opportunity: serializeOpportunity(opp), created: false });
-    }
-    const opp = await createOpportunity(siteId, {
-      email: b.contactEmail, pipeline_id: b.pipelineId || b.pipeline_id,
-      stage: b.stage, title: b.title, amount: b.amount, probability: b.probability,
-      expected_close_at: b.expectedCloseDate || b.expected_close_at, notes: b.notes,
-    });
-    if (!opp) return res.status(400).json({ error: "Dati opportunità non validi" });
-    res.status(201).json({ opportunity: serializeOpportunity(opp), created: true });
+    const { opportunity, created } = await upsertOpportunity(siteId, b);
+    if (!opportunity) return res.status(400).json({ error: "Dati opportunità non validi" });
+    res.status(created ? 201 : 200).json({ opportunity, created });
   } catch (err) { next(err); }
 });
 
@@ -666,7 +639,7 @@ router.get("/opportunities/:id", async (req, res, next) => {
   try {
     const opp = await getOpportunity(req.tenant.siteId, req.params.id);
     if (!opp) return res.status(404).json({ error: "Opportunità non trovata" });
-    res.json({ opportunity: serializeOpportunity(opp) });
+    res.json({ opportunity: opp });
   } catch (err) { next(err); }
 });
 
@@ -684,9 +657,10 @@ router.put("/opportunities/:id", async (req, res, next) => {
     if (b.expectedCloseDate !== undefined) fields.expected_close_at = b.expectedCloseDate;
     if (b.expected_close_at !== undefined) fields.expected_close_at = b.expected_close_at;
     if (b.notes !== undefined) fields.notes = b.notes;
+    if (b.customFields !== undefined) fields.customFields = b.customFields;
     const opp = await updateOpportunity(siteId, req.params.id, fields);
     if (!opp) return res.status(404).json({ error: "Opportunità non trovata" });
-    res.json({ opportunity: serializeOpportunity(opp) });
+    res.json({ opportunity: opp });
   } catch (err) { next(err); }
 });
 
@@ -707,7 +681,7 @@ router.put("/opportunities/:id/status", async (req, res, next) => {
     if (!opp) return res.status(404).json({ error: "Opportunità non trovata" });
     // updateOpportunity emette opportunity_status_changed → webhook out.
     const updated = await updateOpportunity(siteId, opp.id, { status: b.status });
-    res.json({ opportunity: serializeOpportunity(updated) });
+    res.json({ opportunity: updated });
   } catch (err) { next(err); }
 });
 

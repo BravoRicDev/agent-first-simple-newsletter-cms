@@ -262,3 +262,27 @@ lascialo decidere in modo pulito e coerente con lo schema, purché:
 - Aggiornare HANDOFF.md (fase Onda 1, task fatti, prossimo blocco, verifiche)
   e spuntare eventuali [RISOLTO] applicati in DECISIONI_UMANE.md (nessun
   [APERTA] da risolvere).
+
+## RIFINITURA v1 — CUSTOM FIELDS SULLE OPPORTUNITÀ (aggiunta post-ONDA 1)
+La spec originale prevedeva che i custom field opportunità vivessero in
+`contact_custom_values` con `object_key='opportunity'`. In fase di
+implementazione è emerso un **vincolo di schema**: `contact_custom_values` ha
+`contact_id INTEGER NOT NULL REFERENCES contacts(id)`, quindi NON può ospitare
+valori di opportunità (l'FK fallisce). Soluzione implementata:
+- **Nuova migrazione `db/076_opportunity_custom_values.sql`** (idempotente):
+  tabella `opportunity_custom_values` con `opportunity_id INTEGER NOT NULL
+  REFERENCES opportunities(id) ON DELETE CASCADE`, `values JSONB`,
+  `UNIQUE(site_id, opportunity_id)`.
+- **Nuovo servizio `src/services/opportunity-custom-values.js`**: get/set/merge/
+  clear, validati contro `custom_fields` (`object_key='opportunity'`, field_key
+  stabile), field_key sconosciuti ignorati con warn — stesso pattern di
+  `custom-values.js` ma su tabella dedicata.
+- **`src/services/opportunities-v1.js`**: wrapper della surface /v1 che
+  riusa `services/opportunities.js` e arricchisce il payload con
+  `customFields: { field_key: value }` (create/update/upsert persistono i
+  valori; delete li pulisce). `src/routes/v1.js` usa questo wrapper.
+- **Test `test/onda1-opportunity-custom-fields.test.js`**: create/persistenza,
+  field_key sconosciuti ignorati, update merge, isolamento tenant, delete
+  pulisce i custom values.
+- Da NON rifare: NIENTE import di custom fields con `object_key='opportunity'`
+  nella tabella `contact_custom_values` (FK).
