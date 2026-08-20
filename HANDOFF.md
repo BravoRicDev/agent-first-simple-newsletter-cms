@@ -6,9 +6,44 @@ riparte esattamente da qui.
 ## FASE CORRENTE
 - v1 clone (F0 + Onda 1 + RIFINITURA + import tool + OpenAPI): **perimetro v1
   CHIUSO e SUITE VERDE**.
-- **ONDA 2 booking**: Phase 1 (API /v1/bookings) COMPLETA. In questo run
-  aggiunte **config per-tenant del booking** (durata, timezone, lead time,
-  finestra prenotabile) + **documentazione OpenAPI** delle 5 route booking.
+- **F0 tenancy — mapping Location ↔ Site**: COMPLETO (migrazione 078 + route
+  `/v1/location` + middleware). Ultimo sotto-blocco F0 della tenancy risolto.
+- **ONDA 2 booking**: Phase 1 (API /v1/bookings) + config per-tenant + OpenAPI.
+
+## COSTRUITO IN QUESTO RUN (commit <hash>)
+1. **Mapping Location ↔ Site (migrazione 078)** — ri-implementazione del
+   mapping precedentemente revertito con **naming generico**:
+   - `db/078_location_external_id.sql`: `sites.location_external_id` (VARCHAR
+     255, UNIQUE parziale, nullable) — identificativo esterno della location
+     associato al sito/tenant. Naming generico ("API compatibili con CRM
+     diffusi", nessun nome del CRM di origine: la versione revertita usava
+     `crm_location_id`, in violazione di AGENTS.md).
+   - `src/middleware/tenant-api.js`: `requireTenant` quando `Location-Id` non è
+     numerico prova prima il `domain` del sito e poi `location_external_id`;
+     `req.tenant.locationExternalId` esposto verso i consumer (es. n8n).
+   - `src/routes/v1.js`: `GET/PUT/DELETE /v1/location` per gestire ed esporre il
+     mapping (PUT accetta `externalId` o `locationId`; 409 se già usato da altro
+     tenant; DELETE azzera).
+   - `src/openapi.js`: path `/location` (get/put/delete) documentata.
+   - `test/f0-location-mapping.test.js`: 9 test (risoluzione UUID, 401 cross-
+     tenant, 404 inesistente, GET/PUT/DELETE, 409/400, persistenza/unicità).
+   - `test/v1-openapi.test.js`: aggiunta `/location` alle path attese.
+
+## PUNTI DI VERIFICA (questo run)
+- Suite blocco **verde** su DB di test `cms-test-pg` (15999/testdb), gruppi
+  isolati: f0-location-mapping (9) + v1-openapi (5) + f0-foundations/contacts
+  (17) + opportunities/custom-fields/webhook-out (10) + booking/api-tokens (11)
+  + crm-suite/import-crm-tool (14) = **66/66, 0 fail**.
+- `node --check` ok su tutti i file toccati.
+- Migrazione 078 idempotente (ADD COLUMN IF NOT EXISTS + CREATE UNIQUE INDEX IF
+  NOT EXISTS — nessun "ADD CONSTRAINT IF NOT EXISTS").
+- Nessun nome del CRM di origine nei file del blocco (grep CRM: pulito sui file
+  nuovi/toccati; i riferimenti pre-esistenti in altri file stile-CRM non sono
+  parte di questo blocco).
+- Nessun segreto/personale nel codice. Nessun push (nessun remote).
+- NOTA: `claude-code` NON è loggato (claude -p: "Not logged in") → blocco
+  implementato direttamente con i tool dell'agente (fallback previsto da
+  AGENTS.md).
 
 ## COSTRUITO IN QUESTO RUN (commit <hash>)
 1. **src/services/booking.js — config per-tenant del booking**: nuovo helper
@@ -87,12 +122,13 @@ riparte esattamente da qui.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
+- Mapping Location ↔ Site (migrazione 078) + route /v1/location.
 - Booking API surface (/v1/bookings) — Phase 1 + config per-tenant + OpenAPI.
 - OAuth Google già esistente (oauth.js, scopes calendar).
 - Calendar sync config esistenti (calendar-sync.js).
 - Webhook OUT già attivo su contact_created, opportunity_stage_changed e ora
   booking_created/booking_cancelled.
-- Migrazione 077 booking_appointments.
+- Migrazione 078 mapping location + 077 booking_appointments.
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
