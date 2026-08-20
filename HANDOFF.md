@@ -43,6 +43,17 @@ riparte esattamente da qui.
   blocco implementato direttamente con i tool dell'agente (fallback previsto
   da AGENTS.md).
 
+## MONITORAGGIO (POLISH, cron successivo)
+- Repository LIBERO al passaggio (no claude/codex/opencode, working tree
+  pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
+- DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti già applicati/rispettati
+  (scope v1, repo clone locale, git locale senza push, naming generico, webhook
+  OUT, Google Calendar configurabile per tenant, claude-code modello economico).
+- Suite completa rieseguita su DB di test `cms-test-pg` (15999/testdb):
+  61 file / 490 test, 0 fail. Unici skip: 6 in newsletter-verification
+  (environment-dependent, provider email esterno senza credenziali — atteso).
+- Nessun commit necessario (working tree pulita).
+
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **ONDA 2 Phase 2 — Google Calendar sync per booking**: quando un booking
    viene creato, creare evento Google Calendar (riusando oauth.js +
