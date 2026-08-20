@@ -51,6 +51,7 @@ import mcpRoutes from "./routes/mcp.js";
 import trackingRoutes from "./routes/tracking.js";
 import preferencesRoutes from "./routes/preferences.js";
 import quotesRoutes from "./routes/quotes.js";
+import v1Routes from "./routes/v1.js";
 import { startScheduler } from "./services/scheduler.js";
 
 // message è una funzione (non un oggetto statico): express-rate-limit la
@@ -282,6 +283,11 @@ async function start() {
   app.use(preferencesRoutes);
   app.use(quotesRoutes);
   app.use(agentRoutes);
+
+  // Surface API compatibile ("API compatibili con CRM diffusi") su /v1:
+  // tenancy via Location-Id + Bearer API key, header Version ignorato. Deve
+  // stare PRIMA di publicCatchAllRouter (che assorbe qualunque path residuo).
+  app.use("/v1", v1Routes);
 
   // Sempre per ultimo: risolve qualunque path residuo come pagina del sito
   // pubblico e non passa mai il controllo oltre (vedi routes/serve.js).
