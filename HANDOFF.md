@@ -54,6 +54,24 @@ riparte esattamente da qui.
   (environment-dependent, provider email esterno senza credenziali — atteso).
 - Nessun commit necessario (working tree pulita).
 
+### MONITORAGGIO (POLISH, cron successivo #2)
+- Repository LIBERO al passaggio (no claude/codex/opencode attivo, working tree
+  pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
+- `.env.example` verificato ALLINEATO a `src/config.js`: presenti tutte le
+  chiavi lette (DATABASE_URL, JWT_SECRET, SMTP_*, OPENAI_API_KEY, LLM_*,
+  CLOUDFLARE_ZONE_ID, CLOUDFLARE_API_TOKEN, TWITTER_BEARER_TOKEN,
+  FACEBOOK_PAGE_TOKEN, GROQ_API_KEY, GROQ_BASE_URL, WHISPER_MODEL,
+  STRIPE_SECRET_KEY). Nessun allineamento mancante.
+- Migrazioni: `db/migrate.js` gira da `scripts/test.sh` a ogni run senza errori
+  → nessuna migrazione pendente/non applicata.
+- DECISIONI_UMANE: nessuna [APERTA]; tutti i [RISOLTO] applicati/rispettati.
+- Suite rieseguita a campione su DB di test in gruppi isolati, TUTTI VERDI:
+  * onda2-booking + v1-openapi = 11/11
+  * f0-foundations + onda1-contacts = 17/17
+  * onda1-opportunities-v1 + custom-fields + webhook-out = 10/10
+  (totale 38/38, 0 fail). `node --check` ok sui 4 file dell'ultimo blocco.
+- Nessun commit necessario (working tree pulita). Nessun segreto nel codice.
+
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **ONDA 2 Phase 2 — Google Calendar sync per booking**: quando un booking
    viene creato, creare evento Google Calendar (riusando oauth.js +
