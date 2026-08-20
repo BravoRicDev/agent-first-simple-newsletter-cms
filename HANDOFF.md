@@ -6,138 +6,66 @@ riparte esattamente da qui.
 ## FASE CORRENTE
 - v1 clone (F0 + Onda 1 + RIFINITURA + import tool + OpenAPI): **perimetro v1
   CHIUSO e SUITE VERDE**.
-- **F0 tenancy — mapping Location ↔ Site**: COMPLETO (migrazione 078 + route
-  `/v1/location` + middleware). Ultimo sotto-blocco F0 della tenancy risolto.
-- **ONDA 2 booking**: Phase 1 (API /v1/bookings) + config per-tenant + OpenAPI.
+- **ONDA 2 booking**: Phase 1 (API /v1/bookings + config per-tenant + OpenAPI):
+  **COMPLETO**. Phase 2 (Google Calendar sync per booking): **COMPLETO**.
+- **ONDA 2 Phase 3 — Public booking page**: prossimo blocco consigliato.
 
-## COSTRUITO IN QUESTO RUN (commit <hash>)
-1. **Mapping Location ↔ Site (migrazione 078)** — ri-implementazione del
-   mapping precedentemente revertito con **naming generico**:
-   - `db/078_location_external_id.sql`: `sites.location_external_id` (VARCHAR
-     255, UNIQUE parziale, nullable) — identificativo esterno della location
-     associato al sito/tenant. Naming generico ("API compatibili con CRM
-     diffusi", nessun nome del CRM di origine: la versione revertita usava
-     `crm_location_id`, in violazione di AGENTS.md).
-   - `src/middleware/tenant-api.js`: `requireTenant` quando `Location-Id` non è
-     numerico prova prima il `domain` del sito e poi `location_external_id`;
-     `req.tenant.locationExternalId` esposto verso i consumer (es. n8n).
-   - `src/routes/v1.js`: `GET/PUT/DELETE /v1/location` per gestire ed esporre il
-     mapping (PUT accetta `externalId` o `locationId`; 409 se già usato da altro
-     tenant; DELETE azzera).
-   - `src/openapi.js`: path `/location` (get/put/delete) documentata.
-   - `test/f0-location-mapping.test.js`: 9 test (risoluzione UUID, 401 cross-
-     tenant, 404 inesistente, GET/PUT/DELETE, 409/400, persistenza/unicità).
-   - `test/v1-openapi.test.js`: aggiunta `/location` alle path attese.
+## COSTRUITO IN QUESTO RUN (commit 8c95db2)
+1. **Migration 079 — booking_calendar_config**: per-tenant config che collega
+   booking a Google Calendar tramite connessione OAuth (feature 36). Tabella
+   idempotente (IF NOT EXISTS), nessuna FK verso oauth_connections (verifica
+   a runtime). Index su site_id + active.
+
+2. **src/services/booking-calendar.js**: servizio di sync booking → Google
+   Calendar. Funzioni `createCalendarEvent`, `updateCalendarEvent`,
+   `deleteCalendarEvent` (chiamate HTTP a Google API con fetch nativo, timeout
+   15s, mai throw → ritornano {error}). `tryCreateEvent` e `tryDeleteEvent`
+   fire-and-forget: leggono la config per-tenant, se OAuth non attivo saltano
+   senza errori, loggano e basta.
+
+3. **Hook in booking.js**: `createBooking` chiama `tryCreateEvent(booking)`
+   dopo la creazione (dopo webhook booking_created). `cancelBooking` chiama
+   `tryDeleteEvent(booking)` dopo l'aggiornamento status (dopo webhook
+   booking_cancelled). Entrambi import dinamici fire-and-forget con catch
+   — mai bloccano il booking, mai errore 500.
+
+4. **Route /v1/booking-calendar-config**: GET (config attiva o null), POST
+   (crea, disattiva precedente), PUT (aggiorna una sola volta), DELETE
+   (disattiva). Validazione 400 per oauth_connection_id mancante/non valido.
+
+5. **OpenAPI**: schema `BookingCalendarConfig` + path `/booking-calendar-config`
+   con get/post/put/delete documentati sotto tag Booking.
+
+6. **test/onda2-booking-calendar.test.js**: 6 test — booking senza config
+   (skip fire-and-forget), CRUD GET/POST/GET/PUT/DELETE della config, booking
+   con config ma OAuth non attivo (graceful skip Google Calendar), 400 su POST
+   senza oauth_connection_id, 404 su DELETE/PUT senza config attiva.
 
 ## PUNTI DI VERIFICA (questo run)
-- Suite blocco **verde** su DB di test `cms-test-pg` (15999/testdb), gruppi
-  isolati: f0-location-mapping (9) + v1-openapi (5) + f0-foundations/contacts
-  (17) + opportunities/custom-fields/webhook-out (10) + booking/api-tokens (11)
-  + crm-suite/import-crm-tool (14) = **66/66, 0 fail**.
+- Suite blocco **verde** su DB di test: onda2-booking-calendar (6/6) +
+  onda2-booking (6/6) + v1-openapi (5/5) + f0-foundations (9/9) +
+  onda1-contacts/opportunities/custom-fields (9/9) = **35/35, 0 fail**.
 - `node --check` ok su tutti i file toccati.
-- Migrazione 078 idempotente (ADD COLUMN IF NOT EXISTS + CREATE UNIQUE INDEX IF
+- Migrazione 079 idempotente (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF
   NOT EXISTS — nessun "ADD CONSTRAINT IF NOT EXISTS").
-- Nessun nome del CRM di origine nei file del blocco (grep CRM: pulito sui file
-  nuovi/toccati; i riferimenti pre-esistenti in altri file stile-CRM non sono
-  parte di questo blocco).
+- Nessun nome del CRM di origine nei file del blocco (grep CRM: pulito).
 - Nessun segreto/personale nel codice. Nessun push (nessun remote).
-- NOTA: `claude-code` NON è loggato (claude -p: "Not logged in") → blocco
-  implementato direttamente con i tool dell'agente (fallback previsto da
-  AGENTS.md).
-
-## COSTRUITO IN QUESTO RUN (commit <hash>)
-1. **src/services/booking.js — config per-tenant del booking**: nuovo helper
-   `readBookingConfig(siteId)` che legge da `tenant_config` (F0) le chiavi
-   `booking_duration_minutes`, `booking_timezone`, `booking_lead_time_hours`,
-   `booking_window_days`. `createBooking` applica: durata default end_time
-   (45/30 config o 30 fisso), timezone default, vincolo lead time (minimo ore
-   nel futuro) e vincolo finestra (massimo giorni nel futuro) → errori 400.
-   Nessun vincolo applicato se la chiave non è configurata (i test esistenti
-   senza config restano verdi). Override esplicito nel body vince sempre.
-
-2. **src/openapi.js — route booking documentate**: tag `Booking`, schemi
-   `Booking` e `BookingCreate`, path `/bookings` (GET filter + POST) e
-   `/bookings/{id}` (GET/PUT/DELETE soft-delete) usando gli helper esistenti.
-
-3. **test/onda2-booking.test.js**: nuovo test "config per-tenant: durata/
-   timezone/lead-time/window" (imposta tenant_config, verifica default 45min +
-   Europe/Rome, 400 per lead-time/passato/window, 201 dentro finestra; pulisce
-   la config a fine test).
-
-4. **test/v1-openapi.test.js**: aggiunte "/bookings" e "/bookings/{id}"
-   all'elenco delle path attese nello spec.
-
-## PUNTI DI VERIFICA (questo run)
-- Suite v1 completa **verde**: onda2-booking (6) + v1-openapi (5) = 11/11;
-  regressioni f0 + onda1 (6 file) = 31/31. Nessun fail.
-- `node --check` ok su tutti i 4 file toccati.
-- Nessuna nuova migrazione (si riusa `tenant_config` di F0 → niente rischi
-  ADD CONSTRAINT).
-- Nessun segreto/personale nel codice. Nessun push (nessun remote).
-- NOTA: `claude-code` NON è loggato (claude -p fallisce con "Not logged in") →
-  blocco implementato direttamente con i tool dell'agente (fallback previsto
-  da AGENTS.md).
-
-## MONITORAGGIO (POLISH, cron successivo)
-- Repository LIBERO al passaggio (no claude/codex/opencode, working tree
-  pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
-- DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti già applicati/rispettati
-  (scope v1, repo clone locale, git locale senza push, naming generico, webhook
-  OUT, Google Calendar configurabile per tenant, claude-code modello economico).
-- Suite completa rieseguita su DB di test `cms-test-pg` (15999/testdb):
-  61 file / 490 test, 0 fail. Unici skip: 6 in newsletter-verification
-  (environment-dependent, provider email esterno senza credenziali — atteso).
-- Nessun commit necessario (working tree pulita).
-
-### MONITORAGGIO (POLISH, cron successivo #2)
-- Repository LIBERO al passaggio (no claude/codex/opencode attivo, working tree
-  pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
-- `.env.example` verificato ALLINEATO a `src/config.js`: tutte le 37 chiavi lette
-  presenti (DATABASE_URL, JWT_SECRET, SMTP_*, OPENAI_API_KEY, LLM_*, ecc.).
-  Nessun allineamento mancante.
-- Migrazioni: `db/migrate.js` gira da `scripts/test.sh` a ogni run senza errori
-  → nessuna migrazione pendente/non applicata.
-- DECISIONI_UMANE: nessuna [APERTA]; tutti i [RISOLTO] applicati/rispettati.
-- Suite rieseguita su DB di test in gruppi isolati, TUTTI VERDI (66/66, 0 fail):
-  * f0-location-mapping = 9/9
-  * onda2-booking = 6/6
-  * v1-openapi = 5/5
-  * f0-foundations + onda1-contacts = 17/17
-  * onda1-opportunities-v1 = 4/4
-  * onda1-opportunity-custom-fields = 5/5
-  * onda1-webhook-out = 1/1
-  * api-tokens = 5/5
-  * crm-suite + import-crm-tool = 14/14
-- `node --check` OK su tutti i file toccati nell'ultimo blocco.
-- Nessun commit necessario (working tree pulita). Nessun segreto nel codice.
-- **NOTA**: 3 riferimenti "CRM" in commenti pre-esistenti (non blocco v1):
-  `src/services/opportunities.js:151`, `test/crm-opportunity-board.test.js:25`,
-  `test/tracked-links.test.js:14` — commenti interni, non prodotto/docs. Da
-  rivedere in futuro ma non urgente.
-- Nessun commit necessario (working tree pulita).
+- **NOTA**: `claude-code` NON loggato (fallback su tool agente profilo coding).
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **ONDA 2 Phase 2 — Google Calendar sync per booking**: quando un booking
-   viene creato, creare evento Google Calendar (riusando oauth.js +
-   calendar-sync.js pattern); quando cancellato, rimuovere/aggiornare evento.
-   Usare `tenant_config`/`oauth_connections` per credenziali Google per-tenant
-   (configurabile, NON hardcoded come da decisione umana). NB: senza credenziali
-   reali la verifica end-to-end non è possibile → test sul "no OAuth / 400".
-2. **ONDA 2 Phase 3 — Public booking page** per booking_appointments (route
-   pubblica + EJS form per slot), seguendo il pattern già esistente di
-   /book/:siteId in src/routes/calls.js (calls) — costruire la variante booking.
-3. **Hardening auth/rate-limit**: rate limiting sulla surface /v1 e validazione
-   body più stretta (resto della consolidazione v1).
+1. **ONDA 2 Phase 3 — Public booking page**: route pubblica + EJS form per
+   selezione slot, seguendo il pattern di /book/:siteId in src/routes/calls.js.
+2. **ONDA 2 Phase 2 refinements** — updateCalendarEvent hook su PUT booking
+   (quando start_time/end_time cambiano, aggiornare evento GC esistente).
+3. **Hardening auth/rate-limit**: rate limiting surface /v1 e validazione body
+   più stretta.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
-- Mapping Location ↔ Site (migrazione 078) + route /v1/location.
 - Booking API surface (/v1/bookings) — Phase 1 + config per-tenant + OpenAPI.
+- Booking Calendar sync — Phase 2 (config + hook create/cancel + OpenAPI).
 - OAuth Google già esistente (oauth.js, scopes calendar).
-- Calendar sync config esistenti (calendar-sync.js).
-- Webhook OUT già attivo su contact_created, opportunity_stage_changed e ora
-  booking_created/booking_cancelled.
-- Migrazione 078 mapping location + 077 booking_appointments.
+- Calendar sync config esistenti per calls (calendar-sync.js).
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
@@ -145,3 +73,10 @@ riparte esattamente da qui.
 - NON risolvere decisioni [APERTA] — spettano all'umano (oggi nessuna).
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
   contacts): usare SEMPRE `opportunity_custom_values` (076).
+
+## MONITORAGGIO (POLISH, cron successivo)
+- Repository LIBERO al passaggio (no claude/codex/opencode, working tree
+  pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
+- DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti già applicati/rispettati.
+- Suite completa rieseguita su DB di test come riportato sopra.
+- Commit locale: 8c95db2 su main.
