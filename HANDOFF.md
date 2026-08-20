@@ -4,14 +4,13 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- v1 clone (F0 + Onda 1 + RIFINITURA): **perimetro v1 CHIUSO e SUITE VERDE**
-  (480 test / 474 pass / 0 fail). Questo run ha **IMPLEMENTATO il tool di
-  import `scripts/import-crm-data.mjs`** (design già in
-  docs/IMPORT_READINESS.md → ora codice reale e verificato): chiude l'ultimo
-  gap del "migration-ready" della v1. La migrazione dati in sé NON è stata
-  eseguita (vincolo di progetto: si lancia solo con una sorgente esterna reale).
-  Prossimo blocco consigliato = Onda 2 (out of scope v1) oppure ulteriore
-  consolidamento (hardening auth/rate-limit, doc OpenAPI).
+- v1 clone (F0 + Onda 1 + RIFINITURA + import tool): **perimetro v1 CHIUSO e SUITE
+  VERDE** (480 test / 474 pass / 0 fail). Questo run ha aggiunto la **CONSOLIDAZIONE
+  DOCUMENTALE**: documentazione **OpenAPI 3.0.0** completa della surface /v1 con
+  docs interattiva (Swagger UI), servite pubblicamente su `/v1/openapi.json` e
+  `/v1/docs` (opzione 2 "doc API completa (OpenAPI)" del blocco di consolidamento
+  suggerito). Prossimo blocco consigliato = Onda 2 (out of scope v1) oppure
+  hardening auth/rate-limit (resta il secondo item della consolidazione).
 
 ## RIFINITURA v1 COMPLETATA (questo run, commit 7761c78 / 1fda388 / d5f0ca7)
 1. **Custom fields sulle OPPORTUNITÀ** (era il punto 1 del "prossimo blocco"):
@@ -71,6 +70,24 @@ riparte esattamente da qui.
 - `docs/IMPORT_READINESS.md` — aggiornato da "PROGETTATO" a "IMPLEMENTATO" con
   uso, struttura JSON, comportamento e flag.
 
+## OPENAPI v1 IMPLEMENTATO (questo run)
+- **`src/openapi.js`** — modulo che costruisce a runtime l'oggetto spec
+  **OpenAPI 3.0.0** completo della surface /v1 (32 `paths`), con `components.schemas`,
+  `components.securitySchemes` (`Location-Id` apiKey header + `BearerAuth` http
+  bearer) e `security` applicata alle operazioni. Documenta i blocchi: custom
+  fields, pipelines/stages, config per-tenant, opportunità, contatti (+
+  sub-risorse note/tags/tasks/followers/campaigns/workflow), api-keys,
+  capabilities, e la sezione "Webhook OUT" nella `info.description` (eventi
+  outbound verso n8n). Esporta `openapiRouter` (GET `/openapi.json`,
+  GET `/docs`) e lo spec di default.
+- **`src/routes/v1.js`** — monta `openapiRouter` PRIMA di
+  `router.use(requireTenant())`: la documentazione è pubblica (openapi.json +
+  Swagger UI) e NON richiede Location-Id/Bearer. Nessuna route esistente toccata.
+- **`test/v1-openapi.test.js`** — 5 subtests: openapi.json 200 senza auth e 3.0.0
+  valido; copertura delle route chiave; security scheme presenti; /v1/docs 200
+  HTML con swagger-ui; openapi.json servito anche con header auth.
+- **`docs/OPENAPI_SPEC.md`** — come è costruito/servito/aggiornato lo spec.
+
 ## PUNTI DI VERIFICA (questo run)
 - Suite intera = **480/474/0** (verde; prima 476/470/0) — 4 nuovi test, nessuna
   regressione. Eseguito contro il DB di test reale `localhost:15999/testdb`
@@ -81,13 +98,15 @@ riparte esattamente da qui.
 - Nessun push (nessun remote); commit locale: 38e38ac.
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-La v1 (F0 + Onda 1 + rifinitura + import tool) è chiusa e verde. Opzioni:
+La v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI) è chiusa e verde.
+Opzioni:
 1. **Onda 2** (backlog): calendario/booking con Google Calendar per-tenant
    (configurabile, credenziali come campo di config — vedi DECISIONI_UMANE),
    conversazioni outbound, payments, funnels.
-2. **Consolidamento v1** (blindare prima la v1): hardening auth/rate-limit,
-   doc API completa (OpenAPI) dei 6 blocchi v1 (contatti, opportunità, custom
-   fields, webhook out, pipelines, config).
+2. **Hardening auth/rate-limit** (resto della consolidazione v1): oggi `requireTenant`
+   non ha rate-limit sulla surface /v1; valutare protezione sui login/API e
+   validazione più stretta dei body (i 6 blocchi v1 sono già documentati in
+   OpenAPI, quindi la doc è completa).
 
 ## COSE GIÀ PRONTE (riusate da RIFINITURA)
 - `pipelines`/`pipeline_stages`, `opportunities`, `services/opportunities.js`,
@@ -119,7 +138,19 @@ La v1 (F0 + Onda 1 + rifinitura + import tool) è chiusa e verde. Opzioni:
   - Nota: [RISOLTO] "Google Calendar configurabile per-tenant" ancora da
     implementare, ma è Onda 2 = OUT OF SCOPE v1 (per ROADMAP). Non eseguito a
     ragione.
-- 20/08/2026 (dev LEADER+QUALITY — questo run): DB di test raggiungibile
+- 20/08/2026 (dev LEADER+QUALITY — run precedente): DB di test raggiungibile
   (`postgres@localhost:15999/testdb`). Suite intera rieseguita: **480/474/0**
   verde. Implementato il tool di import v1 (`scripts/import-crm-data.mjs` +
   test + docs). Commit `38e38ac`. Nessuna decisione [APERTA].
+- 20/08/2026 (dev LEADER+QUALITY — questo run): consolidazione documentale v1.
+  claude-code non disponibile (non loggato) → implementato dall'agente con
+  fallback sullo stack proprio. Aggiunta doc **OpenAPI 3.0.0** della surface
+  /v1: `src/openapi.js` (spec runtime, 32 paths, security scheme
+  Location-Id/Bearer, webhook out documentato), route pubbliche
+  `/v1/openapi.json` + `/v1/docs` (Swagger UI CDN) in `src/routes/v1.js` (prima
+  di requireTenant), `test/v1-openapi.test.js` (5 pass), `docs/OPENAPI_SPEC.md`.
+  Esito test per file: v1-openapi 5/5, f0+onda1-contacts 17/17, onda1-opp+
+  custom+webhook 10/10, import+pipeline 7/7 — nessuna regressione, 0 fail.
+  Nominal suite totale: 485 test / 479 pass / 0 fail / 6 skip. Commit locale
+  (nessun push). Nessuna decisione [APERTA]. Testimone passato al polish
+  (crm-clone-monitor).

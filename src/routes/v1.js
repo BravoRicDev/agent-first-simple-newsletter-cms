@@ -19,6 +19,7 @@ import {
   listContactTags, addContactTags, removeContactTag,
 } from "../services/contacts-v1.js";
 import { listTasks, createTask, updateTask } from "../services/tasks.js";
+import { openapiRouter } from "../openapi.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Surface API compatibile ("API compatibili con CRM diffusi"), montata su
@@ -31,6 +32,14 @@ import { listTasks, createTask, updateTask } from "../services/tasks.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+// Documentazione OpenAPI pubblica (openapi.json + docs interattiva) montata
+// PRIMA di requireTenant(): la documentazione è pubblica e non richiede
+// Location-Id/Bearer.
+router.use(openapiRouter);
+
+// Tutte le route API sotto passano da requireTenant() (tenancy + auth Bearer,
+// header Version ignorato).
 router.use(requireTenant());
 
 function sha256(value) {
