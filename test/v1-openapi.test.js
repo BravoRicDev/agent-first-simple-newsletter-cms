@@ -63,6 +63,8 @@ describe("v1 — documentazione OpenAPI", () => {
       "/contacts/{id}/workflow",
       // api-keys + capabilities
       "/api-keys", "/api-keys/{id}", "/capabilities",
+      // booking (ONDA 2)
+      "/bookings", "/bookings/{id}",
     ];
     for (const p of expected) {
       assert.ok(paths.has(p), `route ${p} documentata nello spec`);

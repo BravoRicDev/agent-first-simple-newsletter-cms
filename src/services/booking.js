@@ -26,6 +26,46 @@ function sanitizeTime(raw, fallback) {
   return d;
 }
 
+// ── Config per-tenant per il booking ─────────────────────────────────────
+// Legge le chiavi booking_* da tenant_config (F0) e ritorna un oggetto con
+// i default sanificati. Se una chiave manca → la voce è assente, così i
+// check/default opzionali non vengono applicati.
+//
+// Chiavi supportate:
+//   - booking_duration_minutes : durata default end_time (default: 30)
+//   - booking_timezone         : timezone default (default: UTC)
+//   - booking_lead_time_hours  : ore minime nel futuro per start_time
+//   - booking_window_days      : giorni massimi nel futuro per start_time
+async function readBookingConfig(siteId) {
+  const cfg = {};
+  try {
+    const rows = (await query(
+      "SELECT key, value FROM tenant_config WHERE site_id = $1",
+      [siteId]
+    )).rows;
+    const map = {};
+    for (const r of rows) map[r.key] = r.value;
+
+    const dur = parseInt(map.booking_duration_minutes, 10);
+    if (Number.isInteger(dur) && dur > 0) cfg.durationMinutes = dur;
+
+    if (map.booking_timezone && typeof map.booking_timezone === "string" && map.booking_timezone.trim()) {
+      cfg.timezone = map.booking_timezone.trim().slice(0, 50);
+    }
+
+    const lead = parseInt(map.booking_lead_time_hours, 10);
+    if (Number.isInteger(lead) && lead >= 0) cfg.leadTimeHours = lead;
+
+    const win = parseInt(map.booking_window_days, 10);
+    if (Number.isInteger(win) && win >= 0) cfg.windowDays = win;
+  } catch (err) {
+    // La lettura della config non deve MAI far fallire la creazione: in caso
+    // di errore si procede con i default "nulli" (nessuna voce applicata).
+    logger.warn(`booking: lettura tenant_config fallita (site=${siteId}): ${err.message}`);
+  }
+  return cfg;
+}
+
 // ── CRUD ──────────────────────────────────────────────────────────────────
 
 export async function listBookings(siteId, { status, contactEmail, limit, offset } = {}) {
@@ -70,12 +110,14 @@ export async function getBooking(siteId, id) {
 }
 
 export async function createBooking(siteId, data = {}) {
+  const cfg = await readBookingConfig(siteId);
+
   const contactName = String(data.contact_name || "").trim().slice(0, 255);
   const contactEmail = String(data.contact_email || "").trim().toLowerCase().slice(0, 255);
   const contactPhone = String(data.contact_phone || "").trim().slice(0, 50);
   const title = String(data.title || "").trim().slice(0, 255);
   const description = String(data.description || "").trim();
-  const timezone = String(data.timezone || "UTC").trim().slice(0, 50);
+  const timezone = String(data.timezone || cfg.timezone || "UTC").trim().slice(0, 50);
 
   if (!contactEmail) throw Object.assign(new Error("contact_email è obbligatorio"), { statusCode: 400 });
   if (!title) throw Object.assign(new Error("title è obbligatorio"), { statusCode: 400 });
@@ -83,12 +125,32 @@ export async function createBooking(siteId, data = {}) {
   const startTime = sanitizeTime(data.start_time, null);
   if (!startTime) throw Object.assign(new Error("start_time è obbligatorio e deve essere una data valida"), { statusCode: 400 });
 
+  // Check finestra prenotabile (lead time minimo nel futuro, finestra massima).
+  if (startTime < Date.now()) {
+    if (cfg.leadTimeHours !== undefined) {
+      throw Object.assign(new Error("start_time non può essere nel passato"), { statusCode: 400 });
+    }
+  }
+  if (cfg.leadTimeHours !== undefined) {
+    const minStart = new Date(Date.now() + cfg.leadTimeHours * 3600 * 1000);
+    if (startTime < minStart) {
+      throw Object.assign(new Error(`start_time deve essere almeno ${cfg.leadTimeHours} ore nel futuro`), { statusCode: 400 });
+    }
+  }
+  if (cfg.windowDays !== undefined) {
+    const maxStart = new Date(Date.now() + cfg.windowDays * 86400 * 1000);
+    if (startTime > maxStart) {
+      throw Object.assign(new Error(`start_time non può superare ${cfg.windowDays} giorni nel futuro`), { statusCode: 400 });
+    }
+  }
+
+  const defaultDurationMin = cfg.durationMinutes !== undefined ? cfg.durationMinutes : 30;
   let endTime = sanitizeTime(data.end_time, null);
   if (!endTime) {
-    endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // +30 min default
+    endTime = new Date(startTime.getTime() + defaultDurationMin * 60 * 1000);
   }
   if (endTime <= startTime) {
-    endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
+    endTime = new Date(startTime.getTime() + defaultDurationMin * 60 * 1000);
   }
 
   const result = await query(

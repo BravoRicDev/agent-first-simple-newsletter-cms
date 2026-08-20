@@ -62,6 +62,7 @@ const SPEC = {
     { name: "Contatti", description: "Core CRM — contatti e sub-risorse" },
     { name: "API keys", description: "API key per-sito (Bearer)" },
     { name: "Capabilities", description: "Registry delle capability (agent-first)" },
+    { name: "Booking", description: "ONDA 2 — appuntamenti prenotati dai contatti (booking_appointments)" },
   ],
   paths: buildPaths(),
   components: {
@@ -190,6 +191,41 @@ const SPEC = {
           author_name: { type: "string" },
           body: { type: "string" },
           created_at: { type: "string" },
+        },
+      },
+      Booking: {
+        type: "object",
+        description: "ONDA 2 — appuntamento prenotato da un contatto (booking_appointments). `status` ∈ confirmed|pending|cancelled|completed.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          contact_name: { type: "string" },
+          contact_email: { type: "string" },
+          contact_phone: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          start_time: { type: "string", format: "date-time" },
+          end_time: { type: "string", format: "date-time" },
+          status: { type: "string", enum: ["confirmed", "pending", "cancelled", "completed"] },
+          timezone: { type: "string" },
+          google_event_id: { type: "string", nullable: true },
+          cancelled_at: { type: "string", format: "date-time", nullable: true },
+          created_at: { type: "string", format: "date-time" },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      BookingCreate: {
+        type: "object",
+        required: ["start_time", "title", "contact_email"],
+        properties: {
+          contact_name: { type: "string" },
+          contact_email: { type: "string" },
+          contact_phone: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          start_time: { type: "string", format: "date-time" },
+          end_time: { type: "string", format: "date-time", description: "Opzionale: se assente usa la durata default (30 min o booking_duration_minutes per-tenant)" },
+          timezone: { type: "string", description: "Opzionale: se assente usa booking_timezone per-tenant o 'UTC'" },
         },
       },
     },
@@ -571,6 +607,48 @@ function buildPaths() {
       tags: ["Capabilities"], summary: "Registry delle capability (agent-first)",
       security: tenantSec(),
       responses: jsonResponse(200, { capabilities: { type: "array", items: { type: "object" } } }),
+    },
+  };
+
+  // ── Booking (ONDA 2) ─────────────────────────────────────────────────
+  base["/bookings"] = {
+    get: {
+      tags: ["Booking"], summary: "Lista booking del tenant",
+      description: "Filtri opzionali: ?q[status]=, ?q[contactEmail]=, ?q[limit]=, ?q[offset]=.",
+      parameters: [
+        { name: "q[status]", in: "query", schema: { type: "string", enum: ["confirmed", "pending", "cancelled", "completed"] } },
+        { name: "q[contactEmail]", in: "query", schema: { type: "string" } },
+        { name: "q[limit]", in: "query", schema: { type: "integer" } },
+        { name: "q[offset]", in: "query", schema: { type: "integer" } },
+      ],
+      security: tenantSec(),
+      responses: listWithTotal("bookings", "Booking"),
+    },
+    post: {
+      tags: ["Booking"], summary: "Crea un booking",
+      description: "start_time, title e contact_email obbligatori. end_time opzionale (durata default per-tenant). Applica i vincoli di lead time / finestra prenotabile configurati per-tenant (booking_lead_time_hours, booking_window_days).",
+      requestBody: jsonBody({ $ref: "#/components/schemas/BookingCreate" }),
+      security: tenantSec(),
+      responses: jsonCreated("booking", "Booking"),
+    },
+  };
+  base["/bookings/{id}"] = {
+    get: {
+      tags: ["Booking"], summary: "Dettaglio booking",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResource("booking", "Booking"),
+    },
+    put: {
+      tags: ["Booking"], summary: "Aggiorna un booking",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ $ref: "#/components/schemas/BookingCreate" }),
+      responses: jsonResource("booking", "Booking"),
+    },
+    delete: {
+      tags: ["Booking"], summary: "Cancella un booking (soft-delete)",
+      description: "Soft-delete: imposta status='cancelled' e cancelled_at=NOW(). Ritorna il booking cancellato.",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResponse(200, { booking: { $ref: "#/components/schemas/Booking" } }),
     },
   };
 

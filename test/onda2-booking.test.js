@@ -204,4 +204,81 @@ describe("ONDA 2 — booking API /v1", () => {
     assert.ok(r3.bookings.length >= 1);
     r3.bookings.forEach((b) => assert.equal(b.contact_email, "laura@prova.com"));
   });
+
+  test("config per-tenant: durata/timezone/lead-time/window", async () => {
+    const keys = ["booking_duration_minutes", "booking_timezone", "booking_lead_time_hours", "booking_window_days"];
+
+    // Configura i default per-tenant su siteA (valori scalari in JSONB).
+    const cfg = {
+      booking_duration_minutes: 45,
+      booking_timezone: "Europe/Rome",
+      booking_lead_time_hours: 24,
+      booking_window_days: 10,
+    };
+    for (const [k, v] of Object.entries(cfg)) {
+      await query(
+        `INSERT INTO tenant_config (site_id, key, value) VALUES ($1, $2, $3)
+         ON CONFLICT (site_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [siteA.id, k, JSON.stringify(v)]
+      );
+    }
+
+    try {
+      // Durata default 45min + timezone default Europe/Rome quand NON passati.
+      const start = new Date(Date.now() + 2 * 86400000).toISOString(); // tra 2 giorni
+      const res1 = await fetch(`${baseUrl}/v1/bookings`, {
+        method: "POST",
+        headers: headers(apiKeyA),
+        body: JSON.stringify({ contact_name: "Cfg Test", contact_email: "cfg@prova.com", title: "Con config", start_time: start }),
+      });
+      const r1 = await res1.json();
+      assert.equal(res1.status, 201, `POST con config: ${JSON.stringify(r1)}`);
+      const s = new Date(r1.booking.start_time).getTime();
+      const e = new Date(r1.booking.end_time).getTime();
+      assert.equal((e - s) / 60000, 45, "durata default da config (45 min)");
+      assert.equal(r1.booking.timezone, "Europe/Rome", "timezone default da config");
+      await query("DELETE FROM booking_appointments WHERE id = $1", [r1.booking.id]);
+
+      // Lead time: start dentro 24h → 400.
+      const soon = new Date(Date.now() + 2 * 3600 * 1000).toISOString(); // tra 2 ore
+      const res2 = await fetch(`${baseUrl}/v1/bookings`, {
+        method: "POST",
+        headers: headers(apiKeyA),
+        body: JSON.stringify({ contact_email: "lead@prova.com", title: "Troppo presto", start_time: soon }),
+      });
+      assert.equal(res2.status, 400, `lead time: atteso 400, got ${res2.status}`);
+
+      // Lead time: start nel passato → 400.
+      const past = new Date(Date.now() - 3600 * 1000).toISOString();
+      const resPast = await fetch(`${baseUrl}/v1/bookings`, {
+        method: "POST",
+        headers: headers(apiKeyA),
+        body: JSON.stringify({ contact_email: "past@prova.com", title: "Passato", start_time: past }),
+      });
+      assert.equal(resPast.status, 400, `passato: atteso 400, got ${resPast.status}`);
+
+      // Window: start oltre 10 giorni → 400.
+      const far = new Date(Date.now() + 11 * 86400000).toISOString();
+      const res3 = await fetch(`${baseUrl}/v1/bookings`, {
+        method: "POST",
+        headers: headers(apiKeyA),
+        body: JSON.stringify({ contact_email: "far@prova.com", title: "Troppo lontano", start_time: far }),
+      });
+      assert.equal(res3.status, 400, `window: atteso 400, got ${res3.status}`);
+
+      // Dentro finestra e oltre lead → 201.
+      const ok = new Date(Date.now() + 2 * 86400000).toISOString();
+      const res4 = await fetch(`${baseUrl}/v1/bookings`, {
+        method: "POST",
+        headers: headers(apiKeyA),
+        body: JSON.stringify({ contact_email: "ok@prova.com", title: "OK", start_time: ok }),
+      });
+      assert.equal(res4.status, 201, `dentro finestra: ${res4.status}`);
+      const r4 = await res4.json();
+      await query("DELETE FROM booking_appointments WHERE id = $1", [r4.booking.id]);
+    } finally {
+      // Pulisci la config per non lasciare stati sporchi tra i run.
+      await query("DELETE FROM tenant_config WHERE site_id = $1 AND key = ANY($2::text[])", [siteA.id, keys]);
+    }
+  });
 });
