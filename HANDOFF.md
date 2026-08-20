@@ -4,46 +4,69 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- v1 clone (F0 + Onda 1): **F0 — Fondamenta COMPLETATO e verificato** (commit
-  7b9fb7a, faabc67, 1cc2ce1). Prossimo blocco = **ONDA 1 — Core CRM**.
+- v1 clone (F0 + Onda 1): **ONDA 1 — Core CRM (contatti + opportunità +
+  custom values + webhook OUT) COMPLETATO e verificato** (commit di questo run:
+  fc04e2f servizi/migrazione, 72ae696 route /v1, ff5384d test). Mancano solo i
+  punti "custom fields mapping su opportunità" (già coperto per contatti) e un
+  eventuale passaggio di rifinitura; sostanzialmente il perimetro v1 è chiuso.
+  Prossimo blocco consigliato = **rifinitura v1 + verifica end-to-end / import**.
 
-## F0 COMPLETATO (punti di verifica)
-- Migrazione `db/074_f0_foundations.sql` idempotente: tabelle `custom_fields`,
-  `pipeline_stages`, `tenant_config`, `site_api_keys`, `capabilities` (seed base).
-  Nessun `ADD CONSTRAINT IF NOT EXISTS`. Verificata doppia riesecuzione senza errori.
-- `src/middleware/tenant-api.js`: `requireTenant()` risolve sito da header
-  `Location-Id` (id o domain), auth Bearer su `site_api_keys` (hash SHA-256),
-  `last_used_at` aggiornato, header `Version:` IGNORATO (`ignoredVersionHeader`).
-- `src/services/custom-fields.js`: CRUD custom fields per-tenant, id stabile,
-  evento `custom_field_updated` fire-and-forget.
-- `src/services/capabilities.js`: capability registry che riusa `roles_permissions`.
-- `src/routes/v1.js` montato su `/v1` in `src/index.js` (prima di
-  publicCatchAllRouter). Endpoint: custom-fields (CRUD + object-key + folder),
-  pipelines (+stages crud), config (tenant_config), capabilities,
-  opportunities/lost-reason + pipelines alias, api-keys (crea/lista/revoca).
-- `test/f0-foundations.test.js`: 9/9 PASS. Regressioni crm-opportunities/
-  pipeline/webhooks 24/24 PASS. route-order PASS. Full suite: 449 pass /
-  3 fail pre-esistenti (forms-crm, newsletter-base-url, newsletter-bounce) —
-  verificati flaky ANCHE sul baseline (stash index.js) → non introdotti da F0.
-- Nessun segreto hardcoded; `node --check` ok su tutti i file nuovi/modificati.
+## ONDA 1 COMPLETATO (punti di verifica)
+- Migrazione `db/075_onda1_contacts.sql` idempotente: tabelle
+  `contact_custom_values` (UNIQUE(site_id, contact_id, object_key), values
+  JSONB) e `contact_followers` (UNIQUE(site_id, contact_id, user_id)).
+  Nessun `ADD CONSTRAINT IF NOT EXISTS`. Verificata doppia riesecuzione senza
+  errori.
+- `src/services/custom-values.js`: get/set/merge/clear custom values per-tenant,
+  validati contro `custom_fields` (stesso object_key) + chiavi di profilo
+  riservate (name/firstName/lastName/phone/companyName/website) sempre ammesse
+  per object_key='contact'. Field_key sconosciuti → warn e ignora.
+- `src/services/contacts-v1.js`: serializeContact (email, nome+split
+  firstName/lastName, phone, companyName, website, tags, status, notes,
+  value_estimate, is_client, client_status, customFields{}), create/get/update/
+  delete/list/search/upsertByEmail/findDuplicate + note (contact_notes),
+  tags, e helper per tasks. Non tocca le firme di `src/services/contacts.js`.
+- `src/routes/v1.js`: AGGIUNTE (senza rimuovere le route F0) le route /v1:
+  - Contatti: GET/POST /contacts, POST /contacts/search, POST /contacts/upsert,
+    POST /contacts/search/duplicate, GET/PUT/DELETE /contacts/:id, note
+    (GET/POST /:id/notes, DELETE /:id/notes/:noteId), tags (GET/POST /:id/tags,
+    DELETE /:id/tags/:tag), tasks (GET/POST /:id/tasks, PUT /:id/tasks/:taskId),
+    followers (GET/POST, persistiti su contact_followers), campaigns (v1: []),
+    workflow (snapshot da contact_events).
+  - Opportunità (riusa services/opportunities.js): GET/POST /opportunities,
+    POST /opportunities/search, POST /opportunities/upsert,
+    GET/PUT/DELETE /opportunities/:id, PUT /:id/status, GET /:id/followers ([]).
+  - Route statiche PRIMA di /:id (search/upsert/duplicate prima di /:id).
+- **Webhook OUT**: la creazione contatto emette `contact_created` via
+  `events.js` → `enqueueForEvent` → `webhook_deliveries` (verificato da test).
+  I cambi fase opportunità già emettevano opportunity_stage_changed/status
+  (pattern pre-esistente confermato).
+- Test nuovi: `test/onda1-contacts.test.js` (8), `test/onda1-opportunities-v1.test.js`
+  (4), `test/onda1-webhook-out.test.js` (1) = **13/13 PASS** (pattern F0, 2
+  tenant per isolamento, header Version ignorato).
+- Regressioni (eseguite singolarmente, come da prassi F0): f0-foundations 9/9,
+  crm-opportunities ok, crm-opportunity-board 6/6, pipeline 3/3, webhooks 10/10,
+  route-order 2/2 → **NADA regressioni**.
+- Nessun segreto; `node --check` + import smoke test ok su tutti i file toccati.
 
 ## PROSSIMO BLOCCO CONSIGLIATO (dal run precedente → da fare ora)
-**ONDA 1 — Core CRM** (in ordine):
-1. Contatti: POST/GET /v1/contacts, POST /contacts/search, GET/PUT/DELETE
-   /contacts/{id}, /{id}/notes, /{id}/tags, /{id}/tasks, /{id}/followers,
-   /{id}/campaigns, /{id}/workflow, contacts/upsert, search/duplicate.
-2. Opportunità: /v1/opportunities CRUD/search/upsert/status/followers
-   (riusa services/opportunities.js esistente).
-3. Custom fields ONDA 1: già pronti in F0 — esporre il mapping dei custom
-   field sui payload contatti/opportunità.
-4. Webhook OUT eventi verso n8n: già presente (feature 35) — verificare che
-   gli eventi /v1 (nuovo contatto, cambio fase) alimentino il webhook out.
-- Aggiungere spec Onda 1 in `docs/` (stile F0_SPEC.md) prima di implementare.
+**Rifinitura v1 + verifica end-to-end / readiness import**:
+1. Custom fields mapping su OPPORTUNITÀ (oggi i customValues sono gestiti
+   principalmente per object_key='contact'; valutare se servono valori custom
+   per opportunity e come esporli nel payload opportunità).
+2. Verifica end-to-end: far girare l'intera suite (npm test) e stabilizzare i 3
+   fail flaky noti (forms-crm, newsletter-base-url, newsletter-bounce) se
+   ancora presenti.
+3. Struttura READY per import dati: confermare che le tabelle v1 (contacts,
+   contact_custom_values, opportunities, pipelines, custom_fields) siano
+   coerenti per un import esterno; documentare in docs/ il tool di import
+   PROGETTATO (migrazione dati NON eseguita, come da vincolo).
+4. Eventuale endpoint `/v1/contacts/{id}` con custom fields opportunità +
+   revisione del formato `customFields` per compatibilità.
 
-## COSE GIÀ PRONTE (riusate da F0)
-- `pipelines` (id SERIAL, stages JSONB), `opportunities` con
-  `getBoardPipelines()` in services/opportunities.js.
-- Webhook OUT (feature 35): `webhooks`/`webhook_deliveries`, firma HMAC.
+## COSE GIÀ PRONTE (riusate da ONDA 1)
+- `pipelines`/`pipeline_stages`, `opportunities`, `services/opportunities.js`,
+  `custom_fields` (F0), webhook OUT (feature 35 via events.js→webhooks.js).
 - Naming generico "API compatibili con CRM diffusi" applicato.
 
 ## COSE DA NON FARE
