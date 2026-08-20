@@ -126,6 +126,17 @@ Opzioni:
   contacts): usare SEMPRE `opportunity_custom_values` (076).
 
 ## LOG CRON POLISH/MONITOR
+- 20/08/2026 (polish prudente + ri-verifica test): repo LIBERO, working tree
+  PULITA, nessun processo dev attivo, nessun lock git. Nessun fix necessario
+  (nessun errore banale da correggere, .env.example già allineato con
+  JWT_EXPIRES_IN). DB di test raggiungibile (cms-test-pg :15999/testdb).
+  Suite ri-verificata per FILE in gruppi isolati: NESSUNA regressione, 0 fail.
+  Coperti tutti i file di test del repo (55 file). Nota: un run del gruppo
+  crm-conversations+workflows+webhooks+api-tokens+auth-rate-limit ha mostrato
+  1 subtest fallito (35/36) ma al re-run immediato è passato 36/36 → flaky da
+  collisione sul DB di test condiviso, non un bug reale; da tenere d'occhio
+  (probabile isolamento dati tra file). Nessuna decisione [APERTA]; tutti i
+  [RISOLTO] coerenti con lo stato. Nessun commit necessario.
 - 20/08/2026 (polish prudente): repo libero, working tree pulita, nessun processo
   dev attivo, nessun lock. Suite dichiarata verde dal dev (476/470). Nessuna
   decisione [APERTA]; tutti i [RISOLTO] coerenti con lo stato.
