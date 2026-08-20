@@ -38,6 +38,7 @@ import { getSiteEmailConfig, resetSiteTransporter } from "../services/email.js";
 import { EMAIL_TEMPLATE_KINDS, listEmailTemplates, setEmailTemplate, deleteEmailTemplate } from "../services/email-templates.js";
 import { readLocaleMarkdown } from "../middleware/i18n.js";
 import { sendConfirmationEmail, sendTestEmail } from "../services/newsletter.js";
+import { getComplaintMetrics } from "../services/complaints.js";
 import { verifySubscriberEmail } from "../services/email-verify.js";
 import { logger } from "../services/logger.js";
 import config from "../config.js";
@@ -4119,6 +4120,42 @@ router.delete("/api/agent/sites/:siteId/newsletter/subscribers/:email", requireA
     );
     if (result.rowCount === 0) return res.status(404).json({ error: res.locals.t("api.newsletter.subscriberNotFound") });
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+router.post("/api/agent/sites/:siteId/newsletter/complaints", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+
+    const email = (req.body.email || "").trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: res.locals.t("api.common.invalidEmail") });
+    }
+
+    await query(
+      "INSERT INTO newsletter_complaints (site_id, email, source) VALUES ($1, $2, $3)",
+      [siteId, email, req.body.source || "fbl"]
+    );
+
+    await query(
+      `UPDATE newsletter_subscribers
+       SET status = 'suppressed', suppressed_at = NOW(), suppression_reason = 'complaint'
+       WHERE site_id = $1 AND email = $2 AND status IN ('confirmed', 'pending')`,
+      [siteId, email]
+    );
+
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+router.get("/api/agent/sites/:siteId/newsletter/metrics", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+
+    const metrics = await getComplaintMetrics(siteId);
+    res.json(metrics);
   } catch (err) { next(err); }
 });
 

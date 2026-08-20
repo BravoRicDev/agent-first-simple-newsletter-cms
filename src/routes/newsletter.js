@@ -5,6 +5,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { getSiteEmailConfig, resetSiteTransporter } from "../services/email.js";
 import { sendTestEmail, renderPreviewHtml, subscribeEmail } from "../services/newsletter.js";
+import { getComplaintMetrics } from "../services/complaints.js";
 import { sendCsv } from "../services/csv.js";
 import { logger } from "../services/logger.js";
 import { EMAIL_TEMPLATE_KINDS, listEmailTemplates, setEmailTemplate, deleteEmailTemplate } from "../services/email-templates.js";
@@ -76,7 +77,9 @@ router.get("/admin/newsletter", requireAuth, authorize("newsletter", "read"), as
       [siteId]
     )).rows;
 
-    res.render("admin/newsletter/index", { site, sites, siteId, subscriberCounts, emailConfigured, campaignCounts });
+    const complaintMetrics = await getComplaintMetrics(siteId);
+
+    res.render("admin/newsletter/index", { site, sites, siteId, subscriberCounts, emailConfigured, campaignCounts, complaintMetrics });
   } catch (err) { next(err); }
 });
 
