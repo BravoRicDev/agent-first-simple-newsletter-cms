@@ -6,8 +6,7 @@ import { query } from "../db.js";
 // con CRM diffusi"), montata su /v1.
 //
 // - Il tenant (sito) viene risolto dall'header `Location-Id`: può essere un
-//   id numerico (sites.id), il domain del sito, oppure l'UUID della location
-//    (sites.crm_location_id). È l'unità di tenancy.
+//   id numerico oppure il domain del sito. È l'unità di tenancy.
 // - L'autenticazione avviene via Bearer token: l'API key del SITO (tabella
 //   site_api_keys), salvata SOLO come SHA-256 hex (mai in chiaro nel DB).
 // - Header `Version:` IGNORATO volutamente: alcuni client "CRM-diffusi"
@@ -37,23 +36,15 @@ export function requireTenant() {
       return res.status(401).json({ error: "Tenant non identificato: header Location-Id mancante" });
     }
 
-    // Risolvi il sito: se è numerico usa id; altrimenti prova prima il
-    // domain, poi il mapping location CRM (sites.crm_location_id) così un
-    // nodo n8n può passare l'UUID della location  per
-    // identificare il sito/tenant del CMS.
+    // Risolvi il sito: se è numerico usa id, altrimenti domain.
     let site;
     try {
       if (/^\d+$/.test(locationId)) {
         const r = await query("SELECT * FROM sites WHERE id = $1", [parseInt(locationId, 10)]);
         site = r.rows[0] || null;
       } else {
-        // Domain prima, poi location CRM (più specifica del tenant).
-        const byDomain = await query("SELECT * FROM sites WHERE domain = $1", [locationId]);
-        site = byDomain.rows[0] || null;
-        if (!site) {
-          const byLocation = await query("SELECT * FROM sites WHERE crm_location_id = $1", [locationId]);
-          site = byLocation.rows[0] || null;
-        }
+        const r = await query("SELECT * FROM sites WHERE domain = $1", [locationId]);
+        site = r.rows[0] || null;
       }
     } catch (err) {
       return next(err);
