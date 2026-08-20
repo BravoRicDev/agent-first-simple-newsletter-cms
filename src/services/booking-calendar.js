@@ -251,6 +251,29 @@ export async function tryCreateEvent(booking) {
   }
 }
 
+// Tenta di aggiornare l'evento Google Calendar associato al booking.
+// Non lancia eccezioni: logga e basta. Non modifica google_event_id (è già presente).
+export async function tryUpdateEvent(booking) {
+  if (!booking || !booking.site_id || !booking.google_event_id) return;
+  try {
+    const config = await getBookingCalendarConfig(booking.site_id);
+    if (!config) {
+      // Nessuna config: nessun evento da aggiornare su Google, normale
+      return;
+    }
+
+    const result = await updateCalendarEvent(booking, config);
+    if (result.error) {
+      logger.warn(`booking-calendar: aggiornamento evento fallito (booking=${booking.id}): ${result.error}`);
+      return;
+    }
+
+    logger.info(`booking-calendar: evento aggiornato (booking=${booking.id}, google_event_id=${booking.google_event_id})`);
+  } catch (err) {
+    logger.warn(`booking-calendar: tryUpdateEvent fallito (booking=${booking?.id}): ${err.message}`);
+  }
+}
+
 // Tenta di cancellare l'evento Google Calendar associato al booking e
 // azzera google_event_id. Non lancia eccezioni: logga e basta.
 export async function tryDeleteEvent(booking) {

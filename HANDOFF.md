@@ -10,60 +10,50 @@ riparte esattamente da qui.
   **COMPLETO**. Phase 2 (Google Calendar sync per booking): **COMPLETO**.
 - **ONDA 2 Phase 3 — Public booking page**: **COMPLETO** (form EJS +
   slot computation + route pubbliche + test 8/8 pass).
-- **ONDA 2 Phase 2 refinements**: prossimo blocco consigliato.
+- **ONDA 2 Phase 2 refinements — updateCalendarEvent su PUT booking**:
+  **COMPLETO** (tryUpdateEvent fire-and-forget + test 8/8 pass).
 
-## COSTRUITO IN QUESTO RUN (commit 5969a60)
-1. **Migration** — nessuna nuova migration. Tutta la configurazione slot usa
-   tenant_config esistente (chiavi booking_slot_minutes, booking_hours_start,
-   booking_hours_end, booking_available_days, booking_lead_time_hours,
-   booking_window_days).
+## COSTRUITO IN QUESTO RUN (nuovo commit)
+1. **Migration** — nessuna nuova migration.
 
-2. **src/services/booking-slots.js**: nuovo servizio per il calcolo degli slot
-   disponibili per il booking pubblico. `computeBookingSlots(siteId, { days })`
-   legge da tenant_config i parametri di disponibilità con fallback a default
-   ragionevoli (slot 60 min, 9-18, lun-ven, lead 1h, finestra 14gg). Esclude
-   slot passati e slot in conflitto con booking_appointments esistenti (status
-   non cancellato). `groupSlotsByDay(slots)` raggruppa per giorno.
+2. **src/services/booking-calendar.js**: nuova funzione `tryUpdateEvent(booking)`:
+   fire-and-forget wrapper per aggiornare evento Google Calendar esistente.
+   Legge config calendar, se non configurata o booking senza google_event_id
+   → return silenzioso. Chiama `updateCalendarEvent(booking, config)`, logga
+   warning su fallimento (mai throw). Non modifica google_event_id (già presente).
 
-3. **src/routes/booking-public.js**: route pubbliche (nessun auth/tenant):
-   - `GET /booking-public/:siteId` — form EJS con slot disponibili
-   - `GET /booking-public/:siteId/slots` — JSON endpoint per slot (con `?days=`)
-   - `POST /booking-public/:siteId` — crea prenotazione via createBooking
-     (rate-limited, honeypot anti-spam, validazione lato server dello slot
-     per DoS protection)
-   - `GET /booking-public/:siteId/confirmed` — pagina di conferma
+3. **src/services/booking.js — updateBooking()**: dopo l'UPDATE, se
+   `existing.google_event_id` è valorizzato, importa dinamicamente `tryUpdateEvent`
+   da `./booking-calendar.js` e lo chiama fire-and-forget. Pattern identico a
+   createBooking/tryCreateEvent e cancelBooking/tryDeleteEvent.
 
-4. **views/book/booking-public-index.ejs** + **views/book/booking-public-confirmed.ejs**:
-   copie dell'esistente book/index.ejs, adattate per /booking-public/
-
-5. **test/onda2-booking-public.test.js**: 8 test — 404, form slots, JSON slots,
-   POST crea, rifiuta senza email, rifiuta slot passato, conferma, days param.
-
-6. **src/index.js**: import e mount di bookingPublicRoutes PRIMA di callsRoutes
-   (evita conflitto di route Express).
+4. **test/onda2-booking-calendar.test.js**: 2 nuovi test (ora 8 totali):
+   - "booking update con google_event_id ma senza config → graceful skip"
+   - "booking update con google_event_id e config attiva ma OAuth fittizio → graceful skip"
 
 ## PUNTI DI VERIFICA (questo run)
-- **ONDA 2 Phase 3 — Public booking page**: 8/8 test pass (onda2-booking-public).
-- Suite booking completa: onda2-booking (6/6) + booking-calendar (6/6) + booking-public (8/6) = **20/20, 0 fail**.
-- Suite regressiva: f0-foundations (9/9) + booking (6/6) + booking-calendar (6/6) = **21/21, 0 fail**.
-- `node --check` ok su booking-slots.js, booking-public.js, index.js.
-- Nessuna migrazione nuova (config via tenant_config esistente).
-- Nessun nome del CRM di origine nei nuovi file (grep CRM: pulito).
+- **ONDA 2 Phase 2 refinements**: 8/8 test pass (onda2-booking-calendar).
+- Suite booking completa: onda2-booking (6/6) + booking-calendar (8/8) + booking-public (8/8) = **22/22, 0 fail**.
+- Suite regressiva: f0-foundations (9/9) + onda1-contacts (8/8) = **17/17, 0 fail**.
+- `node --check` ok su booking-calendar.js, booking.js, test file.
+- Nessuna migrazione nuova.
+- Nessun nome del CRM di origine nei nuovi file.
 - Nessun segreto/personale nel codice. Nessun push (nessun remote).
 - **NOTA**: `claude-code` non loggato (fallback su tool agente profilo coding).
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **ONDA 2 Phase 2 refinements** — updateCalendarEvent hook su PUT booking
-   (quando start_time/end_time cambiano, aggiornare evento GC esistente).
-2. **Hardening auth/rate-limit**: rate limiting surface /v1 e validazione body
+1. **Hardening auth/rate-limit**: rate limiting surface /v1 e validazione body
    piu stretta.
-3. **OpenAPI booking-public**: documentazione OpenAPI dei nuovi endpoint
+2. **OpenAPI booking-public**: documentazione OpenAPI dei nuovi endpoint
    pubblici di booking.
+3. **ONDA 2 Phase 2 refinements avanzati**: creazione contatto CRM al momento
+   del booking (booking → contatto) o altre integrazioni.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
 - Booking API surface (/v1/bookings) — Phase 1 + config per-tenant + OpenAPI.
 - Booking Calendar sync — Phase 2 (config + hook create/cancel + OpenAPI).
+- **updateCalendarEvent hook su PUT booking** — Phase 2 refinements.
 - **Public booking page** — Phase 3 (form EJS, slot computation, route pubbliche).
 - OAuth Google gia esistente (oauth.js, scopes calendar).
 - Calendar sync config esistenti per calls (calendar-sync.js).
@@ -75,15 +65,11 @@ riparte esattamente da qui.
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
   contacts): usare SEMPRE `opportunity_custom_values` (076).
 
-## MONITORAGGIO (POLISH, cron successivo)
-- Repository LIBERO al passaggio (nessun claude/codex/opencode, working tree
-  pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
-- DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti gia applicati/rispettati.
-- **Blocco v1 + Onda 1 + Onda 2**: 29/29 pass (f0-foundations 9, booking 6,
-  booking-calendar 6, booking-public 8).
-- **Import tool + webhook-out**: 5/5 pass.
-- **OAuth + forms-crm + workflow**: 26/26 pass.
-- Commit locale: 5969a60 su main. Working tree pulita.
-- **NOTE MINORI**: 2 commenti interni citano "CRM" (src/services/opportunities.js:151,
-  db/067_tracked_links.sql:5). Non sono user-facing, fix opzionale per prossimo dev.
-- DB di test `cms-test-pg` up, funzionante.
+## MONITORAGGIO (POLISH, cron 21/08/2026 01:51 UTC)
+- ✅ Repository LIBERO al passaggio (nessun claude/codex/opencode, working tree
+  pulita dopo commit, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
+- ✅ DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti gia applicati/rispettati.
+- ✅ **Test eseguiti**: booking ONDA 2 (onda2-booking 6 + booking-calendar 8 + booking-public 8): **22/22 pass, 0 fail**. Regressioni F0 (f0-foundations 9) + Onda 1 (onda1-contacts 8): **17/17 pass**.
+- ✅ Commit locale: nuovo commit su main. Working tree pulita.
+- ✅ Nessun segreto/personale nel codice (solo colonne DB access_token/refresh_token).
+- ✅ DB di test `cms-test-pg` up, funzionante.

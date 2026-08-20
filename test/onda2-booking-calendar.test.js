@@ -261,4 +261,105 @@ describe("ONDA 2 — booking calendar sync", () => {
     });
     assert.equal(res.status, 404);
   });
+
+  test("booking update con google_event_id ma senza config → graceful skip", async () => {
+    // Crea booking senza config calendar
+    const start = new Date(Date.now() + 86400000).toISOString();
+    const res1 = await fetch(`${baseUrl}/v1/bookings`, {
+      method: "POST",
+      headers: headers(apiKeyA),
+      body: JSON.stringify({
+        contact_name: "Update No Config",
+        contact_email: "upd.noconfig@prova.com",
+        title: "Update senza config",
+        start_time: start,
+      }),
+    });
+    const r1 = await res1.json();
+    assert.equal(res1.status, 201);
+    const bookingId = r1.booking.id;
+
+    // Forza google_event_id via UPDATE diretto SQL (simula booking con evento GC esistente)
+    await query(
+      "UPDATE booking_appointments SET google_event_id = $1 WHERE id = $2",
+      ["fake-google-event-id-upd", bookingId]
+    );
+
+    // PUT booking: cambia title — nessuna config attiva → tryUpdateEvent skipa
+    const res2 = await fetch(`${baseUrl}/v1/bookings/${bookingId}`, {
+      method: "PUT",
+      headers: headers(apiKeyA),
+      body: JSON.stringify({ title: "Update senza config — aggiornato" }),
+    });
+    assert.equal(res2.status, 200, `PUT dopo google_event_id senza config: ${res2.status}`);
+    const r2 = await res2.json();
+    assert.equal(r2.booking.title, "Update senza config — aggiornato");
+
+    // Pulisci
+    await query("DELETE FROM booking_appointments WHERE id = $1", [bookingId]);
+  });
+
+  test("booking update con google_event_id e config attiva ma OAuth fittizio → graceful skip", async () => {
+    // Crea OAuth app + connection attiva ma token finto (non valido per Google)
+    const fakeApp = await query(
+      `INSERT INTO oauth_apps (site_id, provider, client_id, client_secret, redirect_uri, enabled)
+       VALUES ($1, 'google', 'test-oauth-upd', 'test-secret-upd', 'http://localhost/callback', true) RETURNING id`,
+      [siteA.id]
+    );
+    const fakeAppId = fakeApp.rows[0].id;
+
+    const fakeConn = await query(
+      `INSERT INTO oauth_connections (site_id, app_id, provider, access_token, refresh_token, active)
+       VALUES ($1, $2, 'google', 'fake-token-update', 'fake-refresh-update', true) RETURNING id`,
+      [siteA.id, fakeAppId]
+    );
+    const fakeConnId = fakeConn.rows[0].id;
+
+    // Config con connessione attiva
+    const resCfg = await fetch(`${baseUrl}/v1/booking-calendar-config`, {
+      method: "POST",
+      headers: headers(apiKeyA),
+      body: JSON.stringify({ oauth_connection_id: fakeConnId }),
+    });
+    assert.equal(resCfg.status, 201);
+
+    // Crea booking
+    const start = new Date(Date.now() + 86400000).toISOString();
+    const resB = await fetch(`${baseUrl}/v1/bookings`, {
+      method: "POST",
+      headers: headers(apiKeyA),
+      body: JSON.stringify({
+        contact_name: "Update With Config",
+        contact_email: "upd.config@prova.com",
+        title: "Update con config",
+        start_time: start,
+      }),
+    });
+    const rB = await resB.json();
+    assert.equal(resB.status, 201);
+    const bookingId = rB.booking.id;
+
+    // Forza google_event_id via UPDATE diretto SQL
+    await query(
+      "UPDATE booking_appointments SET google_event_id = $1 WHERE id = $2",
+      ["fake-google-event-id-upd-config", bookingId]
+    );
+
+    // PUT booking: cambia title — tryUpdateEvent tenterà ma Google rifiuterà
+    // (token finto). Il booking NON deve tornare errore 500: graceful skip
+    const res2 = await fetch(`${baseUrl}/v1/bookings/${bookingId}`, {
+      method: "PUT",
+      headers: headers(apiKeyA),
+      body: JSON.stringify({ title: "Update con config — aggiornato" }),
+    });
+    assert.equal(res2.status, 200, `PUT dopo google_event_id con config: ${res2.status}`);
+    const r2 = await res2.json();
+    assert.equal(r2.booking.title, "Update con config — aggiornato");
+
+    // Pulisci
+    await query("DELETE FROM booking_appointments WHERE id = $1", [bookingId]);
+    await query("DELETE FROM booking_calendar_config WHERE site_id = $1", [siteA.id]);
+    await query("DELETE FROM oauth_connections WHERE id = $1", [fakeConnId]);
+    await query("DELETE FROM oauth_apps WHERE id = $1", [fakeAppId]);
+  });
 });

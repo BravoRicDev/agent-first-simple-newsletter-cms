@@ -229,7 +229,23 @@ export async function updateBooking(siteId, id, data = {}) {
     params
   );
 
-  return result.rows[0] || null;
+  const updatedBooking = result.rows[0] || null;
+  if (!updatedBooking) return null;
+
+  // Google Calendar sync (fire-and-forget): aggiorna evento se configurato
+  // e il booking originale aveva un google_event_id
+  if (existing.google_event_id) {
+    try {
+      const { tryUpdateEvent } = await import("./booking-calendar.js");
+      tryUpdateEvent(updatedBooking).catch((err) => {
+        logger.warn(`booking: tryUpdateEvent fallito (id=${id}): ${err.message}`);
+      });
+    } catch (err) {
+      logger.warn(`booking: import booking-calendar.js fallito: ${err.message}`);
+    }
+  }
+
+  return updatedBooking;
 }
 
 export async function cancelBooking(siteId, id) {
