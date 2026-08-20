@@ -19,6 +19,10 @@ import {
   listContactTags, addContactTags, removeContactTag,
 } from "../services/contacts-v1.js";
 import { listTasks, createTask, updateTask } from "../services/tasks.js";
+import {
+  listBookings, getBooking, createBooking,
+  updateBooking, cancelBooking,
+} from "../services/booking.js";
 import { openapiRouter } from "../openapi.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -699,6 +703,51 @@ router.get("/opportunities/:id/followers", async (req, res, next) => {
     const opp = await getOpportunity(req.tenant.siteId, req.params.id);
     if (!opp) return res.status(404).json({ error: "Opportunità non trovata" });
     res.json({ followers: [] });
+  } catch (err) { next(err); }
+});
+
+// ── Booking (ONDA 2) ──────────────────────────────────────────────────
+
+router.post("/bookings", async (req, res, next) => {
+  try {
+    const booking = await createBooking(req.tenant.siteId, req.body);
+    res.status(201).json({ booking });
+  } catch (err) { next(err); }
+});
+
+router.get("/bookings", async (req, res, next) => {
+  try {
+    const { q } = req.query || {};
+    const result = await listBookings(req.tenant.siteId, {
+      status: q?.status,
+      contactEmail: q?.contactEmail,
+      limit: q?.limit,
+      offset: q?.offset,
+    });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.get("/bookings/:id", async (req, res, next) => {
+  try {
+    const booking = await getBooking(req.tenant.siteId, req.params.id);
+    if (!booking) return res.status(404).json({ error: "Booking non trovato" });
+    res.json({ booking });
+  } catch (err) { next(err); }
+});
+
+router.put("/bookings/:id", async (req, res, next) => {
+  try {
+    const booking = await updateBooking(req.tenant.siteId, req.params.id, req.body);
+    if (!booking) return res.status(404).json({ error: "Booking non trovato" });
+    res.json({ booking });
+  } catch (err) { next(err); }
+});
+
+router.delete("/bookings/:id", async (req, res, next) => {
+  try {
+    const booking = await cancelBooking(req.tenant.siteId, req.params.id);
+    res.json({ booking });
   } catch (err) { next(err); }
 });
 

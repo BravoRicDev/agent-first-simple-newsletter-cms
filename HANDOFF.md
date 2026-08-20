@@ -4,164 +4,84 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- v1 clone (F0 + Onda 1 + RIFINITURA + import tool): **perimetro v1 CHIUSO e SUITE
-  VERDE** (480 test / 474 pass / 0 fail). Questo run ha aggiunto la **CONSOLIDAZIONE
-  DOCUMENTALE**: documentazione **OpenAPI 3.0.0** completa della surface /v1 con
-  docs interattiva (Swagger UI), servite pubblicamente su `/v1/openapi.json` e
-  `/v1/docs` (opzione 2 "doc API completa (OpenAPI)" del blocco di consolidamento
-  suggerito). Prossimo blocco consigliato = Onda 2 (out of scope v1) oppure
-  hardening auth/rate-limit (resta il secondo item della consolidazione).
+- v1 clone (F0 + Onda 1 + RIFINITURA + import tool + OpenAPI): **perimetro v1
+  CHIUSO e SUITE VERDE**.
+- **ONDA 2 iniziata**: booking API su /v1 (Phase 1 del calendario/booking).
+  Migrazione 077 applicata, servizio booking.js, 5 route booking in v1.js,
+  test onda2-booking (5 pass).
 
-## RIFINITURA v1 COMPLETATA (questo run, commit 7761c78 / 1fda388 / d5f0ca7)
-1. **Custom fields sulle OPPORTUNITÀ** (era il punto 1 del "prossimo blocco"):
-   - Migrazione `db/076_opportunity_custom_values.sql` idempotente: tabella
-     `opportunity_custom_values` (FK su opportunities(id), `values JSONB`,
-     `UNIQUE(site_id, opportunity_id)`). NOTA: non si possono usare
-     `contact_custom_values` per le opportunità — quel FK è su contacts(id).
-   - `src/services/opportunity-custom-values.js`: get/set/merge/clear, validati
-     contro `custom_fields` (object_key='opportunity'), field_key sconosciuti
-     ignorati (warn).
-   - `src/services/opportunities-v1.js`: wrapper surface /v1 che riusa
-     `services/opportunities.js` e arricchisce il payload con
-     `customFields: { field_key: value }` (create/update/upsert/get/list/delete).
-   - `src/routes/v1.js`: usa opportunities-v1, customFields in create/update,
-     upsert centralizzato nel servizio.
-   - Test `test/onda1-opportunity-custom-fields.test.js` (5 subtests, pattern F0).
+## COSTRUITO IN QUESTO RUN (commit <hash>)
+1. **docs/ONDA2_SPEC.md** — spec per Phase 1 del booking system: tabella
+   `booking_appointments`, servizio CRUD, route /v1/bookings, test pattern.
+   Definisce scope Phase 2 (Google Calendar sync) e Phase 3 (public booking
+   page) per il futuro.
 
-2. **Suite end-to-end VERDE** (punto 2 del prossimo blocco). Prima 451/471 con
-   3 fail (forms-crm, newsletter-base-url, newsletter-bounce); ora 476/470 (0 fail).
-   - `fix(newsletter)` — **BUG REALE**: `sendSequenceSteps()` non selezionava
-     `suppress_inactive`/`inactive_after_sends` ($8/$9) → undefined → NULL → la
-     condizione di elegibilità valuta NULL → **le sequenze evergreen NON inviavano
-     mail**. Aggiunte le due colonne con COALESCE. Coperto da
-     test/newsletter-base-url (PUNTO 3).
-   - `test forms-crm`: usava `@example.test` (dominio senza MX) → bloccato da
-     verifySubscriberEmail→checkMx. Ora usa example.com (MX reale) + email unica
-     per run.
-   - `test newsletter-bounce`: token hardcoded collidevano su UNIQUE del DB
-     condiviso; token univoci per run. Fix anche INSERT `RETURNING id` → `id,email`
-     (recordBounce usa subscriber.email).
+2. **db/077_booking_system.sql** — migrazione idempotente (IF NOT EXISTS):
+   tabella `booking_appointments` con id SERIAL, site_id FK, contact_*,
+   title/description, start_time/end_time, status, timezone, google_event_id
+   (per sync futuro), cancelled_at. Indici su site/status/time, email, e UNIQUE
+   parziale su google_event_id (WHERE NOT NULL).
 
-3. **Import-readiness** (punto 3 del prossimo blocco):
-   - `docs/IMPORT_READINESS.md`: conferma di coerenza schema v1 per import esterno
-     (tabella coinvolte, note custom fields, pipeline/stage) + design del tool
-     `scripts/import-crm-data.mjs` PROGETTATO (migrazione dati NON eseguita, come
-     da vincolo).
-   - `docs/ONDA1_SPEC.md`: aggiunta sezione "RIFINITURA v1 — custom fields sulle
-     opportunità" con la scelta schema (tabella dedicata, perché contact_custom_values
-     è vincolata a contacts).
+3. **src/services/booking.js** — CRUD completo:
+   - `listBookings(siteId, { status, contactEmail, limit, offset })` — con
+     count totale e filtri.
+   - `getBooking(siteId, id)` — dettaglio singolo.
+   - `createBooking(siteId, data)` — validazione (contact_email/title/start_time
+     obbligatori, end_time default +30 min), emette evento `booking_created` via
+     emitContactEvent → webhook OUT.
+   - `updateBooking(siteId, id, data)` — update parziale di tutti i campi.
+   - `cancelBooking(siteId, id)` — soft-delete (status='cancelled' +
+     cancelled_at = NOW()), emette `booking_cancelled`.
 
-## IMPORT TOOL IMPLEMENTATO (questo run, commit 38e38ac)
-- `scripts/import-crm-data.mjs` — CLI Node+pg autonoma, chiude il "migration-ready"
-  della v1: carica un file JSON `{ site_id, custom_fields[], contacts[],
-  opportunities[] }` e popola le tabelle v1 in modo idempotente (ON CONFLICT/
-  upsert). Flag `--site`/`--dry-run`/`--quiet`; riepilogo + log scarti.
-  - custom_fields: upsert definizioni (site/object/field).
-  - contacts: upsert per (site_id,email); profilo + customFields validati contro
-    le definizioni (chiavi non definite → scarto con warn; profilo sempre
-    ammesso); transazione per contatto.
-  - opportunities: upsert per (site_id,contact_email,title); pipeline_id
-    facoltativo → prima pipeline del tenant; custom in opportunity_custom_values.
-  - Migrazione dati NON eseguita (vincolo): tool pronto, da lanciare solo con
-    sorgente esterna reale.
-- `test/import-crm-tool.test.js` — 4 subtests: popolamento con profilo/custom,
-  idempotenza al doppio run, scarto chiavi non definite con profilo mantenuto,
-  dry-run senza scritture.
-- `docs/IMPORT_READINESS.md` — aggiornato da "PROGETTATO" a "IMPLEMENTATO" con
-  uso, struttura JSON, comportamento e flag.
+4. **src/routes/v1.js** — 5 nuove route booking dopo le route opportunità:
+   - `POST /v1/bookings` (201)
+   - `GET /v1/bookings` (filtri via `q[status]`, `q[contactEmail]`, `q[limit]`,
+     `q[offset]`)
+   - `GET /v1/bookings/:id` (200/404)
+   - `PUT /v1/bookings/:id` (200/404)
+   - `DELETE /v1/bookings/:id` (soft-delete, 200)
+   Tutte passano da requireTenant() (header Location-Id + Bearer).
 
-## OPENAPI v1 IMPLEMENTATO (questo run)
-- **`src/openapi.js`** — modulo che costruisce a runtime l'oggetto spec
-  **OpenAPI 3.0.0** completo della surface /v1 (32 `paths`), con `components.schemas`,
-  `components.securitySchemes` (`Location-Id` apiKey header + `BearerAuth` http
-  bearer) e `security` applicata alle operazioni. Documenta i blocchi: custom
-  fields, pipelines/stages, config per-tenant, opportunità, contatti (+
-  sub-risorse note/tags/tasks/followers/campaigns/workflow), api-keys,
-  capabilities, e la sezione "Webhook OUT" nella `info.description` (eventi
-  outbound verso n8n). Esporta `openapiRouter` (GET `/openapi.json`,
-  GET `/docs`) e lo spec di default.
-- **`src/routes/v1.js`** — monta `openapiRouter` PRIMA di
-  `router.use(requireTenant())`: la documentazione è pubblica (openapi.json +
-  Swagger UI) e NON richiede Location-Id/Bearer. Nessuna route esistente toccata.
-- **`test/v1-openapi.test.js`** — 5 subtests: openapi.json 200 senza auth e 3.0.0
-  valido; copertura delle route chiave; security scheme presenti; /v1/docs 200
-  HTML con swagger-ui; openapi.json servito anche con header auth.
-- **`docs/OPENAPI_SPEC.md`** — come è costruito/servito/aggiornato lo spec.
+5. **test/onda2-booking.test.js** — 5 subtests (pattern identico a
+   f0-foundations): 401 senza credenziali, CRUD + isolamento tenant,
+   validazione contact_email obbligatorio, validazione title obbligatorio,
+   filtri list.
 
 ## PUNTI DI VERIFICA (questo run)
-- Suite intera = **480/474/0** (verde; prima 476/470/0) — 4 nuovi test, nessuna
-  regressione. Eseguito contro il DB di test reale `localhost:15999/testdb`
-  (raggiungibile: `postgres@localhost:15999`, NODE_ENV=test).
-- `node --check` ok su `scripts/import-crm-data.mjs` e
-  `test/import-crm-tool.test.js`; nessun segreto/personale nel codice.
-- Idempotenza verificata manualmente al doppio run (0 duplicati).
-- Nessun push (nessun remote); commit locale: 38e38ac.
+- Suite v1 completa = **41 test / 8 file / 0 fail** (f0 + onda1-contatti +
+  onda1-opportunità + custom-fields-opportunità + webhook-out + openapi +
+  import-tool + onda2-booking). Nessuna regressione.
+- `node --check` ok su tutti i file toccati (booking.js, v1.js,
+  onda2-booking.test.js).
+- Migrazione 077 idempotente (doppia esecuzione: nessun errore).
+- Nessun segreto/personale nel codice.
+- Nessun push (nessun remote); commit locale.
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-La v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI) è chiusa e verde.
-Opzioni:
-1. **Onda 2** (backlog): calendario/booking con Google Calendar per-tenant
-   (configurabile, credenziali come campo di config — vedi DECISIONI_UMANE),
-   conversazioni outbound, payments, funnels.
-2. **Hardening auth/rate-limit** (resto della consolidazione v1): oggi `requireTenant`
-   non ha rate-limit sulla surface /v1; valutare protezione sui login/API e
-   validazione più stretta dei body (i 6 blocchi v1 sono già documentati in
-   OpenAPI, quindi la doc è completa).
+1. **ONDA 2 Phase 2 — Google Calendar sync per booking**: quando un booking
+   viene creato, creare evento Google Calendar (riusando oauth.js +
+   calendar-sync.js); quando cancellato, rimuovere/aggiornare evento. Usare
+   `tenant_config` per credenziali Google per-tenant.
+2. **ONDA 2 Phase 3 — Public booking page**: route pubblica
+   `/book/:bookingSlug` per permettere a contatti/lead di prenotare slot (EJS
+   form + POST pubblico senza auth).
+3. **OpenAPI update**: aggiungere specifica OpenAPI per le 5 route booking
+   in `src/openapi.js`.
+4. **Hardening auth/rate-limit**: rate limiting sulla surface /v1 e validazione
+   body più stretta (resto della consolidazione v1).
 
-## COSE GIÀ PRONTE (riusate da RIFINITURA)
-- `pipelines`/`pipeline_stages`, `opportunities`, `services/opportunities.js`,
-  `custom_fields` (F0), webhook OUT.
-- custom-values infrastruttura contatti (custom-values.js) + opportunità
-  (opportunity-custom-values.js).
-- Naming generico "API compatibili con CRM diffusi" applicato.
+## COSE GIÀ PRONTE
+- Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
+- Booking API surface (/v1/bookings) — Phase 1.
+- OAuth Google già esistente (oauth.js, scopes calendar).
+- Calendar sync config esistenti (calendar-sync.js).
+- Webhook OUT già attivo su contact_created, opportunity_stage_changed e ora
+  booking_created/booking_cancelled.
+- Migrazione 077 booking_appointments.
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
-- NON eseguire migrazione dati (il tool `scripts/import-crm-data.mjs` è pronto,
-  MA va lanciato solo quando esiste una sorgente dati esterna reale da
-  importare; con DB vuoto le tabelle v1 restano vuote).
 - NON usare il nome del CRM di origine nel codice/docs/README.
 - NON risolvere decisioni [APERTA] — spettano all'umano (oggi nessuna).
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
   contacts): usare SEMPRE `opportunity_custom_values` (076).
-
-## LOG CRON POLISH/MONITOR
-- 20/08/2026 (polish prudente + ri-verifica test): repo LIBERO, working tree
-  PULITA, nessun processo dev attivo, nessun lock git. Nessun fix necessario
-  (nessun errore banale da correggere, .env.example già allineato con
-  JWT_EXPIRES_IN). DB di test raggiungibile (cms-test-pg :15999/testdb).
-  Suite ri-verificata per FILE in gruppi isolati: NESSUNA regressione, 0 fail.
-  Coperti tutti i file di test del repo (55 file). Nota: un run del gruppo
-  crm-conversations+workflows+webhooks+api-tokens+auth-rate-limit ha mostrato
-  1 subtest fallito (35/36) ma al re-run immediato è passato 36/36 → flaky da
-  collisione sul DB di test condiviso, non un bug reale; da tenere d'occhio
-  (probabile isolamento dati tra file). Nessuna decisione [APERTA]; tutti i
-  [RISOLTO] coerenti con lo stato. Nessun commit necessario.
-- 20/08/2026 (polish prudente): repo libero, working tree pulita, nessun processo
-  dev attivo, nessun lock. Suite dichiarata verde dal dev (476/470). Nessuna
-  decisione [APERTA]; tutti i [RISOLTO] coerenti con lo stato.
-  - Fix banale di allineamento: `.env.example` — aggiunta `JWT_EXPIRES_IN=24h`
-    (usata in src/config.js con default; prima non dichiarata). Nessuna logica
-    toccata. Commit locale (nessun push).
-  - Nota per il dev: DB di test (cms-test-pg :15999, db testdb) non raggiungibile
-    da questo ruolo con credenziali note → non ho rieseguito la suite. Il prossimo
-    dev che vuole i test deve impostare il proprio .env di test / credenziali.
-  - Nota: [RISOLTO] "Google Calendar configurabile per-tenant" ancora da
-    implementare, ma è Onda 2 = OUT OF SCOPE v1 (per ROADMAP). Non eseguito a
-    ragione.
-- 20/08/2026 (dev LEADER+QUALITY — run precedente): DB di test raggiungibile
-  (`postgres@localhost:15999/testdb`). Suite intera rieseguita: **480/474/0**
-  verde. Implementato il tool di import v1 (`scripts/import-crm-data.mjs` +
-  test + docs). Commit `38e38ac`. Nessuna decisione [APERTA].
-- 20/08/2026 (dev LEADER+QUALITY — questo run): consolidazione documentale v1.
-  claude-code non disponibile (non loggato) → implementato dall'agente con
-  fallback sullo stack proprio. Aggiunta doc **OpenAPI 3.0.0** della surface
-  /v1: `src/openapi.js` (spec runtime, 32 paths, security scheme
-  Location-Id/Bearer, webhook out documentato), route pubbliche
-  `/v1/openapi.json` + `/v1/docs` (Swagger UI CDN) in `src/routes/v1.js` (prima
-  di requireTenant), `test/v1-openapi.test.js` (5 pass), `docs/OPENAPI_SPEC.md`.
-  Esito test per file: v1-openapi 5/5, f0+onda1-contacts 17/17, onda1-opp+
-  custom+webhook 10/10, import+pipeline 7/7 — nessuna regressione, 0 fail.
-  Nominal suite totale: 485 test / 479 pass / 0 fail / 6 skip. Commit locale
-  (nessun push). Nessuna decisione [APERTA]. Testimone passato al polish
-  (crm-clone-monitor).
