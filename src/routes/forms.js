@@ -296,13 +296,14 @@ router.post("/admin/forms", requireAuth, authorize("forms", "create"), async (re
     const newsletterTagKey = sanitizeTagKey(fields, req.body.newsletter_tag_key);
     const newsletterTagValue = sanitizeTagValue(req.body.newsletter_tag_value);
     const redirectUrl = sanitizeRedirect(req.body.redirect_url, req);
+    const newsletterAutoConfirm = req.body.newsletter_auto_confirm === "1" || req.body.newsletter_auto_confirm === "on" || req.body.newsletter_auto_confirm === true;
 
     // "new"/"search" collidono con le route statiche /admin/forms/new e
     // /admin/forms/search — non raggiungibili in modifica se usati come slug.
     const RESERVED_SLUGS = new Set(["new", "search"]);
     if (!slug || !name || RESERVED_SLUGS.has(slug)) {
       return res.status(400).render("admin/forms/builder", {
-        form: { name, slug, submit_label: submitLabel, success_message: successMessage, fields, newsletter_optin_key: newsletterOptinKey, newsletter_tag_key: newsletterTagKey, newsletter_tag_value: newsletterTagValue, redirect_url: redirectUrl },
+        form: { name, slug, submit_label: submitLabel, success_message: successMessage, fields, newsletter_optin_key: newsletterOptinKey, newsletter_tag_key: newsletterTagKey, newsletter_tag_value: newsletterTagValue, redirect_url: redirectUrl, newsletter_auto_confirm: newsletterAutoConfirm },
         siteId, sites, isSuperadmin,
         error: RESERVED_SLUGS.has(slug) ? `Lo slug "${slug}" è riservato, scegline un altro.` : "Nome e slug sono obbligatori.",
       });
@@ -310,14 +311,14 @@ router.post("/admin/forms", requireAuth, authorize("forms", "create"), async (re
 
     try {
       await query(
-        `INSERT INTO forms (site_id, slug, name, submit_label, success_message, fields, newsletter_optin_key, newsletter_tag_key, newsletter_tag_value, redirect_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [siteId, slug, name, submitLabel, successMessage, JSON.stringify(fields), newsletterOptinKey, newsletterTagKey, newsletterTagValue, redirectUrl]
+        `INSERT INTO forms (site_id, slug, name, submit_label, success_message, fields, newsletter_optin_key, newsletter_tag_key, newsletter_tag_value, redirect_url, newsletter_auto_confirm)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [siteId, slug, name, submitLabel, successMessage, JSON.stringify(fields), newsletterOptinKey, newsletterTagKey, newsletterTagValue, redirectUrl, newsletterAutoConfirm]
       );
     } catch (err) {
       if (err.code === "23505") {
         return res.status(400).render("admin/forms/builder", {
-          form: { name, slug, submit_label: submitLabel, success_message: successMessage, fields, newsletter_optin_key: newsletterOptinKey, newsletter_tag_key: newsletterTagKey, newsletter_tag_value: newsletterTagValue, redirect_url: redirectUrl },
+          form: { name, slug, submit_label: submitLabel, success_message: successMessage, fields, newsletter_optin_key: newsletterOptinKey, newsletter_tag_key: newsletterTagKey, newsletter_tag_value: newsletterTagValue, redirect_url: redirectUrl, newsletter_auto_confirm: newsletterAutoConfirm },
           siteId, sites, isSuperadmin, error: `Esiste già un form con slug "${slug}" su questo sito.`,
         });
       }
@@ -360,18 +361,19 @@ router.post("/admin/forms/:slug", requireAuth, authorize("forms", "update"), asy
     const newsletterTagKey = sanitizeTagKey(fields, req.body.newsletter_tag_key);
     const newsletterTagValue = sanitizeTagValue(req.body.newsletter_tag_value);
     const redirectUrl = sanitizeRedirect(req.body.redirect_url, req);
+    const newsletterAutoConfirm = req.body.newsletter_auto_confirm === "1" || req.body.newsletter_auto_confirm === "on" || req.body.newsletter_auto_confirm === true;
 
     if (!name) {
       return res.status(400).render("admin/forms/builder", {
-        form: { name, slug: req.params.slug, submit_label: submitLabel, success_message: successMessage, fields, newsletter_optin_key: newsletterOptinKey, newsletter_tag_key: newsletterTagKey, newsletter_tag_value: newsletterTagValue, redirect_url: redirectUrl },
+        form: { name, slug: req.params.slug, submit_label: submitLabel, success_message: successMessage, fields, newsletter_optin_key: newsletterOptinKey, newsletter_tag_key: newsletterTagKey, newsletter_tag_value: newsletterTagValue, redirect_url: redirectUrl, newsletter_auto_confirm: newsletterAutoConfirm },
         siteId, sites, isSuperadmin, error: "Il nome è obbligatorio.",
       });
     }
 
     await query(
-      `UPDATE forms SET name = $1, submit_label = $2, success_message = $3, fields = $4, newsletter_optin_key = $5, newsletter_tag_key = $6, newsletter_tag_value = $7, redirect_url = $8, updated_at = NOW()
-       WHERE site_id = $9 AND slug = $10`,
-      [name, submitLabel, successMessage, JSON.stringify(fields), newsletterOptinKey, newsletterTagKey, newsletterTagValue, redirectUrl, siteId, req.params.slug]
+      `UPDATE forms SET name = $1, submit_label = $2, success_message = $3, fields = $4, newsletter_optin_key = $5, newsletter_tag_key = $6, newsletter_tag_value = $7, redirect_url = $8, newsletter_auto_confirm = $9, updated_at = NOW()
+       WHERE site_id = $10 AND slug = $11`,
+      [name, submitLabel, successMessage, JSON.stringify(fields), newsletterOptinKey, newsletterTagKey, newsletterTagValue, redirectUrl, newsletterAutoConfirm, siteId, req.params.slug]
     );
 
     res.redirect(`/admin/forms?site_id=${siteId}&saved=1`);
@@ -523,7 +525,7 @@ router.post("/forms/:siteId/:formSlug", formLimiter, resolveSite, formMultipart,
     // definiti (whitelist) — un form scritto a mano (nessuna riga in `forms`)
     // resta libero come prima, per non rompere niente di preesistente.
     const formDef = (await query(
-      "SELECT fields, success_message, newsletter_optin_key, newsletter_tag_key, newsletter_tag_value, redirect_url FROM forms WHERE site_id = $1 AND slug = $2",
+      "SELECT fields, success_message, newsletter_optin_key, newsletter_tag_key, newsletter_tag_value, redirect_url, newsletter_auto_confirm FROM forms WHERE site_id = $1 AND slug = $2",
       [siteId, formSlug]
     )).rows[0];
     const allowedKeys = formDef ? new Set((formDef.fields || []).map(f => f.key)) : null;
@@ -569,7 +571,7 @@ router.post("/forms/:siteId/:formSlug", formLimiter, resolveSite, formMultipart,
     if (email) {
       upsertContact(siteId, email).catch(err => logger.error(`Contatti: upsert fallito (site=${siteId}, ${email}): ${err.message}`));
       if (formDef?.newsletter_optin_key && cleanData[formDef.newsletter_optin_key] === "1") {
-        subscribeEmail(siteId, email).catch(err => logger.error(`Newsletter: auto-iscrizione da form fallita (site=${siteId}, ${email}): ${err.message}`));
+        subscribeEmail(siteId, email, { autoConfirm: !!formDef?.newsletter_auto_confirm }).catch(err => logger.error(`Newsletter: auto-iscrizione da form fallita (site=${siteId}, ${email}): ${err.message}`));
       }
       const tag = resolveFormTag(formDef, cleanData);
       if (tag) {

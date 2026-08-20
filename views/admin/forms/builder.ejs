@@ -74,6 +74,16 @@
     </div>
   </div>
 
+  <div class="form-group" style="margin-top:16px;">
+    <label style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" name="newsletter_auto_confirm" value="1" <%= form && form.newsletter_auto_confirm ? 'checked' : '' %>>
+      Iscrizione newsletter diretta (salta il doppio opt-in)
+    </label>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Se attivo, chi compila il form viene iscritto subito come confermato, senza ricevere una email di conferma. Le sequenze evergreen partono immediatamente.
+    </div>
+  </div>
+
   <div class="form-group" style="margin-top:24px;">
     <label>Tag contatto / sequenza (opzionale)</label>
     <select name="newsletter_tag_key" id="newsletter_tag_select" style="margin-bottom:8px;">

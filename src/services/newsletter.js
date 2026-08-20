@@ -68,14 +68,18 @@ export async function sendConfirmationEmail(siteId, email, token) {
   );
 }
 
-// Iscrizione con doppio opt-in — stessa logica della route pubblica
+// Iscrizione con doppio opt-in disattivabile — stessa logica della route pubblica
 // /newsletter/:siteId/subscribe (src/routes/newsletter.js), estratta qui per
 // essere riusata anche dal form builder (iscrizione automatica se un campo
 // checkbox marcato come consenso è spuntato, vedi routes/forms.js). Un
 // iscritto già confermato non riceve una nuova email di conferma.
-// BLOCCO A: verifica email PRIMA di inserire — bloccata se spam/no-reply/disposable/no MX.
-export async function subscribeEmail(siteId, email) {
+// BLOCCO A: verifica email PRIMA di inserire — bloccata se spam/no-reply/disposable/no MX
+// in ENTRAMBE le modalità (pendente o diretta).
+// opts.autoConfirm: se true, iscrizione diretta (status='confirmed'); se false/omesso,
+// doppio opt-in classico (status='pending' + email di conferma).
+export async function subscribeEmail(siteId, email, opts = {}) {
   const normalized = String(email || "").trim().toLowerCase();
+  const autoConfirm = opts.autoConfirm === true;
 
   // Verifica email prima di procedere con insert/update.
   const verification = await verifySubscriberEmail(normalized);
@@ -92,27 +96,41 @@ export async function subscribeEmail(siteId, email) {
   let token;
   if (!existing) {
     token = crypto.randomBytes(32).toString("hex");
-    await query(
-      `INSERT INTO newsletter_subscribers (site_id, email, status, token, verification, verified_at)
-       VALUES ($1, $2, 'pending', $3, $4, NOW())`,
-      [siteId, normalized, token, verification.status]
-    );
+    if (autoConfirm) {
+      await query(
+        `INSERT INTO newsletter_subscribers (site_id, email, status, token, verification, verified_at, confirmed_at)
+         VALUES ($1, $2, 'confirmed', $3, $4, NOW(), NOW())`,
+        [siteId, normalized, token, verification.status]
+      );
+    } else {
+      await query(
+        `INSERT INTO newsletter_subscribers (site_id, email, status, token, verification, verified_at)
+         VALUES ($1, $2, 'pending', $3, $4, NOW())`,
+        [siteId, normalized, token, verification.status]
+      );
+    }
   } else if (existing.status === "confirmed") {
     return { alreadyConfirmed: true };
   } else {
-    // Re-subscribe: genera SEMPRE un nuovo token. Riutilizzare existing.token
-    // (anche dopo unsubscribe) lasciava in circolazione il vecchio token nei
-    // log/pixel: chiunque lo avesse poteva disiscrivere la vittima di nuovo,
-    // in qualsiasi momento e ripetutamente.
+    // Re-subscribe: genera SEMPRE un nuovo token.
     token = crypto.randomBytes(32).toString("hex");
-    await query(
-      `UPDATE newsletter_subscribers SET status = 'pending', token = $2, subscribed_at = NOW(), unsubscribed_at = NULL, verification = $3, verified_at = NOW() WHERE id = $1`,
-      [existing.id, token, verification.status]
-    );
+    if (autoConfirm) {
+      await query(
+        `UPDATE newsletter_subscribers SET status = 'confirmed', token = $2, subscribed_at = NOW(), unsubscribed_at = NULL, confirmed_at = NOW(), verification = $3, verified_at = NOW() WHERE id = $1`,
+        [existing.id, token, verification.status]
+      );
+    } else {
+      await query(
+        `UPDATE newsletter_subscribers SET status = 'pending', token = $2, subscribed_at = NOW(), unsubscribed_at = NULL, verification = $3, verified_at = NOW() WHERE id = $1`,
+        [existing.id, token, verification.status]
+      );
+    }
   }
 
-  await sendConfirmationEmail(siteId, normalized, token)
-    .catch(err => logger.error(`Newsletter: email di conferma fallita (site=${siteId}, ${normalized}): ${err.message}`));
+  if (!autoConfirm) {
+    await sendConfirmationEmail(siteId, normalized, token)
+      .catch(err => logger.error(`Newsletter: email di conferma fallita (site=${siteId}, ${normalized}): ${err.message}`));
+  }
   return { alreadyConfirmed: false };
 }
 
