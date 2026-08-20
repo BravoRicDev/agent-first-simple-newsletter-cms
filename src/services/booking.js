@@ -181,6 +181,16 @@ export async function createBooking(siteId, data = {}) {
     logger.warn(`booking: import events.js fallito: ${err.message}`);
   }
 
+  // Google Calendar sync (fire-and-forget): crea evento se configurato
+  try {
+    const { tryCreateEvent } = await import("./booking-calendar.js");
+    tryCreateEvent(booking).catch((err) => {
+      logger.warn(`booking: tryCreateEvent fallito (id=${booking.id}): ${err.message}`);
+    });
+  } catch (err) {
+    logger.warn(`booking: import booking-calendar.js fallito: ${err.message}`);
+  }
+
   return booking;
 }
 
@@ -245,6 +255,16 @@ export async function cancelBooking(siteId, id) {
       title: booking.title,
     }).catch(() => {});
   } catch {}
+
+  // Google Calendar sync (fire-and-forget): cancella evento se configurato
+  try {
+    const { tryDeleteEvent } = await import("./booking-calendar.js");
+    tryDeleteEvent(booking).catch((err) => {
+      logger.warn(`booking: tryDeleteEvent fallito (id=${booking.id}): ${err.message}`);
+    });
+  } catch (err) {
+    logger.warn(`booking: import booking-calendar.js fallito: ${err.message}`);
+  }
 
   return booking;
 }
