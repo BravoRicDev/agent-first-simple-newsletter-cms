@@ -1,5 +1,5 @@
 <% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking) { %>
-<div id="cms-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1f2937;color:#f3f4f6;padding:16px 20px;font-size:13px;z-index:9999;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+<div id="cms-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1f2937;color:#f3f4f6;padding:16px 20px;padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px));font-size:13px;z-index:9999;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
   <span style="flex:1;min-width:200px;">
     <%= consentBannerText %>
     <% if (typeof consentPrivacyUrl !== 'undefined' && consentPrivacyUrl) { %>
