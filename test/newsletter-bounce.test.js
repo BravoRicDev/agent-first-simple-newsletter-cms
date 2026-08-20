@@ -106,11 +106,12 @@ describe("Bounce handling", () => {
         return;
       }
 
-      // Crea un subscriber di test.
+      // Crea un subscriber di test. Token univoco per run (il DB è condiviso e
+      // persistente tra run: un token fisso colliderebbe su UNIQUE).
       const subResult = await query(
         `INSERT INTO newsletter_subscribers (site_id, email, status, token)
          VALUES ($1, $2, 'confirmed', $3) RETURNING id, email, bounce_soft`,
-        [site.id, `test-hard-${Date.now()}@example.test`, "testtoken-hard"]
+        [site.id, `test-hard-${Date.now()}@example.test`, `testtoken-hard-${Date.now()}-${Math.random().toString(36).slice(2,8)}`]
       );
       const subscriber = subResult.rows[0];
 
@@ -137,11 +138,11 @@ describe("Bounce handling", () => {
         return;
       }
 
-      // Crea un subscriber.
+      // Crea un subscriber. Token univoco per run (vedi nota sopra).
       const subResult = await query(
         `INSERT INTO newsletter_subscribers (site_id, email, status, token, bounce_soft)
          VALUES ($1, $2, 'confirmed', $3, 2) RETURNING id, email, bounce_soft`,
-        [site.id, `test-soft-${Date.now()}@example.test`, "testtoken-soft"]
+        [site.id, `test-soft-${Date.now()}@example.test`, `testtoken-soft-${Date.now()}-${Math.random().toString(36).slice(2,8)}`]
       );
       const subscriber = subResult.rows[0];
       assert.equal(subscriber.bounce_soft, 2, "setup: bounce_soft iniziale = 2");
@@ -170,8 +171,8 @@ describe("Bounce handling", () => {
       const email = `test-bounce-log-${Date.now()}@example.test`;
       const subResult = await query(
         `INSERT INTO newsletter_subscribers (site_id, email, status, token)
-         VALUES ($1, $2, 'confirmed', $3) RETURNING id`,
-        [site.id, email, "testtoken-log"]
+         VALUES ($1, $2, 'confirmed', $3) RETURNING id, email`,
+        [site.id, email, `testtoken-log-${Date.now()}-${Math.random().toString(36).slice(2,8)}`]
       );
       const subscriber = subResult.rows[0];
 
