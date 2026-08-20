@@ -11,6 +11,14 @@ riparte esattamente da qui.
   finestra prenotabile) + **documentazione OpenAPI** delle 5 route booking.
 
 ## COSTRUITO IN QUESTO RUN (commit <hash>)
+0. **mapping Location CRM ↔ Site (migrazione 078)**: campo `sites.crm_location_id`
+   (VARCHAR 255, UNIQUE parziale, nullable). Il middleware `requireTenant` (su
+   `/v1`) ora, quando l'header `Location-Id` NON è numerico, prova prima il
+   `domain` del sito e poi `sites.crm_location_id` — così un nodo n8n può passare
+   l'UUID della location  per identificare il tenant del CMS.
+   File: `db/078_crm_location_id.sql`, `src/middleware/tenant-api.js`,
+   `test/onda1-location-mapping.test.js` (4 test: risoluzione UUID, 401 cross-tenant,
+   404 UUID inesistente, persistenza/unicità). Suite location 4/4 PASS, F0+v1 14/14 PASS.
 1. **src/services/booking.js — config per-tenant del booking**: nuovo helper
    `readBookingConfig(siteId)` che legge da `tenant_config` (F0) le chiavi
    `booking_duration_minutes`, `booking_timezone`, `booking_lead_time_hours`,
