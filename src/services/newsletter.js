@@ -253,6 +253,11 @@ export async function sendCampaignBatch() {
       // valorizzato = solo chi ha quel tag in contacts (CRM-lite, vedi
       // services/contacts.js). LEFT JOIN perché un iscritto può non avere
       // ancora una riga in contacts (mai arrivato da un form).
+      //
+      // suppress_inactive: se true e inactive_after_sends > 0, esclude iscritti
+      // che non hanno aperto nessuno degli ultimi N invii ricevuti (unione
+      // newsletter_sends + newsletter_sequence_sends). Se l'iscritto ha ricevuto
+      // meno di N invii totali, non viene escluso (storico insufficiente).
       const pending = (await query(
         `SELECT sub.* FROM newsletter_subscribers sub
          LEFT JOIN contacts c ON c.site_id = sub.site_id AND c.email = sub.email
@@ -261,8 +266,25 @@ export async function sendCampaignBatch() {
            AND NOT EXISTS (
              SELECT 1 FROM newsletter_sends WHERE campaign_id = $2 AND subscriber_id = sub.id
            )
+           AND (NOT $5::boolean OR $6::int = 0
+             OR (SELECT COUNT(*) FROM (
+                   SELECT 1 FROM newsletter_sends WHERE subscriber_id = sub.id
+                   UNION ALL
+                   SELECT 1 FROM newsletter_sequence_sends WHERE subscriber_id = sub.id
+                 ) total_sends) < $6::int
+             OR EXISTS (
+               SELECT 1 FROM (
+                 SELECT opened_at, ROW_NUMBER() OVER (ORDER BY sent_at DESC) AS rn
+                 FROM (
+                   SELECT opened_at, sent_at FROM newsletter_sends WHERE subscriber_id = sub.id
+                   UNION ALL
+                   SELECT opened_at, sent_at FROM newsletter_sequence_sends WHERE subscriber_id = sub.id
+                 ) all_sends
+               ) ranked
+               WHERE ranked.rn <= $6::int AND ranked.opened_at IS NOT NULL
+             ))
          ORDER BY sub.id LIMIT $3`,
-        [campaign.site_id, campaign.id, quota, campaign.target_tag]
+        [campaign.site_id, campaign.id, quota, campaign.target_tag, campaign.suppress_inactive, campaign.inactive_after_sends]
       )).rows;
 
       let lastError = null;
@@ -300,8 +322,25 @@ export async function sendCampaignBatch() {
            AND ($3::text IS NULL OR (ct.tags IS NOT NULL AND $3 = ANY(ct.tags)))
            AND NOT EXISTS (
              SELECT 1 FROM newsletter_sends WHERE campaign_id = $2 AND subscriber_id = sub.id
-           )`,
-        [campaign.site_id, campaign.id, campaign.target_tag]
+           )
+           AND (NOT $4::boolean OR $5::int = 0
+             OR (SELECT COUNT(*) FROM (
+                   SELECT 1 FROM newsletter_sends WHERE subscriber_id = sub.id
+                   UNION ALL
+                   SELECT 1 FROM newsletter_sequence_sends WHERE subscriber_id = sub.id
+                 ) total_sends) < $5::int
+             OR EXISTS (
+               SELECT 1 FROM (
+                 SELECT opened_at, ROW_NUMBER() OVER (ORDER BY sent_at DESC) AS rn
+                 FROM (
+                   SELECT opened_at, sent_at FROM newsletter_sends WHERE subscriber_id = sub.id
+                   UNION ALL
+                   SELECT opened_at, sent_at FROM newsletter_sequence_sends WHERE subscriber_id = sub.id
+                 ) all_sends
+               ) ranked
+               WHERE ranked.rn <= $5::int AND ranked.opened_at IS NOT NULL
+             ))`,
+        [campaign.site_id, campaign.id, campaign.target_tag, campaign.suppress_inactive, campaign.inactive_after_sends]
       )).rows[0].c;
 
       if (parseInt(remaining, 10) === 0) {
@@ -346,6 +385,11 @@ export async function sendSequenceSteps() {
 
         // target_tag NULL (default) = tutti gli iscritti confermati, invariato;
         // valorizzato = solo chi ha quel tag in contacts (vedi sendCampaignBatch).
+        //
+        // suppress_inactive: se true e inactive_after_sends > 0, esclude iscritti
+        // che non hanno aperto nessuno degli ultimi N invii ricevuti (unione
+        // newsletter_sends + newsletter_sequence_sends). Se l'iscritto ha ricevuto
+        // meno di N invii totali, non viene escluso (storico insufficiente).
         const eligible = (await query(
           `SELECT sub.* FROM newsletter_subscribers sub
            LEFT JOIN contacts ct ON ct.site_id = sub.site_id AND ct.email = sub.email
@@ -360,8 +404,25 @@ export async function sendSequenceSteps() {
                JOIN newsletter_sequence_steps ps ON ps.id = prev.step_id
                WHERE ps.sequence_id = $5 AND ps.step_order = $4 - 1 AND prev.subscriber_id = sub.id
              ))
+             AND (NOT $8::boolean OR $9::int = 0
+               OR (SELECT COUNT(*) FROM (
+                     SELECT 1 FROM newsletter_sends WHERE subscriber_id = sub.id
+                     UNION ALL
+                     SELECT 1 FROM newsletter_sequence_sends WHERE subscriber_id = sub.id
+                   ) total_sends) < $9::int
+               OR EXISTS (
+                 SELECT 1 FROM (
+                   SELECT opened_at, ROW_NUMBER() OVER (ORDER BY sent_at DESC) AS rn
+                   FROM (
+                     SELECT opened_at, sent_at FROM newsletter_sends WHERE subscriber_id = sub.id
+                     UNION ALL
+                     SELECT opened_at, sent_at FROM newsletter_sequence_sends WHERE subscriber_id = sub.id
+                   ) all_sends
+                 ) ranked
+                 WHERE ranked.rn <= $9::int AND ranked.opened_at IS NOT NULL
+               ))
            ORDER BY sub.id LIMIT $6`,
-          [seq.site_id, step.delay_days, step.id, step.step_order, seq.sequence_id, quota, seq.target_tag]
+          [seq.site_id, step.delay_days, step.id, step.step_order, seq.sequence_id, quota, seq.target_tag, seq.suppress_inactive, seq.inactive_after_sends]
         )).rows;
 
         for (const sub of eligible) {

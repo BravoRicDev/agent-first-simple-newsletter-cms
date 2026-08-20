@@ -13,18 +13,28 @@
   </form>
 </div>
 
-<form method="POST" action="/admin/newsletter/sequences/<%= sequence.id %>/target-tag" style="margin-top:15px;display:flex;gap:8px;align-items:flex-end;max-width:400px;">
+<form method="POST" action="/admin/newsletter/sequences/<%= sequence.id %>/target-tag" style="margin-top:15px;display:flex;gap:8px;align-items:flex-end;max-width:700px;flex-wrap:wrap;">
   <input type="hidden" name="site_id" value="<%= siteId %>">
-  <div class="form-group" style="margin-bottom:0;flex:1;">
-    <label>Segmento (tag contatto)</label>
-    <select name="target_tag">
+  <div class="form-group" style="margin-bottom:0;flex:1;min-width:150px;">
+    <label style="font-size:12px;">Segmento (tag)</label>
+    <select name="target_tag" style="font-size:12px;">
       <option value="">Tutti gli iscritti confermati</option>
       <% tags.forEach(tag => { %>
         <option value="<%= tag %>" <%= sequence.target_tag === tag ? 'selected' : '' %>><%= tag %></option>
       <% }) %>
     </select>
   </div>
-  <button type="submit" class="btn btn-sm">Salva segmento</button>
+  <div style="display:flex;gap:8px;align-items:flex-end;">
+    <label style="font-size:12px;margin:0;display:flex;align-items:center;gap:4px;">
+      <input type="checkbox" name="suppress_inactive" value="1" <%= sequence && sequence.suppress_inactive ? 'checked' : '' %> style="margin:0;">
+      Sopprimi inattivi
+    </label>
+    <div class="form-group" style="margin-bottom:0;">
+      <label style="font-size:12px;">Dopo N invii</label>
+      <input type="number" name="inactive_after_sends" value="<%= sequence ? sequence.inactive_after_sends || 0 : 0 %>" min="0" step="1" style="width:60px;padding:4px 8px;font-size:12px;">
+    </div>
+  </div>
+  <button type="submit" class="btn btn-sm">Salva</button>
 </form>
 
 <% if (steps.length === 0) { %>

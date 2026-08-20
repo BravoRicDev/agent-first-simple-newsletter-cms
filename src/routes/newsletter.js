@@ -344,11 +344,13 @@ router.post("/admin/newsletter/campaigns", requireAuth, authorize("newsletter", 
     const { subject, html_content } = req.body;
     if (!subject) return res.status(400).render("error", { message: res.locals.t("api.newsletter.subjectFieldRequired") });
     const targetTag = (req.body.target_tag || "").trim() || null;
+    const suppressInactive = req.body.suppress_inactive === "1" || req.body.suppress_inactive === "on";
+    const inactiveAfterSends = Math.max(0, parseInt(req.body.inactive_after_sends, 10) || 0);
 
     const result = await query(
-      `INSERT INTO newsletter_campaigns (site_id, subject, html_content, status, created_by, target_tag)
-       VALUES ($1, $2, $3, 'draft', $4, $5) RETURNING id`,
-      [siteId, subject, html_content || "", req.user.sub, targetTag]
+      `INSERT INTO newsletter_campaigns (site_id, subject, html_content, status, created_by, target_tag, suppress_inactive, inactive_after_sends)
+       VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7) RETURNING id`,
+      [siteId, subject, html_content || "", req.user.sub, targetTag, suppressInactive, inactiveAfterSends]
     );
     res.redirect(`/admin/newsletter/campaigns/${result.rows[0].id}/edit?site_id=${siteId}`);
   } catch (err) { next(err); }
@@ -373,9 +375,11 @@ router.post("/admin/newsletter/campaigns/:id", requireAuth, authorize("newslette
     if (campaign.status !== "draft") return res.status(400).render("error", { message: res.locals.t("api.newsletter.onlyDraftCampaignsEditable") });
 
     const targetTag = (req.body.target_tag || "").trim() || null;
+    const suppressInactive = req.body.suppress_inactive === "1" || req.body.suppress_inactive === "on";
+    const inactiveAfterSends = Math.max(0, parseInt(req.body.inactive_after_sends, 10) || 0);
     await query(
-      "UPDATE newsletter_campaigns SET subject = $1, html_content = $2, target_tag = $3 WHERE id = $4",
-      [req.body.subject, req.body.html_content || "", targetTag, campaign.id]
+      "UPDATE newsletter_campaigns SET subject = $1, html_content = $2, target_tag = $3, suppress_inactive = $4, inactive_after_sends = $5 WHERE id = $6",
+      [req.body.subject, req.body.html_content || "", targetTag, suppressInactive, inactiveAfterSends, campaign.id]
     );
     res.redirect(`/admin/newsletter/campaigns/${campaign.id}/edit?site_id=${campaign.site_id}`);
   } catch (err) { next(err); }
@@ -520,7 +524,12 @@ router.post("/admin/newsletter/sequences/:id/target-tag", requireAuth, authorize
     if (!ownsSite(req, sequence.site_id)) return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
 
     const targetTag = (req.body.target_tag || "").trim() || null;
-    await query("UPDATE newsletter_sequences SET target_tag = $1, updated_at = NOW() WHERE id = $2", [targetTag, sequence.id]);
+    const suppressInactive = req.body.suppress_inactive === "1" || req.body.suppress_inactive === "on";
+    const inactiveAfterSends = Math.max(0, parseInt(req.body.inactive_after_sends, 10) || 0);
+    await query(
+      "UPDATE newsletter_sequences SET target_tag = $1, suppress_inactive = $2, inactive_after_sends = $3, updated_at = NOW() WHERE id = $4",
+      [targetTag, suppressInactive, inactiveAfterSends, sequence.id]
+    );
     res.redirect(`/admin/newsletter/sequences/${sequence.id}?site_id=${sequence.site_id}`);
   } catch (err) { next(err); }
 });
