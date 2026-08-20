@@ -379,7 +379,10 @@ export async function sendSequenceSteps() {
   let sequences;
   try {
     sequences = (await query(
-      `SELECT sq.id AS sequence_id, sq.site_id, sq.target_tag, s.rate_per_hour, s.signature_html
+      `SELECT sq.id AS sequence_id, sq.site_id, sq.target_tag,
+              COALESCE(sq.suppress_inactive, false) AS suppress_inactive,
+              COALESCE(sq.inactive_after_sends, 0) AS inactive_after_sends,
+              s.rate_per_hour, s.signature_html
        FROM newsletter_sequences sq
        JOIN newsletter_settings s ON s.site_id = sq.site_id
        WHERE sq.active = true`
