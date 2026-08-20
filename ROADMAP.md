@@ -11,6 +11,13 @@ aggiungono SOLO dopo che la v1 è completa e verificata.
 ## PERIMETRO v1 (da completare)
 - F0 — Fondamenta:
   - Tenancy: header Location-Id + API key per-sito; header "Version: ..." IGNORATO.
+  - **MAPPING LOCATION ↔ SITE**: serve un parametro/campo per associare una
+    "location" () al "site"/tenant del CMS, così un nodo n8n può
+    passare quel dato (es. header `Location-Id` = UUID della location) e il CMS
+    lo usa per identificare il site giusto. Implementazione suggerita: campo
+    dedicato su `sites` (es. `crm_location_id`, unico/nullable) risolto dal
+    middleware tenancy quando `Location-Id` non è numerico né un domain. Da
+    approfondire/prima fare: gestione + test + exponi il valore verso n8n.
   - Auth: Bearer token per-sito.
   - Modello CAMPI CUSTOM per-tenant (id stabili).
   - Modello PIPELINE/STAGE per-tenant (id immutabili).
