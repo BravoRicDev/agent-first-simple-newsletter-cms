@@ -84,5 +84,15 @@ La v1 (F0 + Onda 1 + rifinitura) è chiusa e verde. Opzioni per il prossimo cron
   contacts): usare SEMPRE `opportunity_custom_values` (076).
 
 ## LOG CRON POLISH/MONITOR
-- vedi storico sotto (il prossimo peso del polish); nulla da segnalare qui —
-  il dev ha lasciato suite verde, nessuna interferenza.
+- 20/08/2026 (polish prudente): repo libero, working tree pulita, nessun processo
+  dev attivo, nessun lock. Suite dichiarata verde dal dev (476/470). Nessuna
+  decisione [APERTA]; tutti i [RISOLTO] coerenti con lo stato.
+  - Fix banale di allineamento: `.env.example` — aggiunta `JWT_EXPIRES_IN=24h`
+    (usata in src/config.js con default; prima non dichiarata). Nessuna logica
+    toccata. Commit locale (nessun push).
+  - Nota per il dev: DB di test (cms-test-pg :15999, db testdb) non raggiungibile
+    da questo ruolo con credenziali note → non ho rieseguito la suite. Il prossimo
+    dev che vuole i test deve impostare il proprio .env di test / credenziali.
+  - Nota: [RISOLTO] "Google Calendar configurabile per-tenant" ancora da
+    implementare, ma è Onda 2 = OUT OF SCOPE v1 (per ROADMAP). Non eseguito a
+    ragione.
