@@ -228,6 +228,19 @@ const SPEC = {
           timezone: { type: "string", description: "Opzionale: se assente usa booking_timezone per-tenant o 'UTC'" },
         },
       },
+      BookingCalendarConfig: {
+        type: "object",
+        description: "Configurazione di sincronizzazione booking ↔ Google Calendar per-tenant. Al massimo una config attiva per sito.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          oauth_connection_id: { type: "integer" },
+          calendar_id: { type: "string" },
+          active: { type: "boolean" },
+          created_at: { type: "string", format: "date-time" },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
     },
   },
 };
@@ -685,6 +698,49 @@ function buildPaths() {
       description: "Soft-delete: imposta status='cancelled' e cancelled_at=NOW(). Ritorna il booking cancellato.",
       parameters: [pathId()], security: tenantSec(),
       responses: jsonResponse(200, { booking: { $ref: "#/components/schemas/Booking" } }),
+    },
+  };
+
+  // ── Booking Calendar Config ─────────────────────────────────────────
+  base["/booking-calendar-config"] = {
+    get: {
+      tags: ["Booking"], summary: "Legge la config di sync calendario booking attiva",
+      description: "Ritorna la config attuale (null se nessuna configurata). Senza config il booking funziona senza Google Calendar.",
+      security: tenantSec(),
+      responses: jsonResponse(200, { config: { nullable: true, $ref: "#/components/schemas/BookingCalendarConfig" } }),
+    },
+    post: {
+      tags: ["Booking"], summary: "Crea/attiva una config di sync calendario booking",
+      description: "Disattiva eventuale config precedente e ne crea una nuova con la connessione OAuth indicata.",
+      security: tenantSec(),
+      requestBody: jsonBody({
+        type: "object",
+        required: ["oauth_connection_id"],
+        properties: {
+          oauth_connection_id: { type: "integer", description: "ID della connessione OAuth attiva (feature 36)" },
+          calendar_id: { type: "string", description: "ID calendario Google (default: 'primary')" },
+        },
+      }),
+      responses: jsonResponse(201, { config: { $ref: "#/components/schemas/BookingCalendarConfig" } }),
+    },
+    put: {
+      tags: ["Booking"], summary: "Aggiorna la config di sync calendario booking attiva",
+      description: "Aggiorna oauth_connection_id e/o calendar_id della config attiva.",
+      security: tenantSec(),
+      requestBody: jsonBody({
+        type: "object",
+        properties: {
+          oauth_connection_id: { type: "integer" },
+          calendar_id: { type: "string" },
+        },
+      }),
+      responses: jsonResource("config", "BookingCalendarConfig"),
+    },
+    delete: {
+      tags: ["Booking"], summary: "Disattiva la config di sync calendario booking",
+      description: "Disattiva la config attiva. I booking esistenti restano in DB ma gli eventi Google associati non vengono rimossi.",
+      security: tenantSec(),
+      responses: jsonResponse(200, { deleted: { type: "boolean" } }),
     },
   };
 

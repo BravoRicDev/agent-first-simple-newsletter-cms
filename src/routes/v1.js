@@ -792,4 +792,88 @@ router.delete("/bookings/:id", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Booking Calendar Config (ONDA 2) ───────────────────────────────────
+// Gestione della configurazione di sincronizzazione booking ↔ Google Calendar.
+// Al massimo una config attiva per tenant. POST crea, GET/PUT/DELETE gestiscono.
+
+router.get("/booking-calendar-config", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const config = (await query(
+      "SELECT * FROM booking_calendar_config WHERE site_id = $1 AND active = true LIMIT 1",
+      [siteId]
+    )).rows[0];
+    res.json({ config: config || null });
+  } catch (err) { next(err); }
+});
+
+router.post("/booking-calendar-config", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.body || {};
+    const oauthConnectionId = parseInt(b.oauth_connection_id, 10);
+    if (!Number.isInteger(oauthConnectionId) || oauthConnectionId < 1) {
+      return res.status(400).json({ error: "oauth_connection_id è obbligatorio e deve essere un numero positivo" });
+    }
+    // Disattiva config precedente (se esiste) prima di crearne una nuova
+    await query(
+      "UPDATE booking_calendar_config SET active = false, updated_at = NOW() WHERE site_id = $1 AND active = true",
+      [siteId]
+    );
+    const result = await query(
+      `INSERT INTO booking_calendar_config (site_id, oauth_connection_id, calendar_id, active)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [siteId, oauthConnectionId, String(b.calendar_id || "primary").trim().slice(0, 255), true]
+    );
+    res.status(201).json({ config: result.rows[0] });
+  } catch (err) { next(err); }
+});
+
+router.put("/booking-calendar-config", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.body || {};
+    const existing = (await query(
+      "SELECT * FROM booking_calendar_config WHERE site_id = $1 AND active = true LIMIT 1",
+      [siteId]
+    )).rows[0];
+    if (!existing) return res.status(404).json({ error: "Nessuna config attiva trovata" });
+    const oauthConnectionId = b.oauth_connection_id !== undefined
+      ? parseInt(b.oauth_connection_id, 10)
+      : existing.oauth_connection_id;
+    if (!Number.isInteger(oauthConnectionId) || oauthConnectionId < 1) {
+      return res.status(400).json({ error: "oauth_connection_id non valido" });
+    }
+    const result = await query(
+      `UPDATE booking_calendar_config
+       SET oauth_connection_id = $1, calendar_id = $2, updated_at = NOW()
+       WHERE id = $3 RETURNING *`,
+      [
+        oauthConnectionId,
+        b.calendar_id !== undefined
+          ? String(b.calendar_id).trim().slice(0, 255)
+          : existing.calendar_id,
+        existing.id,
+      ]
+    );
+    res.json({ config: result.rows[0] });
+  } catch (err) { next(err); }
+});
+
+router.delete("/booking-calendar-config", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const existing = (await query(
+      "SELECT * FROM booking_calendar_config WHERE site_id = $1 AND active = true LIMIT 1",
+      [siteId]
+    )).rows[0];
+    if (!existing) return res.status(404).json({ error: "Nessuna config attiva trovata" });
+    await query(
+      "UPDATE booking_calendar_config SET active = false, updated_at = NOW() WHERE id = $1",
+      [existing.id]
+    );
+    res.json({ deleted: true });
+  } catch (err) { next(err); }
+});
+
 export default router;
