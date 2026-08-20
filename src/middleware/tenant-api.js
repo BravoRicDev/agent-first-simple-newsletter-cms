@@ -6,7 +6,8 @@ import { query } from "../db.js";
 // con CRM diffusi"), montata su /v1.
 //
 // - Il tenant (sito) viene risolto dall'header `Location-Id`: può essere un
-//   id numerico oppure il domain del sito. È l'unità di tenancy.
+//   id numerico (sites.id), il domain del sito, oppure l'identificativo
+//   esterno della location (sites.location_external_id). È l'unità di tenancy.
 // - L'autenticazione avviene via Bearer token: l'API key del SITO (tabella
 //   site_api_keys), salvata SOLO come SHA-256 hex (mai in chiaro nel DB).
 // - Header `Version:` IGNORATO volutamente: alcuni client "CRM-diffusi"
@@ -36,15 +37,20 @@ export function requireTenant() {
       return res.status(401).json({ error: "Tenant non identificato: header Location-Id mancante" });
     }
 
-    // Risolvi il sito: se è numerico usa id, altrimenti domain.
+    // Risolvi il sito: se è numerico usa id, altrimenti prova prima il domain
+    // e poi l'identificativo esterno della location (mapping Location ↔ Site).
     let site;
     try {
       if (/^\d+$/.test(locationId)) {
         const r = await query("SELECT * FROM sites WHERE id = $1", [parseInt(locationId, 10)]);
         site = r.rows[0] || null;
       } else {
-        const r = await query("SELECT * FROM sites WHERE domain = $1", [locationId]);
+        let r = await query("SELECT * FROM sites WHERE domain = $1", [locationId]);
         site = r.rows[0] || null;
+        if (!site && locationId.length <= 255) {
+          r = await query("SELECT * FROM sites WHERE location_external_id = $1", [locationId]);
+          site = r.rows[0] || null;
+        }
       }
     } catch (err) {
       return next(err);
@@ -79,7 +85,13 @@ export function requireTenant() {
     // Aggiorna last_used_at (fire-and-forget, non blocca la richiesta).
     query("UPDATE site_api_keys SET last_used_at = NOW() WHERE id = $1", [keyRow.id]).catch(() => {});
 
-    req.tenant = { siteId: site.id, site };
+    req.tenant = {
+      siteId: site.id,
+      site,
+      // Mapping Location ↔ Site: esposto verso i consumer (es. n8n) così il
+      // valore è leggibile anche fuori dal DB.
+      locationExternalId: site.location_external_id ?? null,
+    };
     next();
   };
 }

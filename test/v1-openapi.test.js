@@ -49,8 +49,8 @@ describe("v1 — documentazione OpenAPI", () => {
       "/custom-fields", "/custom-fields/object-key/{objectKey}", "/custom-fields/folder", "/custom-fields/{id}",
       // pipelines
       "/pipelines", "/pipelines/{id}",
-      // config
-      "/config",
+      // config + mapping location
+      "/config", "/location",
       // opportunità
       "/opportunities", "/opportunities/search", "/opportunities/upsert",
       "/opportunities/lost-reason", "/opportunities/pipelines", "/opportunities/{id}",

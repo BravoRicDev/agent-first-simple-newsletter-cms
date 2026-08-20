@@ -334,6 +334,42 @@ function buildPaths() {
     },
   };
 
+  // ── Mapping Location ↔ Site ───────────────────────────────────────────
+  base["/location"] = {
+    get: {
+      tags: ["Config"], summary: "Legge il mapping Location ↔ Site (identificativo esterno associato al tenant)",
+      security: tenantSec(),
+      responses: jsonResponse(200, {
+        location: { type: "object", properties: {
+          siteId: { type: "integer" },
+          externalId: { type: "string", nullable: true },
+        } },
+      }),
+    },
+    put: {
+      tags: ["Config"], summary: "Imposta/aggiorna l'identificativo esterno della location per il tenant",
+      description: "Accetta `externalId` (o `locationId` in compatibilità). Il valore, passato nell'header `Location-Id`, identifica il site.",
+      requestBody: jsonBody({ type: "object", properties: {
+        externalId: { type: "string" },
+        locationId: { type: "string" },
+      } }),
+      security: tenantSec(),
+      responses: {
+        ...jsonResponse(200, {
+          location: { type: "object", properties: {
+            siteId: { type: "integer" }, externalId: { type: "string", nullable: true },
+          } },
+        }),
+        409: jsonError("Identificativo location già associato a un altro tenant"),
+      },
+    },
+    delete: {
+      tags: ["Config"], summary: "Azzera l'identificativo esterno della location per il tenant",
+      security: tenantSec(),
+      responses: jsonResponse(200, { location: { type: "object", properties: { siteId: { type: "integer" }, externalId: { type: "string", nullable: true } } } }),
+    },
+  };
+
   // ── Opportunità ──────────────────────────────────────────────────────
   base["/opportunities"] = {
     get: {

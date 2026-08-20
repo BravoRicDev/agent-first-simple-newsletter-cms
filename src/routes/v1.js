@@ -272,6 +272,47 @@ router.put("/config", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Mapping Location ↔ Site (gestione + esposizione verso n8n) ──────────
+//
+// Con questo endpoint il consumer (es. un nodo n8n) può leggere l'identificativo
+// esterno della location associato al tenant autenticato, e aggiornarlo/cancellarlo.
+// Il valore è quello che, passato nell'header `Location-Id`, identifica il site
+// giusto (oltre a id numerico e domain).
+
+router.get("/location", async (req, res, next) => {
+  try {
+    const row = (await query("SELECT location_external_id FROM sites WHERE id = $1", [req.tenant.siteId])).rows[0];
+    res.json({ location: { siteId: req.tenant.siteId, externalId: row?.location_external_id ?? null } });
+  } catch (err) { next(err); }
+});
+
+router.put("/location", async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    // Accetta sia { externalId } sia { locationId } per comodità di compatibilità.
+    const raw = body.externalId ?? body.locationId ?? null;
+    if (raw === null || raw === "") {
+      return res.status(400).json({ error: "externalId (o locationId) obbligatorio nel body" });
+    }
+    const externalId = String(raw).trim().slice(0, 255);
+    if (!externalId) return res.status(400).json({ error: "externalId non valido" });
+
+    await query("UPDATE sites SET location_external_id = $1 WHERE id = $2", [externalId, req.tenant.siteId]);
+    res.json({ location: { siteId: req.tenant.siteId, externalId } });
+  } catch (err) {
+    // 23505 = unique violation su location_external_id (mapping già usato da altro site).
+    if (err.code === "23505") return res.status(409).json({ error: "Identificativo location già associato a un altro tenant" });
+    next(err);
+  }
+});
+
+router.delete("/location", async (req, res, next) => {
+  try {
+    await query("UPDATE sites SET location_external_id = NULL WHERE id = $1", [req.tenant.siteId]);
+    res.json({ location: { siteId: req.tenant.siteId, externalId: null } });
+  } catch (err) { next(err); }
+});
+
 // ── Capability registry ─────────────────────────────────────────────────
 
 router.get("/capabilities", async (req, res, next) => {
