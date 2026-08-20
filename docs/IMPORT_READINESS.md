@@ -1,9 +1,11 @@
-# Import dati — readiness v1 (+ tool progettato, NON eseguito)
+# Import dati — readiness v1 (tool IMPLEMENTATO, migrazione dati NON eseguita)
 
 Obiettivo di questa nota: confermare che lo schema v1 (F0 + ONDA 1) sia
 **coerente e pronto per un import dati esterno**, e descrivere il **tool di
-import PROGETTATO** (migrazione dati NON eseguita ora, come da vincolo di
-progetto: le tabelle partono vuote e la struttura è "schema-ready").
+import IMPLEMENTATO** (`scripts/import-crm-data.mjs`). La migrazione dati in sé
+NON è stata eseguita (vincolo di progetto: le tabelle v1 partono vuote e la
+struttura è "schema-ready", il tool si lancia solo quando esiste una sorgente
+dati esterna reale da importare).
 
 ## Stato: schema pronto all'import (nessuna migrazione dati eseguita)
 
@@ -42,33 +44,72 @@ Tabelle coinvolte per l'import di una base contatti/opportunità:
 - **Pipeline/stage**: gli stadi sono immutabili (`stage.key`); un import può
   riferirsi a `pipeline_id` già presenti.
 
-## Tool di import PROGETTATO (design; NON implementato/ESEGUITO)
+## Tool di import IMPLEMENTATO (`scripts/import-crm-data.mjs`)
 
-Per il vincolo del progetto, ora si documenta SOLO il design di un tool
-`scripts/import-crm-data.mjs` (CLI, Node + pg), da realizzare quando servirà
-l'import reale. Non è stato scritto né eseguito.
+CLI (Node + pg) autonoma che carica un file JSON e popola le tabelle v1 in modo
+**idempotente** (`ON CONFLICT` / upsert): può essere rieseguita senza duplicare.
 
-Comportamento previsto:
-1. Legge un file JSON con struttura
-   `{ site_id, contacts: [...], opportunities: [...] }` (o mapping CSV→JSON).
-2. Per ogni contatto:
-   - `INSERT ... ON CONFLICT (site_id, email)` su `contacts` (upsert),
-   - profilo+custom in `contact_custom_values` via `setCustomValues`
-     (`object_key='contact'`), avendo creato prima le definizioni
-     `custom_fields` del tenant.
-3. Per ogni opportunità: upsert su `opportunities` (per `contact_email` +
-   `title`), custom in `opportunity_custom_values`.
-4. Idempotente: può essere rieseguito senza duplicare (ON CONFLICT).
-5. Trasazione per batch + log di scarto per i `field_key` ignorati.
+Uso:
+```bash
+DATABASE_URL=postgres://... node scripts/import-crm-data.mjs <file.json> [--site <id>] [--dry-run] [--quiet]
+```
 
-### Perché NON eseguito ora
+Struttura del file JSON:
+```json
+{
+  "site_id": 1,
+  "custom_fields": [{ "object_key": "contact", "field_key": "citta", "name": "Città", "type": "text" }],
+  "contacts": [{ "email": "...", "name": "...", "phone": "...", "tags": [], "status": "",
+                 "notes": "", "value_estimate": 0, "customFields": { "citta": "Roma" } }],
+  "opportunities": [{ "contactEmail": "...", "title": "...", "pipeline_id": 1, "stage": "open",
+                      "amount": 1000, "probability": 50, "status": "open",
+                      "expected_close_at": "2026-12-31", "notes": "",
+                      "customFields": { "sorgente": "web" } }]
+}
+```
+
+Comportamento (coerente con i servizi v1):
+1. **custom_fields** (facoltativi): upsert definizioni (`ON CONFLICT (site_id,
+   object_key, field_key) DO UPDATE`) così i valori importati hanno una
+   definizione valida. Le definizioni possono anche essere già presenti.
+2. **contacts**: upsert per `(site_id, email)` su `contacts` (`ON CONFLICT DO
+   UPDATE`, preservando status/notes se il nuovo valore è vuoto). Il profilo
+   (name/firstName/lastName/phone/companyName/website — `lastName`/`firstName`
+   derivati dal nome se non espliciti) + i `customFields` non vuoti vengono
+   scritti in `contact_custom_values` (`object_key='contact'`), validati contro
+   le definizioni del tenant (chiavi non definite → scarto con warn, come in
+   `custom-values.js`; le chiavi di profilo riservate sono sempre ammesse).
+   Ogni contatto in una transazione.
+3. **opportunities**: il contatto deve già esistere (importa i contatti prima);
+   upsert per `(site_id, contact_email, title)` su `opportunities` (se esiste
+   aggiorna pipeline/stage/importo/probabilità/stato/scadenze/note, altrimenti
+   inserisce). `pipeline_id` facoltativo → prima pipeline del tenant. I
+   `customFields` (object_key='opportunity') vanno in `opportunity_custom_values`,
+   validati contro le definizioni (non definiti → scarto con warn).
+4. **Idempotente**: rieseguibile senza duplicare (ON CONFLICT / upsert).
+5. **Flag**: `--site <id>` sovrascrive `site_id`; `--dry-run` valida e stampa il
+   piano senza scrivere; `--quiet` sopprime i log di avanzamento.
+6. **Riepilogo**: conteggio custom fields / contatti creati-aggiornati /
+   opportunità create-aggiornate + elenco `field_key` scartati.
+
+Test: `test/import-crm-tool.test.js` (4 subtests: popolamento con profilo/custom,
+idempotenza su doppia esecuzione, scarto chiavi non definite con mantenimento
+del profilo, dry-run senza scritture).
+
+### Perché la migrazione dati NON è stata eseguita
 - Vincolo di progetto ("migrazione dati NON eseguita"): le tabelle v1 devono
   restare vuote finché non c'è una sorgente dati esterna reale da importare.
-- Il design qui sopra è il riferimento per il DEV che implementerà il tool.
+- Il tool è pronto: va lanciato solo quando esiste tale sorgente (es. esportare
+  i dati dal CRM di origine in un file JSON con la struttura sopra).
 
 ## Verifica di coerenza (test)
 - `test/onda1-opportunity-custom-fields.test.js` (RIFINITURA v1) verifica che
   `opportunity_custom_values` persista/legga i custom field opportunità, che i
   `field_key` sconosciuti vengano ignorati e che l'isolamento tenant sia
   rispettato.
-- Suite F0/ONDA1/rifinitura verde (27/27) dopo l'aggiunta della tabella 076.
+- `test/import-crm-tool.test.js` (import tool) verifica che il tool popoli
+  contatti/opportunità + custom field (con profilo), sia idempotente al doppio
+  run, scarti le chiavi non definite mantenendo il profilo, e non scriva in
+  dry-run.
+- Suite F0/ONDA1/rifinitura verde dopo l'aggiunta della tabella 076 e del tool
+  di import (nessuna regressione).
