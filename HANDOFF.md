@@ -4,93 +4,85 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- v1 clone (F0 + Onda 1): **ONDA 1 — Core CRM (contatti + opportunità +
-  custom values + webhook OUT) COMPLETATO e verificato** (commit di questo run:
-  fc04e2f servizi/migrazione, 72ae696 route /v1, ff5384d test). Mancano solo i
-  punti "custom fields mapping su opportunità" (già coperto per contatti) e un
-  eventuale passaggio di rifinitura; sostanzialmente il perimetro v1 è chiuso.
-  Prossimo blocco consigliato = **rifinitura v1 + verifica end-to-end / import**.
+- v1 clone (F0 + Onda 1 + RIFINITURA): **perimetro v1 CHIUSO e SUITE COMPLETAMENTE
+  VERDE** (476 test / 470 pass / 0 fail). Questo run ha completato la rifinitura:
+  custom fields sulle OPPORTUNITÀ (blocco sostanziale mancante), import-ready docs,
+  e stabilizzato i 3 fail flaky noti — di cui **uno era un vero bug di produzione**
+  nelle sequenze evergreen. Prossimo blocco consigliato = Onda 2 (out of scope v1),
+  oppure, se si vuole consolidare la v1: hardening auth/rate-limit / doc API.
 
-## ONDA 1 COMPLETATO (punti di verifica)
-- Migrazione `db/075_onda1_contacts.sql` idempotente: tabelle
-  `contact_custom_values` (UNIQUE(site_id, contact_id, object_key), values
-  JSONB) e `contact_followers` (UNIQUE(site_id, contact_id, user_id)).
-  Nessun `ADD CONSTRAINT IF NOT EXISTS`. Verificata doppia riesecuzione senza
-  errori.
-- `src/services/custom-values.js`: get/set/merge/clear custom values per-tenant,
-  validati contro `custom_fields` (stesso object_key) + chiavi di profilo
-  riservate (name/firstName/lastName/phone/companyName/website) sempre ammesse
-  per object_key='contact'. Field_key sconosciuti → warn e ignora.
-- `src/services/contacts-v1.js`: serializeContact (email, nome+split
-  firstName/lastName, phone, companyName, website, tags, status, notes,
-  value_estimate, is_client, client_status, customFields{}), create/get/update/
-  delete/list/search/upsertByEmail/findDuplicate + note (contact_notes),
-  tags, e helper per tasks. Non tocca le firme di `src/services/contacts.js`.
-- `src/routes/v1.js`: AGGIUNTE (senza rimuovere le route F0) le route /v1:
-  - Contatti: GET/POST /contacts, POST /contacts/search, POST /contacts/upsert,
-    POST /contacts/search/duplicate, GET/PUT/DELETE /contacts/:id, note
-    (GET/POST /:id/notes, DELETE /:id/notes/:noteId), tags (GET/POST /:id/tags,
-    DELETE /:id/tags/:tag), tasks (GET/POST /:id/tasks, PUT /:id/tasks/:taskId),
-    followers (GET/POST, persistiti su contact_followers), campaigns (v1: []),
-    workflow (snapshot da contact_events).
-  - Opportunità (riusa services/opportunities.js): GET/POST /opportunities,
-    POST /opportunities/search, POST /opportunities/upsert,
-    GET/PUT/DELETE /opportunities/:id, PUT /:id/status, GET /:id/followers ([]).
-  - Route statiche PRIMA di /:id (search/upsert/duplicate prima di /:id).
-- **Webhook OUT**: la creazione contatto emette `contact_created` via
-  `events.js` → `enqueueForEvent` → `webhook_deliveries` (verificato da test).
-  I cambi fase opportunità già emettevano opportunity_stage_changed/status
-  (pattern pre-esistente confermato).
-- Test nuovi: `test/onda1-contacts.test.js` (8), `test/onda1-opportunities-v1.test.js`
-  (4), `test/onda1-webhook-out.test.js` (1) = **13/13 PASS** (pattern F0, 2
-  tenant per isolamento, header Version ignorato).
-- Regressioni (eseguite singolarmente, come da prassi F0): f0-foundations 9/9,
-  crm-opportunities ok, crm-opportunity-board 6/6, pipeline 3/3, webhooks 10/10,
-  route-order 2/2 → **NADA regressioni**.
-- Nessun segreto; `node --check` + import smoke test ok su tutti i file toccati.
+## RIFINITURA v1 COMPLETATA (questo run, commit 7761c78 / 1fda388 / d5f0ca7)
+1. **Custom fields sulle OPPORTUNITÀ** (era il punto 1 del "prossimo blocco"):
+   - Migrazione `db/076_opportunity_custom_values.sql` idempotente: tabella
+     `opportunity_custom_values` (FK su opportunities(id), `values JSONB`,
+     `UNIQUE(site_id, opportunity_id)`). NOTA: non si possono usare
+     `contact_custom_values` per le opportunità — quel FK è su contacts(id).
+   - `src/services/opportunity-custom-values.js`: get/set/merge/clear, validati
+     contro `custom_fields` (object_key='opportunity'), field_key sconosciuti
+     ignorati (warn).
+   - `src/services/opportunities-v1.js`: wrapper surface /v1 che riusa
+     `services/opportunities.js` e arricchisce il payload con
+     `customFields: { field_key: value }` (create/update/upsert/get/list/delete).
+   - `src/routes/v1.js`: usa opportunities-v1, customFields in create/update,
+     upsert centralizzato nel servizio.
+   - Test `test/onda1-opportunity-custom-fields.test.js` (5 subtests, pattern F0).
 
-## PROSSIMO BLOCCO CONSIGLIATO (dal run precedente → da fare ora)
-**Rifinitura v1 + verifica end-to-end / readiness import**:
-1. Custom fields mapping su OPPORTUNITÀ (oggi i customValues sono gestiti
-   principalmente per object_key='contact'; valutare se servono valori custom
-   per opportunity e come esporli nel payload opportunità).
-2. Verifica end-to-end: far girare l'intera suite (npm test) e stabilizzare i 3
-   fail flaky noti (forms-crm, newsletter-base-url, newsletter-bounce) se
-   ancora presenti.
-3. Struttura READY per import dati: confermare che le tabelle v1 (contacts,
-   contact_custom_values, opportunities, pipelines, custom_fields) siano
-   coerenti per un import esterno; documentare in docs/ il tool di import
-   PROGETTATO (migrazione dati NON eseguita, come da vincolo).
-4. Eventuale endpoint `/v1/contacts/{id}` con custom fields opportunità +
-   revisione del formato `customFields` per compatibilità.
+2. **Suite end-to-end VERDE** (punto 2 del prossimo blocco). Prima 451/471 con
+   3 fail (forms-crm, newsletter-base-url, newsletter-bounce); ora 476/470 (0 fail).
+   - `fix(newsletter)` — **BUG REALE**: `sendSequenceSteps()` non selezionava
+     `suppress_inactive`/`inactive_after_sends` ($8/$9) → undefined → NULL → la
+     condizione di elegibilità valuta NULL → **le sequenze evergreen NON inviavano
+     mail**. Aggiunte le due colonne con COALESCE. Coperto da
+     test/newsletter-base-url (PUNTO 3).
+   - `test forms-crm`: usava `@example.test` (dominio senza MX) → bloccato da
+     verifySubscriberEmail→checkMx. Ora usa example.com (MX reale) + email unica
+     per run.
+   - `test newsletter-bounce`: token hardcoded collidevano su UNIQUE del DB
+     condiviso; token univoci per run. Fix anche INSERT `RETURNING id` → `id,email`
+     (recordBounce usa subscriber.email).
 
-## COSE GIÀ PRONTE (riusate da ONDA 1)
+3. **Import-readiness** (punto 3 del prossimo blocco):
+   - `docs/IMPORT_READINESS.md`: conferma di coerenza schema v1 per import esterno
+     (tabella coinvolte, note custom fields, pipeline/stage) + design del tool
+     `scripts/import-crm-data.mjs` PROGETTATO (migrazione dati NON eseguita, come
+     da vincolo).
+   - `docs/ONDA1_SPEC.md`: aggiunta sezione "RIFINITURA v1 — custom fields sulle
+     opportunità" con la scelta schema (tabella dedicata, perché contact_custom_values
+     è vincolata a contacts).
+
+## PUNTI DI VERIFICA (questo run)
+- Migrazione 076 applicata + doppia riesecuzione idempotente senza errori.
+- `node --check` ok su tutti i file toccati; nessun segreto nel codice.
+- Test mirati F0+ONDA1+rifinitura = 27/27 PASS.
+- Suite intera = 476/470/0 (verde).
+- Nessun push (nessun remote); commit locali: 7761c78, 1fda388, d5f0ca7.
+
+## PROSSIMO BLOCCO CONSIGLIATO
+La v1 (F0 + Onda 1 + rifinitura) è chiusa e verde. Opzioni per il prossimo cron:
+1. **Onda 2** (backlog): calendario/booking con Google Calendar per-tenant
+   (configurabile, credenziali come campo di config — vedi DECISIONI_UMANE),
+   conversazioni outbound, payments, funnels.
+2. **Consolidamento v1** (se si vuole prima blindare la v1): hardening
+   auth/rate-limit, doc API completa (OpenAPI) dei 6 blocchi v1, eventuale
+   `scripts/import-crm-data.mjs` implementato (design già pronto in
+   docs/IMPORT_READINESS.md).
+
+## COSE GIÀ PRONTE (riusate da RIFINITURA)
 - `pipelines`/`pipeline_stages`, `opportunities`, `services/opportunities.js`,
-  `custom_fields` (F0), webhook OUT (feature 35 via events.js→webhooks.js).
+  `custom_fields` (F0), webhook OUT.
+- custom-values infrastruttura contatti (custom-values.js) + opportunità
+  (opportunity-custom-values.js).
 - Naming generico "API compatibili con CRM diffusi" applicato.
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
-- NON migrate esterne (nessuna migrazione dati ora): schema pronto al import.
+- NON migrate esterne (nessuna migrazione dati ora): schema pronto all'import
+  (tool solo progettato in docs/IMPORT_READINESS.md).
 - NON usare il nome del CRM di origine nel codice/docs/README.
-- NON risolvere decisioni [APERTA] — spettano all'umano (oggi non ce ne sono).
+- NON risolvere decisioni [APERTA] — spettano all'umano (oggi nessuna).
+- NON riportare custom fields opportunità in `contact_custom_values` (FK su
+  contacts): usare SEMPRE `opportunity_custom_values` (076).
 
-## LOG CRON POLISH/MONITOR (20/08/2026 — polisher)
-- Repo LIBERO (nessun claude/codex/opencode attivo), working tree PULITA, nessun
-  lock git. Nessuna interferenza col dev.
-- Verifica: migrazioni 074/075 rieseguite idempotenti su testdb (cms-test-pg:15999)
-  senza errori; `node --check` su tutto src → OK; test mirati ONDA1+F0 = 22/22 PASS.
-- Fix banale fatto: `.env.example` allineato a `src/config.js` — aggiunte chiavi
-  mancanti (GROQ_API_KEY/GROQ_BASE_URL/WHISPER_MODEL/AUDIO_RETENTION_DAYS,
-  STRIPE_SECRET_KEY) con valori uguali ai default di config. NESSUNA logica toccata.
-- Test intera suite: 451/471 pass. Fails = set già noto/assegnato al DEV
-  (rifinitura/stabilizzazione), NON regressioni da questo run: forms-crm, hitl
-  (human-in-the-loop, cascata su "secretOrPrivateKey must have a value" al primo
-  subtest), newsletter-base-url, newsletter-bounce (duplicate key su
-  newsletter_subscribers_token_key = collisione dati su testdb condiviso, igiene
-  test). Da NON risolvere qui (strutturale, spetta al DEV).
-- DECISIONI_UMANE: tutti [RISOLTO] confermati in essere, nessuna [APERTA] da
-  segnalare/girare.
-- Nota per il DEV: prima di stabilizzare newsletter-bounce meglio pulire/ricreare
-  testdb o garantire cleanup delle righe subscriber tra run per evitare collisioni
-  token su DB condiviso.
+## LOG CRON POLISH/MONITOR
+- vedi storico sotto (il prossimo peso del polish); nulla da segnalare qui —
+  il dev ha lasciato suite verde, nessuna interferenza.
