@@ -74,3 +74,23 @@ riparte esattamente da qui.
 - NON migrate esterne (nessuna migrazione dati ora): schema pronto al import.
 - NON usare il nome del CRM di origine nel codice/docs/README.
 - NON risolvere decisioni [APERTA] — spettano all'umano (oggi non ce ne sono).
+
+## LOG CRON POLISH/MONITOR (20/08/2026 — polisher)
+- Repo LIBERO (nessun claude/codex/opencode attivo), working tree PULITA, nessun
+  lock git. Nessuna interferenza col dev.
+- Verifica: migrazioni 074/075 rieseguite idempotenti su testdb (cms-test-pg:15999)
+  senza errori; `node --check` su tutto src → OK; test mirati ONDA1+F0 = 22/22 PASS.
+- Fix banale fatto: `.env.example` allineato a `src/config.js` — aggiunte chiavi
+  mancanti (GROQ_API_KEY/GROQ_BASE_URL/WHISPER_MODEL/AUDIO_RETENTION_DAYS,
+  STRIPE_SECRET_KEY) con valori uguali ai default di config. NESSUNA logica toccata.
+- Test intera suite: 451/471 pass. Fails = set già noto/assegnato al DEV
+  (rifinitura/stabilizzazione), NON regressioni da questo run: forms-crm, hitl
+  (human-in-the-loop, cascata su "secretOrPrivateKey must have a value" al primo
+  subtest), newsletter-base-url, newsletter-bounce (duplicate key su
+  newsletter_subscribers_token_key = collisione dati su testdb condiviso, igiene
+  test). Da NON risolvere qui (strutturale, spetta al DEV).
+- DECISIONI_UMANE: tutti [RISOLTO] confermati in essere, nessuna [APERTA] da
+  segnalare/girare.
+- Nota per il DEV: prima di stabilizzare newsletter-bounce meglio pulire/ricreare
+  testdb o garantire cleanup delle righe subscriber tra run per evitare collisioni
+  token su DB condiviso.
