@@ -9,6 +9,7 @@ import config from "../config.js";
 import { getCanonicalBaseUrl } from "./urls.js";
 import { renderEmail, getEmailTemplate, interpolate } from "./email-templates.js";
 import { verifySubscriberEmail } from "./email-verify.js";
+import { classifySmtpError, recordBounce } from "./bounce.js";
 
 // Versione leggibile dell'HTML per la conversazione (niente tag, niente
 // tracking). Usata solo per registrare l'outbound nel thread del contatto.
@@ -279,8 +280,13 @@ export async function sendCampaignBatch() {
           );
           recordEmailConversation(campaign.site_id, sub.email, campaign.subject, html, { campaign_id: campaign.id });
         } catch (err) {
-          logger.error(`Newsletter: invio fallito campagna #${campaign.id} -> ${sub.email}: ${err.message}`);
-          lastError = err.message;
+          const bounceKind = classifySmtpError(err);
+          if (bounceKind) {
+            await recordBounce(campaign.site_id, sub, bounceKind, err.message);
+          } else {
+            logger.error(`Newsletter: invio fallito campagna #${campaign.id} -> ${sub.email}: ${err.message}`);
+            lastError = err.message;
+          }
         }
       }
       if (lastError) {
@@ -372,7 +378,12 @@ export async function sendSequenceSteps() {
             );
             recordEmailConversation(seq.site_id, sub.email, step.subject, html, { sequence_id: seq.sequence_id, step_id: step.id });
           } catch (err) {
-            logger.error(`Newsletter: invio step #${step.id} fallito -> ${sub.email}: ${err.message}`);
+            const bounceKind = classifySmtpError(err);
+            if (bounceKind) {
+              await recordBounce(seq.site_id, sub, bounceKind, err.message);
+            } else {
+              logger.error(`Newsletter: invio step #${step.id} fallito -> ${sub.email}: ${err.message}`);
+            }
           }
         }
       }
