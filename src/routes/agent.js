@@ -38,6 +38,7 @@ import { getSiteEmailConfig, resetSiteTransporter } from "../services/email.js";
 import { EMAIL_TEMPLATE_KINDS, listEmailTemplates, setEmailTemplate, deleteEmailTemplate } from "../services/email-templates.js";
 import { readLocaleMarkdown } from "../middleware/i18n.js";
 import { sendConfirmationEmail, sendTestEmail } from "../services/newsletter.js";
+import { verifySubscriberEmail } from "../services/email-verify.js";
 import { logger } from "../services/logger.js";
 import config from "../config.js";
 
@@ -4054,6 +4055,15 @@ router.post("/api/agent/sites/:siteId/newsletter/subscribers", requireAuth, requ
     const email = (req.body.email || "").trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: res.locals.t("api.common.invalidEmail") });
     const confirmed = req.body.confirmed === true;
+
+    // BLOCCO A: verifica email prima di inserire/aggiornare (se non è già confermato).
+    if (!confirmed) {
+      const verification = await verifySubscriberEmail(email);
+      if (verification.status === "blocked") {
+        return res.status(400).json({ error: "Email non valida (blocco anti-spam)", details: verification.reason });
+      }
+    }
+
     // Se lo SMTP del sito non è configurato, l'iscritto va comunque creato ma
     // resta bloccato in "pending" per sempre (nessuna email di conferma può
     // partire): segnalato nella risposta invece di fallire silenziosamente.
@@ -4071,25 +4081,29 @@ router.post("/api/agent/sites/:siteId/newsletter/subscribers", requireAuth, requ
           [existing.id]
         );
       } else if (existing.status === "unsubscribed") {
+        // Re-verify anche per re-subscribe da unsubscribed (già fatto sopra, ma per chiarezza).
+        const verification = await verifySubscriberEmail(email);
         await query(
-          "UPDATE newsletter_subscribers SET status = 'pending', unsubscribed_at = NULL WHERE id = $1",
-          [existing.id]
+          "UPDATE newsletter_subscribers SET status = 'pending', unsubscribed_at = NULL, verification = $2, verified_at = NOW() WHERE id = $1",
+          [existing.id, verification.status]
         );
         sendConfirmationEmail(siteId, email, existing.token).catch(err => logger.error(`Invio email conferma newsletter fallito (site=${siteId}, email=${email}): ${err.message}`));
       }
       return res.json({ ok: true, id: existing.id, email_configured: emailConfigured });
     }
 
+    // Nuova iscrizione: verifica ancora (ridondante, ma esplicito).
+    const verification = await verifySubscriberEmail(email);
     const token = crypto.randomBytes(32).toString("hex");
     const result = await query(
-      `INSERT INTO newsletter_subscribers (site_id, email, status, token, confirmed_at)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [siteId, email, confirmed ? "confirmed" : "pending", token, confirmed ? new Date() : null]
+      `INSERT INTO newsletter_subscribers (site_id, email, status, token, confirmed_at, verification, verified_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING id`,
+      [siteId, email, confirmed ? "confirmed" : "pending", token, confirmed ? new Date() : null, verification.status]
     );
     if (!confirmed) {
       sendConfirmationEmail(siteId, email, token).catch(err => logger.error(`Invio email conferma newsletter fallito (site=${siteId}, email=${email}): ${err.message}`));
     }
-    res.json({ ok: true, id: result.rows[0].id, status: confirmed ? "confirmed" : "pending", email_configured: emailConfigured });
+    res.json({ ok: true, id: result.rows[0].id, status: confirmed ? "confirmed" : "pending", email_configured: emailConfigured, verification: verification.status });
   } catch (err) { next(err); }
 });
 

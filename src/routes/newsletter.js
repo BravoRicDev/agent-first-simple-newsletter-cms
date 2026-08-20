@@ -637,7 +637,11 @@ router.post("/newsletter/:siteId/subscribe", async (req, res, next) => {
     const emailConfig = await getSiteEmailConfig(siteId);
     if (!emailConfig) return res.status(400).json({ error: res.locals.t("api.newsletter.notAvailableForSite") });
 
-    await subscribeEmail(siteId, email);
+    const result = await subscribeEmail(siteId, email);
+    if (result.blocked) {
+      // Email bloccata: ritorna un messaggio generico che non rivela il motivo (anti-spam).
+      return res.status(400).json({ error: res.locals.t("api.common.invalidEmail") });
+    }
     respond(req, res, req.body._redirect);
   } catch (err) { next(err); }
 });

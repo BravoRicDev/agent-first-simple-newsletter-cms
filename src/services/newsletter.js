@@ -8,6 +8,7 @@ import { translate } from "../middleware/i18n.js";
 import config from "../config.js";
 import { getCanonicalBaseUrl } from "./urls.js";
 import { renderEmail, getEmailTemplate, interpolate } from "./email-templates.js";
+import { verifySubscriberEmail } from "./email-verify.js";
 
 // Versione leggibile dell'HTML per la conversazione (niente tag, niente
 // tracking). Usata solo per registrare l'outbound nel thread del contatto.
@@ -71,8 +72,17 @@ export async function sendConfirmationEmail(siteId, email, token) {
 // essere riusata anche dal form builder (iscrizione automatica se un campo
 // checkbox marcato come consenso è spuntato, vedi routes/forms.js). Un
 // iscritto già confermato non riceve una nuova email di conferma.
+// BLOCCO A: verifica email PRIMA di inserire — bloccata se spam/no-reply/disposable/no MX.
 export async function subscribeEmail(siteId, email) {
   const normalized = String(email || "").trim().toLowerCase();
+
+  // Verifica email prima di procedere con insert/update.
+  const verification = await verifySubscriberEmail(normalized);
+  if (verification.status === "blocked") {
+    // Email bloccata: non inserire, non inviare conferma, ritorna blocco.
+    return { blocked: true, reason: verification.reason };
+  }
+
   const existing = (await query(
     "SELECT id, token, status FROM newsletter_subscribers WHERE site_id = $1 AND email = $2",
     [siteId, normalized]
@@ -82,8 +92,9 @@ export async function subscribeEmail(siteId, email) {
   if (!existing) {
     token = crypto.randomBytes(32).toString("hex");
     await query(
-      `INSERT INTO newsletter_subscribers (site_id, email, status, token) VALUES ($1, $2, 'pending', $3)`,
-      [siteId, normalized, token]
+      `INSERT INTO newsletter_subscribers (site_id, email, status, token, verification, verified_at)
+       VALUES ($1, $2, 'pending', $3, $4, NOW())`,
+      [siteId, normalized, token, verification.status]
     );
   } else if (existing.status === "confirmed") {
     return { alreadyConfirmed: true };
@@ -94,8 +105,8 @@ export async function subscribeEmail(siteId, email) {
     // in qualsiasi momento e ripetutamente.
     token = crypto.randomBytes(32).toString("hex");
     await query(
-      `UPDATE newsletter_subscribers SET status = 'pending', token = $2, subscribed_at = NOW(), unsubscribed_at = NULL WHERE id = $1`,
-      [existing.id, token]
+      `UPDATE newsletter_subscribers SET status = 'pending', token = $2, subscribed_at = NOW(), unsubscribed_at = NULL, verification = $3, verified_at = NOW() WHERE id = $1`,
+      [existing.id, token, verification.status]
     );
   }
 
