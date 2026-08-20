@@ -43,6 +43,7 @@ import contactsRoutes from "./routes/contacts.js";
 import apiTokensRoutes from "./routes/api-tokens.js";
 import pipelineRoutes from "./routes/pipeline.js";
 import callsRoutes from "./routes/calls.js";
+import bookingPublicRoutes from "./routes/booking-public.js";
 import gettingStartedRoutes from "./routes/getting-started.js";
 import templatesAdminRoutes from "./routes/templates-admin.js";
 import analyticsRoutes from "./routes/analytics.js";
@@ -272,6 +273,7 @@ async function start() {
   app.use(contactsRoutes);
   app.use(apiTokensRoutes);
   app.use(pipelineRoutes);
+  app.use(bookingPublicRoutes);
   app.use(callsRoutes);
   app.use(gettingStartedRoutes);
   app.use(templatesAdminRoutes);

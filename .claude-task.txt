@@ -1,0 +1,105 @@
+Costruisci ONDA 2 Phase 3 — Public booking page per il sistema booking.
+
+CONTESTO PROGETTO:
+- CMS Express con EJS, PostgreSQL, pattern modulare
+- Esiste gia sistema booking (tabella booking_appointments, migration 077) con servizio src/services/booking.js (createBooking, updateBooking, cancelBooking, listBookings, getBooking)
+- Esiste gia surface API /v1/bookings in src/routes/v1.js
+- Esiste gia sistema "calls" legacy con route pubbliche /book/:siteId in src/routes/calls.js e views/book/index.ejs — DA NON TOCCARE
+- Esiste gia tenant_config per chiavi booking_* (booking_duration_minutes, booking_timezone, booking_lead_time_hours, booking_window_days) lette da readBookingConfig in booking.js
+- Il booking NON ha slot rules (call_availability e per calls legacy). Il public booking page deve calcolare gli slot disponibili basandosi su tenant_config.
+- Express e montato in src/index.js, routes sono importate e app.use(...)
+
+COSA COSTRUIRE:
+
+=== SERVIZIO: src/services/booking-slots.js ===
+Funzione principale: computeBookingSlots(siteId, { days = 14 } = {})
+- Legge da tenant_config le chiavi:
+  * booking_slot_minutes (default: 60) — durata di ogni slot
+  * booking_hours_start (default: "09:00") — ora di inizio finestra
+  * booking_hours_end (default: "18:00") — ora di fine finestra
+  * booking_available_days (default: "1,2,3,4,5") — giorni settimana (0=Dom,6=Sab)
+  * booking_lead_time_hours (default: 1) — ore minime di preavviso
+  * booking_window_days (default: 14) — giorni massimi nel futuro
+- Computa slot: per ogni giorno da oggi per days giorni, se il giorno e tra i giorni disponibili, genera slot di booking_slot_minutes tra booking_hours_start e booking_hours_end
+- Esclude slot nel passato o con lead time insufficiente
+- Esclude slot che confliggono con booking_appointments esistenti (status non cancellato, sovrapposizione time range)
+- Ritorna [{ start: Date, duration_minutes: number }]
+- Funzione di utility: groupSlotsByDay(slots) — raggruppa per giorno (stesso pattern di calls.js ma esportata)
+
+=== ROUTE: src/routes/booking-public.js ===
+Router pubblico (nessun middleware auth/tenant):
+
+1. GET /booking-public/:siteId
+   - Verifica sito esiste (SELECT id, name FROM sites)
+   - Computa slot con computeBookingSlots
+   - Rende views/book/booking-public-index.ejs con { site: {id, name, slug: null, description: ""}, groups, error: null, layout: false }
+
+2. GET /booking-public/:siteId/slots (JSON)
+   - Stessa verifica sito
+   - Ritorna { ok: true, groups: [...] } con groupSlotsByDay
+
+3. POST /booking-public/:siteId
+   - Rate limiter: { windowMs: 60000, max: 10, message: { error: "Troppe richieste" } }
+   - Honeypot anti-spam (stessa logica di calls.js: _honeypot/website/url)
+   - Valida: email, name, slot (start_time dal body come ISO string)
+   - Calcola slot correnti e verifica che lo slot scelto sia valido (esiste tra gli slot calcolati)
+   - Crea booking chiamando createBooking da ../services/booking.js
+   - Se AJAX request (X-Requested-With o accept json): res.json({ ok: true })
+   - Altrimenti redirect a /booking-public/:siteId/confirmed?email=...
+
+4. GET /booking-public/:siteId/confirmed
+   - Pagina di conferma (EJS) con { email, layout: false }
+
+IMPORT: in src/index.js aggiungi riga:
+import bookingPublicRoutes from "./routes/booking-public.js";
+app.use(bookingPublicRoutes); // DA METTERE PRIMA di callsRoutes
+
+=== VISTE EJS ===
+
+views/book/booking-public-index.ejs:
+- Copia lo STILE di views/book/index.ejs (stessi CSS, stesse classi HTML)
+- Titolo: "Prenota appuntamento"
+- Il form POST a /booking-public/<%= site.id %>
+- Stesso pattern slot selection con JavaScript
+- Campo nome + email + honeypot
+
+views/book/booking-public-confirmed.ejs:
+- Titolo: "Appuntamento confermato!"
+- Messaggio: "Riceverai una email di conferma all'indirizzo"
+- Stile identico al resto delle pagine book/
+
+=== TEST: test/onda2-booking-public.test.js ===
+Pattern identico a onda2-booking.test.js:
+- App Express di test con express.json()
+- Usa bookingPublicRoutes direttamente
+- DUE siti (createTestSite da ./helpers.js)
+
+Test:
+1. test("404 se sito non esiste") — GET /booking-public/99999, expect 404
+2. test("Mostra form con slot") — GET /booking-public/:siteId, expect 200, HTML contiene slot
+3. test("JSON slots ok") — GET /booking-public/:siteId/slots, expect 200, JSON con ok=true
+4. test("POST crea prenotazione") — POST /booking-public/:siteId con slot valido + name + email, expect 201/redirect
+5. test("Rifiuta slot non valido") — POST /booking-public/:siteId con slot passato, expect 400/409
+6. test("Rifiuta senza email") — POST /booking-public/:siteId senza email, expect 400
+7. test("Isolamento tenant") — due siti, slot diversi disponibili
+8. test("Conferma mostra pagina") — GET /booking-public/:siteId/confirmed, expect 200
+
+TUTTI I TEST USANO `./scripts/test.sh test/onda2-booking-public.test.js`
+
+VINCOLI:
+- MAI usare il nome del CRM di origine in commenti/docs
+- MAI push (nessun remote)
+- Migrazioni idempotenti: NON serve nuova migration, tutto via tenant_config esistente
+- node --check funzionante su tutti i file toccati
+- Nessun segreto/personale nel codice
+- Usa import ES6 (type module in package.json)
+- La route NON richiede auth: e pubblica!
+- NON distruggere o modificare calls.js o la route /book/:siteId legacy
+
+IMPORTANTE: CONSEGNA FINALE
+1. Crea TUTTI i file (servizio, route, 2 viste, test)
+2. Modifica index.js per montare la route
+3. node --check su ogni file toccato
+4. Lancia ./scripts/test.sh test/onda2-booking-public.test.js e riporta output
+
+Lavora su tutti i file in una sola sessione. Non fermarti a chiedere conferma.
