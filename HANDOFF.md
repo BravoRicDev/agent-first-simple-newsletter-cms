@@ -4,12 +4,14 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- v1 clone (F0 + Onda 1 + RIFINITURA): **perimetro v1 CHIUSO e SUITE COMPLETAMENTE
-  VERDE** (476 test / 470 pass / 0 fail). Questo run ha completato la rifinitura:
-  custom fields sulle OPPORTUNITÀ (blocco sostanziale mancante), import-ready docs,
-  e stabilizzato i 3 fail flaky noti — di cui **uno era un vero bug di produzione**
-  nelle sequenze evergreen. Prossimo blocco consigliato = Onda 2 (out of scope v1),
-  oppure, se si vuole consolidare la v1: hardening auth/rate-limit / doc API.
+- v1 clone (F0 + Onda 1 + RIFINITURA): **perimetro v1 CHIUSO e SUITE VERDE**
+  (480 test / 474 pass / 0 fail). Questo run ha **IMPLEMENTATO il tool di
+  import `scripts/import-crm-data.mjs`** (design già in
+  docs/IMPORT_READINESS.md → ora codice reale e verificato): chiude l'ultimo
+  gap del "migration-ready" della v1. La migrazione dati in sé NON è stata
+  eseguita (vincolo di progetto: si lancia solo con una sorgente esterna reale).
+  Prossimo blocco consigliato = Onda 2 (out of scope v1) oppure ulteriore
+  consolidamento (hardening auth/rate-limit, doc OpenAPI).
 
 ## RIFINITURA v1 COMPLETATA (questo run, commit 7761c78 / 1fda388 / d5f0ca7)
 1. **Custom fields sulle OPPORTUNITÀ** (era il punto 1 del "prossimo blocco"):
@@ -50,22 +52,42 @@ riparte esattamente da qui.
      opportunità" con la scelta schema (tabella dedicata, perché contact_custom_values
      è vincolata a contacts).
 
+## IMPORT TOOL IMPLEMENTATO (questo run, commit 38e38ac)
+- `scripts/import-crm-data.mjs` — CLI Node+pg autonoma, chiude il "migration-ready"
+  della v1: carica un file JSON `{ site_id, custom_fields[], contacts[],
+  opportunities[] }` e popola le tabelle v1 in modo idempotente (ON CONFLICT/
+  upsert). Flag `--site`/`--dry-run`/`--quiet`; riepilogo + log scarti.
+  - custom_fields: upsert definizioni (site/object/field).
+  - contacts: upsert per (site_id,email); profilo + customFields validati contro
+    le definizioni (chiavi non definite → scarto con warn; profilo sempre
+    ammesso); transazione per contatto.
+  - opportunities: upsert per (site_id,contact_email,title); pipeline_id
+    facoltativo → prima pipeline del tenant; custom in opportunity_custom_values.
+  - Migrazione dati NON eseguita (vincolo): tool pronto, da lanciare solo con
+    sorgente esterna reale.
+- `test/import-crm-tool.test.js` — 4 subtests: popolamento con profilo/custom,
+  idempotenza al doppio run, scarto chiavi non definite con profilo mantenuto,
+  dry-run senza scritture.
+- `docs/IMPORT_READINESS.md` — aggiornato da "PROGETTATO" a "IMPLEMENTATO" con
+  uso, struttura JSON, comportamento e flag.
+
 ## PUNTI DI VERIFICA (questo run)
-- Migrazione 076 applicata + doppia riesecuzione idempotente senza errori.
-- `node --check` ok su tutti i file toccati; nessun segreto nel codice.
-- Test mirati F0+ONDA1+rifinitura = 27/27 PASS.
-- Suite intera = 476/470/0 (verde).
-- Nessun push (nessun remote); commit locali: 7761c78, 1fda388, d5f0ca7.
+- Suite intera = **480/474/0** (verde; prima 476/470/0) — 4 nuovi test, nessuna
+  regressione. Eseguito contro il DB di test reale `localhost:15999/testdb`
+  (raggiungibile: `postgres@localhost:15999`, NODE_ENV=test).
+- `node --check` ok su `scripts/import-crm-data.mjs` e
+  `test/import-crm-tool.test.js`; nessun segreto/personale nel codice.
+- Idempotenza verificata manualmente al doppio run (0 duplicati).
+- Nessun push (nessun remote); commit locale: 38e38ac.
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-La v1 (F0 + Onda 1 + rifinitura) è chiusa e verde. Opzioni per il prossimo cron:
+La v1 (F0 + Onda 1 + rifinitura + import tool) è chiusa e verde. Opzioni:
 1. **Onda 2** (backlog): calendario/booking con Google Calendar per-tenant
    (configurabile, credenziali come campo di config — vedi DECISIONI_UMANE),
    conversazioni outbound, payments, funnels.
-2. **Consolidamento v1** (se si vuole prima blindare la v1): hardening
-   auth/rate-limit, doc API completa (OpenAPI) dei 6 blocchi v1, eventuale
-   `scripts/import-crm-data.mjs` implementato (design già pronto in
-   docs/IMPORT_READINESS.md).
+2. **Consolidamento v1** (blindare prima la v1): hardening auth/rate-limit,
+   doc API completa (OpenAPI) dei 6 blocchi v1 (contatti, opportunità, custom
+   fields, webhook out, pipelines, config).
 
 ## COSE GIÀ PRONTE (riusate da RIFINITURA)
 - `pipelines`/`pipeline_stages`, `opportunities`, `services/opportunities.js`,
@@ -76,8 +98,9 @@ La v1 (F0 + Onda 1 + rifinitura) è chiusa e verde. Opzioni per il prossimo cron
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
-- NON migrate esterne (nessuna migrazione dati ora): schema pronto all'import
-  (tool solo progettato in docs/IMPORT_READINESS.md).
+- NON eseguire migrazione dati (il tool `scripts/import-crm-data.mjs` è pronto,
+  MA va lanciato solo quando esiste una sorgente dati esterna reale da
+  importare; con DB vuoto le tabelle v1 restano vuote).
 - NON usare il nome del CRM di origine nel codice/docs/README.
 - NON risolvere decisioni [APERTA] — spettano all'umano (oggi nessuna).
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
@@ -96,3 +119,7 @@ La v1 (F0 + Onda 1 + rifinitura) è chiusa e verde. Opzioni per il prossimo cron
   - Nota: [RISOLTO] "Google Calendar configurabile per-tenant" ancora da
     implementare, ma è Onda 2 = OUT OF SCOPE v1 (per ROADMAP). Non eseguito a
     ragione.
+- 20/08/2026 (dev LEADER+QUALITY — questo run): DB di test raggiungibile
+  (`postgres@localhost:15999/testdb`). Suite intera rieseguita: **480/474/0**
+  verde. Implementato il tool di import v1 (`scripts/import-crm-data.mjs` +
+  test + docs). Commit `38e38ac`. Nessuna decisione [APERTA].
