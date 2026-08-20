@@ -92,20 +92,29 @@ riparte esattamente da qui.
 ### MONITORAGGIO (POLISH, cron successivo #2)
 - Repository LIBERO al passaggio (no claude/codex/opencode attivo, working tree
   pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
-- `.env.example` verificato ALLINEATO a `src/config.js`: presenti tutte le
-  chiavi lette (DATABASE_URL, JWT_SECRET, SMTP_*, OPENAI_API_KEY, LLM_*,
-  CLOUDFLARE_ZONE_ID, CLOUDFLARE_API_TOKEN, TWITTER_BEARER_TOKEN,
-  FACEBOOK_PAGE_TOKEN, GROQ_API_KEY, GROQ_BASE_URL, WHISPER_MODEL,
-  STRIPE_SECRET_KEY). Nessun allineamento mancante.
+- `.env.example` verificato ALLINEATO a `src/config.js`: tutte le 37 chiavi lette
+  presenti (DATABASE_URL, JWT_SECRET, SMTP_*, OPENAI_API_KEY, LLM_*, ecc.).
+  Nessun allineamento mancante.
 - Migrazioni: `db/migrate.js` gira da `scripts/test.sh` a ogni run senza errori
   → nessuna migrazione pendente/non applicata.
 - DECISIONI_UMANE: nessuna [APERTA]; tutti i [RISOLTO] applicati/rispettati.
-- Suite rieseguita a campione su DB di test in gruppi isolati, TUTTI VERDI:
-  * onda2-booking + v1-openapi = 11/11
+- Suite rieseguita su DB di test in gruppi isolati, TUTTI VERDI (66/66, 0 fail):
+  * f0-location-mapping = 9/9
+  * onda2-booking = 6/6
+  * v1-openapi = 5/5
   * f0-foundations + onda1-contacts = 17/17
-  * onda1-opportunities-v1 + custom-fields + webhook-out = 10/10
-  (totale 38/38, 0 fail). `node --check` ok sui 4 file dell'ultimo blocco.
+  * onda1-opportunities-v1 = 4/4
+  * onda1-opportunity-custom-fields = 5/5
+  * onda1-webhook-out = 1/1
+  * api-tokens = 5/5
+  * crm-suite + import-crm-tool = 14/14
+- `node --check` OK su tutti i file toccati nell'ultimo blocco.
 - Nessun commit necessario (working tree pulita). Nessun segreto nel codice.
+- **NOTA**: 3 riferimenti "CRM" in commenti pre-esistenti (non blocco v1):
+  `src/services/opportunities.js:151`, `test/crm-opportunity-board.test.js:25`,
+  `test/tracked-links.test.js:14` — commenti interni, non prodotto/docs. Da
+  rivedere in futuro ma non urgente.
+- Nessun commit necessario (working tree pulita).
 
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **ONDA 2 Phase 2 — Google Calendar sync per booking**: quando un booking
