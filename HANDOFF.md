@@ -75,8 +75,14 @@ riparte esattamente da qui.
   contacts): usare SEMPRE `opportunity_custom_values` (076).
 
 ## MONITORAGGIO (POLISH, cron successivo)
-- Repository LIBERO al passaggio (no claude/codex/opencode, working tree
+- Repository LIBERO al passaggio (nessun claude/codex/opencode, working tree
   pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
 - DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti già applicati/rispettati.
-- Suite completa rieseguita su DB di test come riportato sopra.
-- Commit locale: 8c95db2 su main.
+- **Blocco v1 + Onda 1 + Onda 2**: 43/43 pass (f0-foundations 9, contatti 8,
+  opportunità-v1 4, custom-fields 5, booking 6, booking-calendar 6, openapi 5).
+- **Import tool + webhook-out**: 5/5 pass.
+- **OAuth + forms-crm + workflow**: 26/26 pass.
+- Commit locale: 8c95db2 su main. Working tree pulita.
+- **NOTE MINORI**: 2 commenti interni citano "CRM" (src/services/opportunities.js:151,
+  db/067_tracked_links.sql:5). Non sono user-facing, fix opzionale per prossimo dev.
+- DB di test `cms-test-pg` up da 5 giorni, funzionante.
