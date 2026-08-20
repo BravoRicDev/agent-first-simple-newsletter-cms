@@ -6,8 +6,19 @@ ALTER TABLE newsletter_subscribers ADD COLUMN IF NOT EXISTS verification TEXT NO
 ALTER TABLE newsletter_subscribers ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
 
 -- Constraint: verification può avere solo questi valori.
-ALTER TABLE newsletter_subscribers ADD CONSTRAINT IF NOT EXISTS ck_newsletter_subscribers_verification
-  CHECK (verification IN ('pending', 'passed', 'role', 'blocked'));
+-- PostgreSQL NON supporta "ADD CONSTRAINT IF NOT EXISTS" (a differenza di ADD
+-- COLUMN): uso un DO block per rendere la migrazione idempotente, altrimenti
+-- il runner riprova 069 a ogni boot e blocca la catena 070-072.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ck_newsletter_subscribers_verification'
+  ) THEN
+    ALTER TABLE newsletter_subscribers ADD CONSTRAINT ck_newsletter_subscribers_verification
+      CHECK (verification IN ('pending', 'passed', 'role', 'blocked'));
+  END IF;
+END $$;
 
 -- Indice per query quick-wins (subscribers già verificati).
 CREATE INDEX IF NOT EXISTS idx_newsletter_subscribers_verification
