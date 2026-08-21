@@ -9,78 +9,69 @@ riparte esattamente da qui.
 - **ONDA 2 Phase 1-5**: booking, calendar sync, public page, payments,
   conversations — tutte **COMPLETE**.
 - **ONDA 2 Phase 6 — Event-driven agent conversation triggers**: **COMPLETO**.
-- **REFINEMENT — Test gap + e2e event pipeline**: **COMPLETO** (questo run).
+- **REFINEMENT — Test gap + e2e event pipeline**: **COMPLETO**.
+- **WEBHOOK OUT delivery e2e (n8n simulator)**: **COMPLETO** (questo run).
 
 ## COSTRUITO IN QUESTO RUN (nuovo commit)
 
-### Fix test gap in v1-openapi.test.js
-Aggiunte le route mancanti alla expected list nello spec OpenAPI:
-- `/booking-calendar-config`
-- `/payment-links`, `/payment-links/{id}`, `/payment-links/{id}/mark-paid`
+### test/webhook-n8n-e2e.test.js — Webhook OUT delivery e2e (4 test)
+Test end-to-end del flusso webhook OUT con consegna HTTP reale a un server
+simulato (n8n simulator), coprendo:
 
-Queste route erano già documentate in `openapi.js` ma non verificate dal test.
-Ora il test copre tutta la surface API documentata.
+1. **HMAC signature (1 test)**: crea webhook con secret, trigger evento
+   contact_created, enqueueForEvent + deliverPending con allowPrivate=true →
+   verifica che l'n8n simulator riceva la richiesta con header
+   X-Webhook-Signature corretto (HMAC-SHA256 calcolato col secret del webhook).
+   Verifica anche X-Webhook-Event e payload body.
 
-### test/onda2-booking-webhook-e2e.test.js — Webhook OUT e2e (3 test)
-Verifica end-to-end del flusso booking → webhook out:
-1. **Creazione booking → delivery booking_created**: POST /v1/bookings genera
-   una riga in webhook_deliveries per booking_created, con payload che contiene
-   booking_id, title, start_time.
-2. **Isolamento tenant**: tenant B (con webhook attivo per booking_created) NON
-   riceve delivery per i booking di tenant A.
-3. **Cancellazione booking → delivery booking_cancelled**: DELETE /v1/bookings/:id
-   (soft-delete) genera delivery per booking_cancelled.
+2. **Retry con backoff (1 test)**: n8n risponde 503 al primo tentativo →
+   delivery rimane "pending" con attempts=1 e next_attempt_at in futuro
+   (backoff esponenziale 2^1=2 min). Forzando next_attempt_at al passato, il
+   secondo tentativo consegna con successo (200). Verifica almeno 2 richieste
+   HTTP ricevute dal simulatore.
 
-### test/onda2-runtime-event-flow.test.js — Agent Runtime Event Flow (6 test)
-Verifica end-to-end del flusso triggerRuntimeForEvent con payload booking reali:
-1. **booking_created → conversazione con messaggio**: 2 runtime (whatsapp + email)
-   attivati, conversazioni create, messaggi in DB verificati via
-   listConversationMessages, meta.event_triggered_by=booking_created.
-2. **pref_email=false → runtime email saltato**: Il runtime whatsapp viene
-   comunque attivato (pref_whatsapp=true), l'email skippato.
-3. **Isolamento tenant B**: runtime B matcha, nessuna conversazione su A.
-4. **Evento senza matching → triggered=false**: form_submitted non matcha.
-5. **Runtime senza event_triggers non crasha**: graceful handling.
-6. **Contatto sconosciuto non crasha**: graceful handling contatto inesistente.
+3. **Max tentativi → failed (1 test)**: webhook verso endpoint che risponde
+   sempre 503 → dopo MAX_ATTEMPTS (5) delivery va in status "failed".
+   Forza next_attempt_at prima di ogni tentativo.
+
+4. **Isolamento tenant (1 test)**: pulisce webhook di Tenant A, crea webhook
+   solo su Tenant B per contact_created. Evento su Tenant A → deliverPending
+   su A non consegna nulla (0 delivered). Evento su Tenant B → consegna
+   correttamente (1 delivered).
 
 ### Verifica regressione
-- Suite v1-OpenAPI (5 test): ✅ 5/5 pass (con gap fix)
-- F0 foundations + location + rate-limit (36 test): ✅ 36/36
-- ONDA 1 contacts + opportunities + custom (17 test): ✅ 17/17
-- ONDA 1 webhook out (1 test): ✅ 1/1
-- ONDA 2 booking + booking-calendar (15 test): ✅ 15/15
-- ONDA 2 conversations + runtime-events + payments (30 test): ✅ 30/30
-- **Nuovo e2e webhook (3 test)**: ✅ 3/3
-- **Nuovo runtime flow (6 test)**: ✅ 6/6
-- **Totale verificato: 107+ test, 0 fail**
+- v1-OpenAPI (5 test): ✅ 5/5
+- F0 foundations + location + rate-limit (31 test): ✅ 31/31
+- ONDA 1 contacts + opportunities + custom-fields + webhook (18 test): ✅ 18/18
+- ONDA 2 booking + booking-calendar (23 test): ✅ 23/23
+- ONDA 2 booking webhook e2e (3 test): ✅ 3/3
+- **Nuovo webhook n8n e2e (4 test)**: ✅ 4/4
+- **Totale verificato: ~84 test, 0 fail**
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ `node --check` su tutti i file modificati: OK
-- ✅ Test gap fix: v1-openapi.test.js ora copre tutta la surface documentata
-- ✅ Nuovi test: webhook e2e (3 test) + runtime flow (6 test) — tutti pass
-- ✅ Regressione zero (0 fail su 107+ test)
-- ✅ Nessun segreto nel codice
+- ✅ `node --check` su test/webhook-n8n-e2e.test.js: OK
+- ✅ Nuovo test: webhook n8n e2e (4 test) — tutti pass (HMAC, retry, max-failed, isolation)
+- ✅ Regressione zero (0 fail su ~84 test verificati)
+- ✅ Nessun segreto nel codice (tutti i secret generati con crypto.randomBytes)
 - ✅ Nessun `git reset --hard` / force
 - ✅ DECISIONI_UMANE: nessun [APERTA] — tutti [RISOLTO] già applicati
-- ✅ `.claude-task-e2e-refinement.md` pulito (rimosso)
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **OpenAPI per booking-public**: documentare gli endpoint pubblici di booking
-   (GET /booking-public/:siteId/slots, /booking-public/:siteId, POST /booking-public/:siteId
-   e /booking-public/:siteId/confirmed) in un file openapi separato o sezione
-   dell'esistente.
-2. **Webhook booking → n8n integration test**: testare che i webhook delivery
-   vengano processati e inviati correttamente (simulando n8n via server HTTP di
-   test), coprendo HMAC signature e retry.
-3. **Performance/security test**: verificare che rate limiting per-tenant funzioni
+1. **Performance/security test**: verificare che rate limiting per-tenant funzioni
    su booking e payment-links, e che i limiti di prenotazione (lead time, finestra)
    siano rispettati.
+2. **OpenAPI per booking-public**: documentare gli endpoint pubblici di booking
+   (GET /booking-public/:siteId/slots, /booking-public/:siteId, POST /booking-public/:siteId
+   e /booking-public/:siteId/confirmed) in una sezione OpenAPI dedicata.
+3. **Test di regressione bulk**: eseguire tutti i ~480 test in un'unica sessione
+   per confermare che non ci siano leak di stato tra suite.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
 - ONDA 2 Phase 1-5: booking, calendar sync, public page, payments, conversations.
 - ONDA 2 Phase 6: event-driven agent conversation triggers.
-- **Refinement: test gap OpenAPI + e2e event pipeline (webhook + runtime)**.
+- Refinement: test gap OpenAPI + e2e event pipeline (webhook + runtime).
+- **Webhook OUT delivery e2e: HMAC, retry, max failed, tenant isolation**.
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
