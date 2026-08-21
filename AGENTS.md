@@ -7,16 +7,13 @@ SEGUIRE OBBLIGATORIAMENTE.
 Aspettare discorso diretto già definito dalla roadmap: niente domande all'umano
 se la risposta è già in ROADMAP.md / DECISIONI_UMANE.md / HANDOFF.md.
 
-## Delega produttiva a claude-code (come nel CMS di produzione)
-- Dare a claude-code UN task AMPIO e autosufficiente, con dentro: contesto del
-  progetto, file da creare/modificare, schema SQL, vincoli, istruzioni multiple
-  in una sola invocazione. NON frammentare in microtask.
-- Modello più economico: `claude -p '<task ampio>' --model haiku
-  --dangerously-skip-permissions --max-turns 300`
-- Se claude non ce la fa (errore/limite), fallback sul solito stack
-  (deepseek-v4-flash) via i tool dell'agente.
-- L'agente del cron verifica UNA volta a fine lavoro (test + anti-leak), come da
-  prassi del progetto.
+## Provider: litellm-proxy (come l'ambiente di Riccardo)
+- Usare SEMPRE litellm-proxy (http://127.0.0.1:4000) come provider primario.
+- L'agente lavora coi propri tool nativi (terminal, read_file, write_file,
+  patch, search_files, execute_code) — NON delegare a claude-code.
+- Claude-code è SOLO un fallback se i tool nativi falliscono per errore/limite.
+- Lavorare a BLOCCHI FUNZIONALI INTERI (3-5 endpoint correlati per volta) —
+  non microtask. Verifica solo a fine blocco, non dopo ogni file.
 
 ## VINCOLI
 - Niente `git reset --hard` / force.
