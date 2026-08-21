@@ -54,6 +54,5 @@ complete e passano. Attendere input umano per:
 - ONDA 4 (Webhook OUT event enrichment + Quotes/Board/Merge v1 API + Segmenti/Workflow/Scoring v1 API).
 
 ## COSE DA NON FARE
-- NON pushare su GitHub (nessun remote). Solo commit locali.
 - NON usare il nome del CRM di origine nel codice/docs/README.
 - NON risolvere decisioni [APERTA] — spettano all'umano.

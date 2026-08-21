@@ -2,7 +2,7 @@
 --
 -- Un link pubblico /go/:slug che conta le visite e reindirizza (302) verso
 -- una destinazione. Ogni sito ha i suoi link (isolamento per site_id).
--- Analogo ai "magic link" di CRM lato import:
+-- Analogo ai "magic link" lato import:
 --   - conteggio visite (totali + uniche per giorno)
 --   - collegamento al funnel tramite channel / utm_campaign: il primo
 --     contatto che arriva da un link eredita quella sorgente (first_source

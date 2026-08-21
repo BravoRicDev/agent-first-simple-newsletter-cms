@@ -910,7 +910,7 @@ la destinazione nel campo `redirect` del JSON e la seguono col widget.
 
 ## CRM AUTOMATION (segmenti, workflow, scoring, task, funnel)
 
-Funzionalità "tipo CRM/ActiveCampaign" native, costruite su `contacts`.
+Funzionalità CRM native, costruite su `contacts`.
 Niente connettori esterni. Ogni azione significativa (form, quiz, email,
 chiamata, tag, stadio) genera un **evento contatto** (`contact_events`) che
 alimenta segmenti, workflow e scoring.

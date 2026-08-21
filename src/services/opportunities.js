@@ -152,7 +152,7 @@ export async function deleteOpportunity(siteId, id) {
 }
 
 // ── Kanban board ─────────────────────────────────────────────────────────
-// Vista "Pipelines" stile CRM: opportunità raggruppate per stage della
+// Vista "Pipelines": opportunità raggruppate per stage della
 // pipeline selezionata. Nessuna nuova tabella: usa lo schema esistente.
 
 // Pipeline del sito (con stages JSONB parse). Se stages è vuoto viene usato

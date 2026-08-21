@@ -8,7 +8,7 @@ import { getBoard, moveOpportunityStage } from "../src/services/opportunities.js
 import { addContactNote, listContactNotes } from "../src/services/conversations.js";
 import adminCrmRoutes from "../src/routes/admin-crm.js";
 
-// Kanban board opportunità (stile  "Pipelines"):
+// Kanban board opportunità:
 // - getBoard raggruppa le opportunità per stage della pipeline (custom o default)
 // - moveOpportunityStage sposta la card e deriva lo status da vinto/perso
 // - endpoint API /api/opportunities/:id/move e `/note`
@@ -22,7 +22,7 @@ describe("crm: kanban board opportunità", () => {
     const created = await createApiToken(user.id, "board", 30);
     token = created.token;
 
-    // Pipeline con stages custom (stile CRM multi-funnel)
+    // Pipeline con stages custom (multi-funnel)
     const p = await query(
       `INSERT INTO pipelines (site_id, name, stages, is_default)
        VALUES ($1, $2, $3::jsonb, true) RETURNING id`,

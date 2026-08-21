@@ -901,7 +901,7 @@ URL), same behaviour as forms. AJAX clients receive the destination in the
 
 ## CRM AUTOMATION (segments, workflows, scoring, tasks, funnel)
 
-Native "CRM/ActiveCampaign-like" features built on `contacts`. No external
+Native CRM features built on `contacts`. No external
 connectors. Every meaningful action (form, quiz, email, call, tag, stage)
 fires a **contact event** (`contact_events`) that feeds segments, workflows
 and scoring.

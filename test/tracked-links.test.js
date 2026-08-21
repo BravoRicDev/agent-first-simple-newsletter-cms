@@ -11,7 +11,7 @@ import { registerTrackedLinksRoutes } from "../src/routes/agent-tracked-links.js
 import { publicTrackedLinksRouter } from "../src/routes/public-tracked-links.js";
 
 // Feature 39 — Link tracciati (QR / link corto) per sito, analogo ai magic
-// link di CRM: conteggio visite (totali/unici/giorno), collegamento al
+// conteggio visite (totali/unici/giorno), collegamento al
 // funnel via channel/utm e identificazione opzionale del visitatore.
 describe("feature 39: link tracciati (QR / link corto)", () => {
   let site, user, token, server, baseUrl;

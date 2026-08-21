@@ -184,8 +184,9 @@ describe("Igiene lista newsletter (BLOCCO A): validazione e verifica email", { c
 
   // ── subscribeEmail integrazione (richiedono DB) ────────────────────────────
 
-  test("subscribeEmail: email valida → inserted con verification='passed'", { skip: !dbAvailable }, async () => {
+  test("subscribeEmail: email valida → inserted con verification='passed'", async function() {
     const email = "valid@gmail.com";
+    if (!dbAvailable) this.skip();
     const result = await subscribeEmail(site.id, email);
     assert.equal(result.blocked, undefined, "non è bloccato");
     assert.equal(result.alreadyConfirmed, false);
@@ -200,7 +201,8 @@ describe("Igiene lista newsletter (BLOCCO A): validazione e verifica email", { c
     assert.ok(sub.verified_at, "verified_at impostato");
   });
 
-  test("subscribeEmail: email role-based → inserted con verification='role'", { skip: !dbAvailable }, async () => {
+  test("subscribeEmail: email role-based → inserted con verification='role'", async function() {
+    if (!dbAvailable) this.skip();
     const email = "info@gmail.com";
     const result = await subscribeEmail(site.id, email);
     assert.equal(result.blocked, undefined);
@@ -213,7 +215,8 @@ describe("Igiene lista newsletter (BLOCCO A): validazione e verifica email", { c
     assert.equal(sub.verification, "role");
   });
 
-  test("subscribeEmail: dominio monouso mailinator → blocked, NON inserito", { skip: !dbAvailable }, async () => {
+  test("subscribeEmail: dominio monouso mailinator → blocked, NON inserito", async function() {
+    if (!dbAvailable) this.skip();
     const email = "test@mailinator.com";
     const result = await subscribeEmail(site.id, email);
     assert.equal(result.blocked, true);
@@ -227,7 +230,8 @@ describe("Igiene lista newsletter (BLOCCO A): validazione e verifica email", { c
     assert.equal(sub, undefined, "subscriber NON inserito");
   });
 
-  test("subscribeEmail: noreply prefix → blocked, NON inserito", { skip: !dbAvailable }, async () => {
+  test("subscribeEmail: noreply prefix → blocked, NON inserito", async function() {
+    if (!dbAvailable) this.skip();
     const email = "noreply@company.com";
     // Mock checkMx per questo test (o usa un dominio che non ha MX, come invalid-domain-12345.test).
     const result = await subscribeEmail(site.id, email);
@@ -240,7 +244,8 @@ describe("Igiene lista newsletter (BLOCCO A): validazione e verifica email", { c
     assert.equal(sub, undefined, "subscriber NON inserito");
   });
 
-  test("subscribeEmail: email senza @ → blocked, NON inserito", { skip: !dbAvailable }, async () => {
+  test("subscribeEmail: email senza @ → blocked, NON inserito", async function() {
+    if (!dbAvailable) this.skip();
     const email = "invalidemail";
     const result = await subscribeEmail(site.id, email);
     assert.equal(result.blocked, true);
@@ -252,7 +257,8 @@ describe("Igiene lista newsletter (BLOCCO A): validazione e verifica email", { c
     assert.equal(sub, undefined, "subscriber NON inserito");
   });
 
-  test("subscribeEmail: already confirmed subscriber → ignored, returns alreadyConfirmed:true", { skip: !dbAvailable }, async () => {
+  test("subscribeEmail: already confirmed subscriber → ignored, returns alreadyConfirmed:true", async function() {
+    if (!dbAvailable) this.skip();
     const email = "already@gmail.com";
     // Prima iscrizione.
     await subscribeEmail(site.id, email);
