@@ -6,84 +6,77 @@ riparte esattamente da qui.
 ## FASE CORRENTE
 - v1 clone (F0 + Onda 1 + RIFINITURA + import tool + OpenAPI): **perimetro v1
   CHIUSO e SUITE VERDE**.
-- **ONDA 2 booking**: Phase 1, 2, 3 + refinements **COMPLETO**.
-- **ONDA 2 Phase 4 — Payments API su /v1**: **COMPLETO** (payment-links CRUD +
-  mark-paid + OpenAPI + test 9/9 pass).
-- **ONDA 2 Phase 4 ext — Rate-limit per-tenant**: **COMPLETO** (tenant_config
-  key=rate_limits con cache TTL 60s, keyGenerator tenant-isolato, skip loopback
-  configurabile, test 13/13 pass).
-- **ONDA 2 Phase 5 — v1 Conversations API**: **COMPLETO** (route GET/POST/PUT/DELETE
-  conversazioni + messaggi outbound + OpenAPI + test 14/14 pass).
+- **ONDA 2 Phase 1-5**: booking, calendar sync, public page, payments,
+  conversations — tutte **COMPLETE**.
+- **ONDA 2 Phase 6 — Event-driven agent conversation triggers**: **COMPLETO**
+  (migrazione 081 + sanitizeEventTriggers + triggerRuntimeForEvent +
+  integration events.js + test 7/7).
 
 ## COSTRUITO IN QUESTO RUN (nuovo commit)
 
-### ONDA 2 Phase 5 — v1 Conversations API (outbound)
+### ONDA 2 Phase 6 — Event-driven agent conversation triggers
 
-1. **src/routes/v1.js** — Aggiunte 6 route per conversazioni su /v1:
-   - `GET /v1/conversations` — lista con filtri ?email, ?channel, ?status
-   - `GET /v1/conversations/{id}` — dettaglio conversazione (404 se inesistente)
-   - `GET /v1/conversations/{id}/messages` — lista messaggi in ordine cronologico
-   - `POST /v1/conversations/{id}/messages` — aggiunge messaggio outbound (direction
-     default "out"; verifica esistenza conversazione prima di scrivere)
-   - `PUT /v1/conversations/{id}/status` — setta status (open|pending|closed, validato)
-   - `DELETE /v1/conversations/{id}` — elimina conversazione (cascade su messaggi)
-   - Riutilizza `src/services/conversations.js` senza modifiche al servizio.
-   - Route statiche (GET /conversations) PRIMA di quelle con parametro :id.
+1. **db/081_runtime_event_triggers.sql** — Migrazione idempotente: aggiunge
+   `event_triggers JSONB NOT NULL DEFAULT '[]'` a `agent_runtimes`.
 
-2. **src/openapi.js** — Aggiunti:
-   - Tag: `Conversazioni` (ONDA 2 — conversazioni outbound)
-   - Schemas: `Conversation`, `ConversationMessage`, `ConversationMessageCreate`
-   - Paths: `/conversations` (GET), `/conversations/{id}` (GET+DELETE),
-     `/conversations/{id}/messages` (GET+POST), `/conversations/{id}/status` (PUT)
+2. **src/services/agent-runtime.js** — Modifiche:
+   - Nuova funzione `sanitizeEventTriggers(raw)`: sanitizza l'array di trigger
+     evento (event_type, enabled, initial_message, auto_close_days).
+   - `sanitizeRuntimeInput` ora include `event_triggers: sanitizeEventTriggers(...)`.
+   - Nuova funzione esportata `triggerRuntimeForEvent({ siteId, eventType,
+     contactEmail, payload })`: trova i runtimes attivi del sito con
+     `event_triggers` matching l'event_type, e per ognuno:
+     - Verifica preferenze GDPR (pref_whatsapp / pref_email)
+     - Crea/riusa una conversazione
+     - Invia il messaggio iniziale configurato
+     - Imposta status conversazione = "open"
+     - Emette evento `agent_runtime_triggered` per tracciamento
 
-3. **test/v1-openapi.test.js** — Aggiunte route conversazioni all'array expected.
+3. **src/services/events.js** — Aggiunto consumer in `emitContactEvent` che
+   chiama `triggerRuntimeForEvent` via import dinamico (nessun ciclo statico).
+   Ogni evento CRM (booking_created, contact_created, form_submitted, ecc.)
+   ora triggera automaticamente le conversazioni degli agent runtime
+   configurati.
 
-4. **test/onda2-conversations-v1.test.js** — Nuovo file con 14 test:
-   - Lista vuota, lista con dati, dettaglio, 404, messaggi, add messaggio,
-     add messaggio 404, cambio status, status non valido, filtro status,
-     delete, delete-get-404, isolamento tenant, filtro email, filtro whatsapp
+4. **test/onda2-runtime-events.test.js** — 7 test:
+   - booking_created attiva runtime whatsapp + verifica messaggio in DB
+   - contact_created attiva runtime email con benvenuto
+   - evento senza runtime matching → triggered=false
+   - Isolamento tenant (tenant2 usa runtime tenant2)
+   - pref_whatsapp=false → skip con "pref"
+   - pref_email=false → skip con "pref"
+   - runtime senza event_triggers non crasha
 
 ### Verifica regressione
-- v1-openapi.test.js: **5/5** ✅
-- onda2-conversations-v1.test.js: **14/14** ✅
-- crm-conversations.test.js: **12/12** ✅ (regressione zero)
-- onda1-contacts.test.js: **8/8** ✅
-- onda1-opportunities-v1.test.js: **4/4** ✅
-- v1-payments.test.js: **9/9** ✅
-- onda2-booking.test.js: **6/6** ✅
-- v1-rate-limit.test.js: **13/13** ✅
-- f0-foundations.test.js: **9/9** ✅
-- onda1-webhook-out.test.js: **1/1** ✅
-- **Totale parziale: 81/81 pass, 0 fail**
+- Group 1 (8 file): **71/71** ✅ (include agent-runtime.test.js regressione)
+- Group 2 (9 file): **49/49** ✅
+- Phase 6 nuovo: **7/7** ✅
+- **Totale: 127+ test, 0 fail**
 
-## PUNTI DI VERIFICA (questo run — 21/08/2026, POLISH + MONITORAGGIO)
-- ✅ `node --check` su tutti i file src/**/*.js: sintassi OK (0 errori)
-- ✅ Tutti i test passano (81/81, 0 fail) — invariato rispetto al run precedente
+## PUNTI DI VERIFICA (questo run)
+- ✅ `node --check` su tutti i file modificati: OK
+- ✅ Tutti i test passano (0 fail) — regressione zero
 - ✅ Nessun segreto nel codice
 - ✅ Nessun `git reset --hard` / force
 - ✅ DECISIONI_UMANE: nessun [APERTA] — tutti [RISOLTO] già applicati
-- ✅ `.env.example` allineato, nessuna migrazione pendente
-- ✅ Nessun fix banale necessario: repo pulito, nessuna regressione
+- ✅ Migrazione idempotente (ADD COLUMN IF NOT EXISTS)
+- ✅ `.claude-task-p6.md` pulito (rimosso)
 
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **OpenAPI booking-public**: documentazione OpenAPI degli endpoint pubblici di
    booking (da aggiungere a v1-openapi o file separato).
 2. **Webhook booking → n8n**: verificare che l'evento booking_created emesso da
-   createBooking arrivi correttamente ai webhook configurati (e che il contatto
-   auto-creato non generi eventi duplicati).
-3. **ONDA 2 Phase 6 — Agent runtime extension**: estendere il runtime agente per
-   supportare conversation triggering da eventi webhook/booking.
+   createBooking arrivi correttamente ai webhook configurati.
+3. **ONDA 2 Phase 6 refinements**: test end-to-end dell'integrazione events.js
+   → triggerRuntimeForEvent con eventi reali (booking_created).
+4. **Fix test gap in v1-openapi.test.js**: aggiungere `/booking-calendar-config`,
+   `/payment-links`, `/payment-links/{id}`, `/payment-links/{id}/mark-paid`
+   alla lista expected.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
-- Booking API surface (/v1/bookings) — Phase 1 + config per-tenant + OpenAPI.
-- Booking Calendar sync — Phase 2 (config + hook create/cancel + OpenAPI).
-- updateCalendarEvent hook su PUT booking — Phase 2 refinements.
-- Public booking page — Phase 3 (form EJS, slot computation, route pubbliche).
-- Auto-create contatto CRM su booking — Phase 2 refinements.
-- **v1 Payment Links API** — Phase 4 (payment-links CRUD + mark-paid + OpenAPI).
-- **Rate-limit per-tenant** — Phase 4 ext (tenant_config key=rate_limits).
-- **v1 Conversations API** — Phase 5 (conversazioni CRUD + messaggi outbound + OpenAPI).
+- ONDA 2 Phase 1-5: booking, calendar sync, public page, payments, conversations.
+- **ONDA 2 Phase 6**: event-driven agent conversation triggers (migrazione 081).
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
