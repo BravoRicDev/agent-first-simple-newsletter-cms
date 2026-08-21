@@ -56,13 +56,14 @@ riparte esattamente da qui.
 - onda1-webhook-out.test.js: **1/1** ✅
 - **Totale parziale: 81/81 pass, 0 fail**
 
-## PUNTI DI VERIFICA (questo run — 21/08/2026)
-- ✅ `node --check` su src/routes/v1.js, src/openapi.js, v1-openapi.test.js,
-     onda2-conversations-v1.test.js: sintassi OK
-- ✅ Tutti i test nuovi e vecchi passano (81/81, 0 fail)
+## PUNTI DI VERIFICA (questo run — 21/08/2026, POLISH + MONITORAGGIO)
+- ✅ `node --check` su tutti i file src/**/*.js: sintassi OK (0 errori)
+- ✅ Tutti i test passano (81/81, 0 fail) — invariato rispetto al run precedente
 - ✅ Nessun segreto nel codice
 - ✅ Nessun `git reset --hard` / force
 - ✅ DECISIONI_UMANE: nessun [APERTA] — tutti [RISOLTO] già applicati
+- ✅ `.env.example` allineato, nessuna migrazione pendente
+- ✅ Nessun fix banale necessario: repo pulito, nessuna regressione
 
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **OpenAPI booking-public**: documentazione OpenAPI degli endpoint pubblici di
