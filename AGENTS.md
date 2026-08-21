@@ -9,11 +9,11 @@ se la risposta è già in ROADMAP.md / DECISIONI_UMANE.md / HANDOFF.md.
 
 ## Delega a Claude Code + fallback litellm
 - **Primario**: Claude Code CLI (`claude -p '<task ampio>' --model
-  claude-sonnet-4-20250514 --dangerously-skip-permissions --max-turns 300`)
-  — scrive il codice, usa la propria auth Anthropic.
-- **Fallback**: se Claude va in errore (rate limit, credito esaurito, errori),
-  usa i tool nativi dell'agente (deepseek-v4-flash via litellm-proxy a
-  http://127.0.0.1:4000).
+  claude-sonnet-5 --dangerously-skip-permissions --max-turns 300`)
+  — scrive il codice, usa la propria auth Anthropic. `claude-sonnet-5` è
+  l'unico modello funzionante (i vecchi sonnet-4/opus-4 sono retired).
+- **Fallback**: se Claude va in errore (2 tentativi falliti), usa i tool nativi
+  dell'agente (deepseek-v4-flash via litellm-proxy a http://127.0.0.1:4000).
 - Task AMPI e autosufficienti (3-5 endpoint correlati per volta — servizi,
   test, migrazioni tutti insieme). Non microtask.
 - Verifica solo a fine blocco, non dopo ogni file.
