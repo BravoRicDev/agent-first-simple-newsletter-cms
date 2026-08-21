@@ -65,6 +65,10 @@ describe("v1 — documentazione OpenAPI", () => {
       "/api-keys", "/api-keys/{id}", "/capabilities",
       // booking (ONDA 2)
       "/bookings", "/bookings/{id}",
+      // booking calendar config (ONDA 2)
+      "/booking-calendar-config",
+      // payment links (ONDA 2)
+      "/payment-links", "/payment-links/{id}", "/payment-links/{id}/mark-paid",
       // conversations (ONDA 2 Phase 5)
       "/conversations", "/conversations/{id}", "/conversations/{id}/messages", "/conversations/{id}/status",
     ];

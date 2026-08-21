@@ -8,75 +8,79 @@ riparte esattamente da qui.
   CHIUSO e SUITE VERDE**.
 - **ONDA 2 Phase 1-5**: booking, calendar sync, public page, payments,
   conversations — tutte **COMPLETE**.
-- **ONDA 2 Phase 6 — Event-driven agent conversation triggers**: **COMPLETO**
-  (migrazione 081 + sanitizeEventTriggers + triggerRuntimeForEvent +
-  integration events.js + test 7/7).
+- **ONDA 2 Phase 6 — Event-driven agent conversation triggers**: **COMPLETO**.
+- **REFINEMENT — Test gap + e2e event pipeline**: **COMPLETO** (questo run).
 
 ## COSTRUITO IN QUESTO RUN (nuovo commit)
 
-### ONDA 2 Phase 6 — Event-driven agent conversation triggers
+### Fix test gap in v1-openapi.test.js
+Aggiunte le route mancanti alla expected list nello spec OpenAPI:
+- `/booking-calendar-config`
+- `/payment-links`, `/payment-links/{id}`, `/payment-links/{id}/mark-paid`
 
-1. **db/081_runtime_event_triggers.sql** — Migrazione idempotente: aggiunge
-   `event_triggers JSONB NOT NULL DEFAULT '[]'` a `agent_runtimes`.
+Queste route erano già documentate in `openapi.js` ma non verificate dal test.
+Ora il test copre tutta la surface API documentata.
 
-2. **src/services/agent-runtime.js** — Modifiche:
-   - Nuova funzione `sanitizeEventTriggers(raw)`: sanitizza l'array di trigger
-     evento (event_type, enabled, initial_message, auto_close_days).
-   - `sanitizeRuntimeInput` ora include `event_triggers: sanitizeEventTriggers(...)`.
-   - Nuova funzione esportata `triggerRuntimeForEvent({ siteId, eventType,
-     contactEmail, payload })`: trova i runtimes attivi del sito con
-     `event_triggers` matching l'event_type, e per ognuno:
-     - Verifica preferenze GDPR (pref_whatsapp / pref_email)
-     - Crea/riusa una conversazione
-     - Invia il messaggio iniziale configurato
-     - Imposta status conversazione = "open"
-     - Emette evento `agent_runtime_triggered` per tracciamento
+### test/onda2-booking-webhook-e2e.test.js — Webhook OUT e2e (3 test)
+Verifica end-to-end del flusso booking → webhook out:
+1. **Creazione booking → delivery booking_created**: POST /v1/bookings genera
+   una riga in webhook_deliveries per booking_created, con payload che contiene
+   booking_id, title, start_time.
+2. **Isolamento tenant**: tenant B (con webhook attivo per booking_created) NON
+   riceve delivery per i booking di tenant A.
+3. **Cancellazione booking → delivery booking_cancelled**: DELETE /v1/bookings/:id
+   (soft-delete) genera delivery per booking_cancelled.
 
-3. **src/services/events.js** — Aggiunto consumer in `emitContactEvent` che
-   chiama `triggerRuntimeForEvent` via import dinamico (nessun ciclo statico).
-   Ogni evento CRM (booking_created, contact_created, form_submitted, ecc.)
-   ora triggera automaticamente le conversazioni degli agent runtime
-   configurati.
-
-4. **test/onda2-runtime-events.test.js** — 7 test:
-   - booking_created attiva runtime whatsapp + verifica messaggio in DB
-   - contact_created attiva runtime email con benvenuto
-   - evento senza runtime matching → triggered=false
-   - Isolamento tenant (tenant2 usa runtime tenant2)
-   - pref_whatsapp=false → skip con "pref"
-   - pref_email=false → skip con "pref"
-   - runtime senza event_triggers non crasha
+### test/onda2-runtime-event-flow.test.js — Agent Runtime Event Flow (6 test)
+Verifica end-to-end del flusso triggerRuntimeForEvent con payload booking reali:
+1. **booking_created → conversazione con messaggio**: 2 runtime (whatsapp + email)
+   attivati, conversazioni create, messaggi in DB verificati via
+   listConversationMessages, meta.event_triggered_by=booking_created.
+2. **pref_email=false → runtime email saltato**: Il runtime whatsapp viene
+   comunque attivato (pref_whatsapp=true), l'email skippato.
+3. **Isolamento tenant B**: runtime B matcha, nessuna conversazione su A.
+4. **Evento senza matching → triggered=false**: form_submitted non matcha.
+5. **Runtime senza event_triggers non crasha**: graceful handling.
+6. **Contatto sconosciuto non crasha**: graceful handling contatto inesistente.
 
 ### Verifica regressione
-- Group 1 (8 file): **71/71** ✅ (include agent-runtime.test.js regressione)
-- Group 2 (9 file): **49/49** ✅
-- Phase 6 nuovo: **7/7** ✅
-- **Totale: 127+ test, 0 fail**
+- Suite v1-OpenAPI (5 test): ✅ 5/5 pass (con gap fix)
+- F0 foundations + location + rate-limit (36 test): ✅ 36/36
+- ONDA 1 contacts + opportunities + custom (17 test): ✅ 17/17
+- ONDA 1 webhook out (1 test): ✅ 1/1
+- ONDA 2 booking + booking-calendar (15 test): ✅ 15/15
+- ONDA 2 conversations + runtime-events + payments (30 test): ✅ 30/30
+- **Nuovo e2e webhook (3 test)**: ✅ 3/3
+- **Nuovo runtime flow (6 test)**: ✅ 6/6
+- **Totale verificato: 107+ test, 0 fail**
 
 ## PUNTI DI VERIFICA (questo run)
 - ✅ `node --check` su tutti i file modificati: OK
-- ✅ Tutti i test passano (0 fail) — regressione zero
+- ✅ Test gap fix: v1-openapi.test.js ora copre tutta la surface documentata
+- ✅ Nuovi test: webhook e2e (3 test) + runtime flow (6 test) — tutti pass
+- ✅ Regressione zero (0 fail su 107+ test)
 - ✅ Nessun segreto nel codice
 - ✅ Nessun `git reset --hard` / force
 - ✅ DECISIONI_UMANE: nessun [APERTA] — tutti [RISOLTO] già applicati
-- ✅ Migrazione idempotente (ADD COLUMN IF NOT EXISTS)
-- ✅ `.claude-task-p6.md` pulito (rimosso)
+- ✅ `.claude-task-e2e-refinement.md` pulito (rimosso)
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **OpenAPI booking-public**: documentazione OpenAPI degli endpoint pubblici di
-   booking (da aggiungere a v1-openapi o file separato).
-2. **Webhook booking → n8n**: verificare che l'evento booking_created emesso da
-   createBooking arrivi correttamente ai webhook configurati.
-3. **ONDA 2 Phase 6 refinements**: test end-to-end dell'integrazione events.js
-   → triggerRuntimeForEvent con eventi reali (booking_created).
-4. **Fix test gap in v1-openapi.test.js**: aggiungere `/booking-calendar-config`,
-   `/payment-links`, `/payment-links/{id}`, `/payment-links/{id}/mark-paid`
-   alla lista expected.
+1. **OpenAPI per booking-public**: documentare gli endpoint pubblici di booking
+   (GET /booking-public/:siteId/slots, /booking-public/:siteId, POST /booking-public/:siteId
+   e /booking-public/:siteId/confirmed) in un file openapi separato o sezione
+   dell'esistente.
+2. **Webhook booking → n8n integration test**: testare che i webhook delivery
+   vengano processati e inviati correttamente (simulando n8n via server HTTP di
+   test), coprendo HMAC signature e retry.
+3. **Performance/security test**: verificare che rate limiting per-tenant funzioni
+   su booking e payment-links, e che i limiti di prenotazione (lead time, finestra)
+   siano rispettati.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
 - ONDA 2 Phase 1-5: booking, calendar sync, public page, payments, conversations.
-- **ONDA 2 Phase 6**: event-driven agent conversation triggers (migrazione 081).
+- ONDA 2 Phase 6: event-driven agent conversation triggers.
+- **Refinement: test gap OpenAPI + e2e event pipeline (webhook + runtime)**.
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
