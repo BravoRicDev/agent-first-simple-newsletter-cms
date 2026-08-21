@@ -11,52 +11,58 @@ riparte esattamente da qui.
   mark-paid + OpenAPI + test 9/9 pass).
 - **ONDA 2 Phase 4 ext — Rate-limit per-tenant**: **COMPLETO** (tenant_config
   key=rate_limits con cache TTL 60s, keyGenerator tenant-isolato, skip loopback
-  configurabile, test 4/4 pass).
+  configurabile, test 13/13 pass).
+- **ONDA 2 Phase 5 — v1 Conversations API**: **COMPLETO** (route GET/POST/PUT/DELETE
+  conversazioni + messaggi outbound + OpenAPI + test 14/14 pass).
 
 ## COSTRUITO IN QUESTO RUN (nuovo commit)
 
-### Rate-limit per-tenant via tenant_config
+### ONDA 2 Phase 5 — v1 Conversations API (outbound)
 
-1. **src/middleware/rate-limit-v1.js** — Riscritto da limiters statici a singolo
-   `rateLimit` con:
-   - **keyGenerator**: `${siteId}:${ip}` — ogni tenant ha rate limit separato
-   - **max**: funzione dinamica che legge da cache in-memory (Map<siteId, limits>)
-   - **Cache**: refresh ogni 60s dal DB (`SELECT ... WHERE key='rate_limits'`),
-     fire-and-forget su miss, setInterval periodico
-   - **skip loopback**: configurabile via `v1RateLimiter({ skipLoopback: false })`
-     (default true) — i test possono disabilitarlo per testare su localhost
-   - **Default**: generalMax=120, writeMax=60, windowMs=60000
-   - Config per-tenant: key=`rate_limits`, value=`{ "generalMax": 200, "writeMax": 100 }`
-   - `refreshConfigCache()` esportata per test
+1. **src/routes/v1.js** — Aggiunte 6 route per conversazioni su /v1:
+   - `GET /v1/conversations` — lista con filtri ?email, ?channel, ?status
+   - `GET /v1/conversations/{id}` — dettaglio conversazione (404 se inesistente)
+   - `GET /v1/conversations/{id}/messages` — lista messaggi in ordine cronologico
+   - `POST /v1/conversations/{id}/messages` — aggiunge messaggio outbound (direction
+     default "out"; verifica esistenza conversazione prima di scrivere)
+   - `PUT /v1/conversations/{id}/status` — setta status (open|pending|closed, validato)
+   - `DELETE /v1/conversations/{id}` — elimina conversazione (cascade su messaggi)
+   - Riutilizza `src/services/conversations.js` senza modifiche al servizio.
+   - Route statiche (GET /conversations) PRIMA di quelle con parametro :id.
 
-2. **test/v1-rate-limit.test.js** — Aggiunta Suite 5 (4 test):
-   - GET senza config usa default 120/min ✅
-   - Config `generalMax=2` blocca dopo 2 GET ✅
-   - Config solo `writeMax=1`: POST bloccata dopo 1, GET resta 200 ✅
-   - Isolamento tenant: config di A non tocca B ✅
-   - Totale suite: **13/13 pass** (9 vecchi + 4 nuovi)
+2. **src/openapi.js** — Aggiunti:
+   - Tag: `Conversazioni` (ONDA 2 — conversazioni outbound)
+   - Schemas: `Conversation`, `ConversationMessage`, `ConversationMessageCreate`
+   - Paths: `/conversations` (GET), `/conversations/{id}` (GET+DELETE),
+     `/conversations/{id}/messages` (GET+POST), `/conversations/{id}/status` (PUT)
+
+3. **test/v1-openapi.test.js** — Aggiunte route conversazioni all'array expected.
+
+4. **test/onda2-conversations-v1.test.js** — Nuovo file con 14 test:
+   - Lista vuota, lista con dati, dettaglio, 404, messaggi, add messaggio,
+     add messaggio 404, cambio status, status non valido, filtro status,
+     delete, delete-get-404, isolamento tenant, filtro email, filtro whatsapp
 
 ### Verifica regressione
 - v1-openapi.test.js: **5/5** ✅
-- f0-location-mapping.test.js: **9/9** ✅
+- onda2-conversations-v1.test.js: **14/14** ✅
+- crm-conversations.test.js: **12/12** ✅ (regressione zero)
 - onda1-contacts.test.js: **8/8** ✅
 - onda1-opportunities-v1.test.js: **4/4** ✅
-- onda1-opportunity-custom-fields.test.js: **5/5** ✅
-- onda1-webhook-out.test.js: **1/1** ✅
 - v1-payments.test.js: **9/9** ✅
 - onda2-booking.test.js: **6/6** ✅
-- **Totale suite parziale: 60/60 pass, 0 fail**
+- v1-rate-limit.test.js: **13/13** ✅
+- f0-foundations.test.js: **9/9** ✅
+- onda1-webhook-out.test.js: **1/1** ✅
+- **Totale parziale: 81/81 pass, 0 fail**
 
-## PUNTI DI VERIFICA (questo run)
-- ✅ Rate-limit per-tenant: 4 test nuovi pass
-- ✅ Cache TTL 60s + refresh periodico funzionante
-- ✅ keyGenerator tenant-isolato (siteId:ip)
-- ✅ skip loopback configurabile (test disabilitano)
-- ✅ Nessuna migration nuova (tenant_config già esiste)
-- ✅ `node --check` OK su rate-limit-v1.js e test
-- ✅ Regressione zero su tutti i file test esistenti
-- ✅ Nessun segreto/personale nel codice
-- ✅ Nessun file temporaneo residuo
+## PUNTI DI VERIFICA (questo run — 21/08/2026)
+- ✅ `node --check` su src/routes/v1.js, src/openapi.js, v1-openapi.test.js,
+     onda2-conversations-v1.test.js: sintassi OK
+- ✅ Tutti i test nuovi e vecchi passano (81/81, 0 fail)
+- ✅ Nessun segreto nel codice
+- ✅ Nessun `git reset --hard` / force
+- ✅ DECISIONI_UMANE: nessun [APERTA] — tutti [RISOLTO] già applicati
 
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **OpenAPI booking-public**: documentazione OpenAPI degli endpoint pubblici di
@@ -64,8 +70,8 @@ riparte esattamente da qui.
 2. **Webhook booking → n8n**: verificare che l'evento booking_created emesso da
    createBooking arrivi correttamente ai webhook configurati (e che il contatto
    auto-creato non generi eventi duplicati).
-3. **ONDA 2 Phase 5 — Outbound conversations**: implementare conversazioni
-   outbound per i contatti.
+3. **ONDA 2 Phase 6 — Agent runtime extension**: estendere il runtime agente per
+   supportare conversation triggering da eventi webhook/booking.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
@@ -76,6 +82,7 @@ riparte esattamente da qui.
 - Auto-create contatto CRM su booking — Phase 2 refinements.
 - **v1 Payment Links API** — Phase 4 (payment-links CRUD + mark-paid + OpenAPI).
 - **Rate-limit per-tenant** — Phase 4 ext (tenant_config key=rate_limits).
+- **v1 Conversations API** — Phase 5 (conversazioni CRUD + messaggi outbound + OpenAPI).
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.

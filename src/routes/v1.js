@@ -30,6 +30,10 @@ import {
   listPaymentLinks, getPaymentLink, createPaymentLink,
   updatePaymentLink, deletePaymentLink, markPaid,
 } from "../services/payments.js";
+import {
+  listConversations, getConversation, listConversationMessages,
+  addConversationMessage, setConversationStatus, deleteConversation,
+} from "../services/conversations.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Surface API compatibile ("API compatibili con CRM diffusi"), montata su
@@ -933,6 +937,68 @@ router.delete("/payment-links/:id", async (req, res, next) => {
   try {
     const deleted = await deletePaymentLink(req.tenant.siteId, req.params.id);
     if (!deleted) return res.status(404).json({ error: "Payment link non trovato" });
+    res.json({ deleted: true, id: parseInt(req.params.id, 10) });
+  } catch (err) { next(err); }
+});
+
+// ── Conversations (ONDA 2 Phase 5) ─────────────────────────────────
+// Route statiche (GET /conversations) PRIMA di quelle con parametri.
+
+router.get("/conversations", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const { email, channel, status } = req.query;
+    const conversations = await listConversations(siteId, { email, channel, status });
+    res.json({ conversations, total: conversations.length });
+  } catch (err) { next(err); }
+});
+
+router.get("/conversations/:id", async (req, res, next) => {
+  try {
+    const conversation = await getConversation(req.tenant.siteId, req.params.id);
+    if (!conversation) return res.status(404).json({ error: "Conversazione non trovata" });
+    res.json({ conversation });
+  } catch (err) { next(err); }
+});
+
+router.get("/conversations/:id/messages", async (req, res, next) => {
+  try {
+    const result = await listConversationMessages(req.tenant.siteId, req.params.id);
+    if (!result) return res.status(404).json({ error: "Conversazione non trovata" });
+    res.json({ conversation: result.conversation, messages: result.messages });
+  } catch (err) { next(err); }
+});
+
+router.post("/conversations/:id/messages", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const conversation = await getConversation(req.tenant.siteId, req.params.id);
+    if (!conversation) return res.status(404).json({ error: "Conversazione non trovata" });
+    const message = await addConversationMessage(
+      req.tenant.siteId, conversation.contact_email, conversation.channel,
+      { direction: b.direction || "out", subject: b.subject, body: b.body, meta: b.meta }
+    );
+    if (!message) return res.status(400).json({ error: "Impossibile aggiungere messaggio" });
+    res.status(201).json({ message });
+  } catch (err) { next(err); }
+});
+
+router.put("/conversations/:id/status", async (req, res, next) => {
+  try {
+    const { status } = req.body || {};
+    if (!["open", "pending", "closed"].includes(status)) {
+      return res.status(400).json({ error: "status deve essere open|pending|closed" });
+    }
+    const conversation = await setConversationStatus(req.tenant.siteId, req.params.id, status);
+    if (!conversation) return res.status(404).json({ error: "Conversazione non trovata" });
+    res.json({ conversation });
+  } catch (err) { next(err); }
+});
+
+router.delete("/conversations/:id", async (req, res, next) => {
+  try {
+    const n = await deleteConversation(req.tenant.siteId, req.params.id);
+    if (!n) return res.status(404).json({ error: "Conversazione non trovata" });
     res.json({ deleted: true, id: parseInt(req.params.id, 10) });
   } catch (err) { next(err); }
 });

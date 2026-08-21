@@ -64,6 +64,7 @@ const SPEC = {
     { name: "Capabilities", description: "Registry delle capability (agent-first)" },
     { name: "Booking", description: "ONDA 2 — appuntamenti prenotati dai contatti (booking_appointments)" },
     { name: "Payment Links", description: "ONDA 2 — link di pagamento Stripe (payment_links)" },
+    { name: "Conversazioni", description: "ONDA 2 — conversazioni outbound (thread email/whatsapp per contatto)" },
   ],
   paths: buildPaths(),
   components: {
@@ -272,6 +273,45 @@ const SPEC = {
           description: { type: "string" },
           currency: { type: "string" },
           opportunity_id: { type: "integer" },
+        },
+      },
+      Conversation: {
+        type: "object",
+        description: "ONDA 2 — thread di conversazione email/whatsapp per contatto.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          contact_email: { type: "string" },
+          channel: { type: "string", enum: ["email", "whatsapp"] },
+          status: { type: "string", enum: ["open", "pending", "closed"] },
+          subject: { type: "string" },
+          messages_count: { type: "integer" },
+          last_subject: { type: "string" },
+          last_message_at: { type: "string", format: "date-time" },
+          created_at: { type: "string", format: "date-time" },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      ConversationMessage: {
+        type: "object",
+        description: "Messaggio in un thread di conversazione. direction='out' = inviato da noi, 'in' = ricevuto dal lead.",
+        properties: {
+          id: { type: "integer" },
+          conversation_id: { type: "integer" },
+          direction: { type: "string", enum: ["in", "out"] },
+          subject: { type: "string" },
+          body: { type: "string" },
+          meta: { type: "object" },
+          created_at: { type: "string", format: "date-time" },
+        },
+      },
+      ConversationMessageCreate: {
+        type: "object",
+        properties: {
+          direction: { type: "string", enum: ["out", "in"], default: "out" },
+          subject: { type: "string" },
+          body: { type: "string" },
+          meta: { type: "object" },
         },
       },
     },
@@ -821,6 +861,56 @@ function buildPaths() {
       description: "Imposta status=paid e paid_at=NOW. Emette evento payment_paid → webhook out.",
       parameters: [pathId()], security: tenantSec(),
       responses: jsonResponse(200, { paymentLink: { $ref: "#/components/schemas/PaymentLink" }, already: { type: "boolean" } }),
+    },
+  };
+
+  // ── Conversations (ONDA 2 Phase 5) ─────────────────────────────────
+  base["/conversations"] = {
+    get: {
+      tags: ["Conversazioni"], summary: "Lista conversazioni del tenant",
+      description: "Filtri opzionali: ?email=, ?channel=email|whatsapp, ?status=open|pending|closed.",
+      parameters: [
+        { name: "email", in: "query", schema: { type: "string" } },
+        { name: "channel", in: "query", schema: { type: "string", enum: ["email", "whatsapp"] } },
+        { name: "status", in: "query", schema: { type: "string", enum: ["open", "pending", "closed"] } },
+      ],
+      security: tenantSec(),
+      responses: listWithTotal("conversations", "Conversation"),
+    },
+  };
+  base["/conversations/{id}"] = {
+    get: {
+      tags: ["Conversazioni"], summary: "Dettaglio conversazione",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResource("conversation", "Conversation"),
+    },
+    delete: {
+      tags: ["Conversazioni"], summary: "Elimina conversazione e messaggi",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
+    },
+  };
+  base["/conversations/{id}/messages"] = {
+    get: {
+      tags: ["Conversazioni"], summary: "Lista messaggi della conversazione (ordine cronologico)",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResponse(200, {
+        conversation: { $ref: "#/components/schemas/Conversation" },
+        messages: { type: "array", items: { $ref: "#/components/schemas/ConversationMessage" } },
+      }),
+    },
+    post: {
+      tags: ["Conversazioni"], summary: "Aggiunge un messaggio (outbound) alla conversazione",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ $ref: "#/components/schemas/ConversationMessageCreate" }),
+      responses: jsonCreated("message", "ConversationMessage"),
+    },
+  };
+  base["/conversations/{id}/status"] = {
+    put: {
+      tags: ["Conversazioni"], summary: "Imposta lo status della conversazione (open|pending|closed)",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", required: ["status"], properties: { status: { type: "string", enum: ["open", "pending", "closed"] } } }),
+      responses: jsonResource("conversation", "Conversation"),
     },
   };
 
