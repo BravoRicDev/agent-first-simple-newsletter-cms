@@ -65,11 +65,17 @@ riparte esattamente da qui.
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
   contacts): usare SEMPRE `opportunity_custom_values` (076).
 
-## MONITORAGGIO (POLISH, cron 21/08/2026 01:51 UTC)
-- ✅ Repository LIBERO al passaggio (nessun claude/codex/opencode, working tree
-  pulita dopo commit, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
+## MONITORAGGIO (POLISH, cron 21/08/2026 ~02:00 UTC)
+- ✅ Repository LIBERO al passaggio (nessun claude/codex/opencode, working tree pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
 - ✅ DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti gia applicati/rispettati.
-- ✅ **Test eseguiti**: booking ONDA 2 (onda2-booking 6 + booking-calendar 8 + booking-public 8): **22/22 pass, 0 fail**. Regressioni F0 (f0-foundations 9) + Onda 1 (onda1-contacts 8): **17/17 pass**.
-- ✅ Commit locale: nuovo commit su main. Working tree pulita.
-- ✅ Nessun segreto/personale nel codice (solo colonne DB access_token/refresh_token).
+- ✅ **Test eseguiti** (67/67 pass, 0 fail):
+  - F0 foundations + location mapping: **18/18**
+  - ONDA1 (contacts + opportunities + custom fields + webhook): **18/18**
+  - ONDA2 booking API: **6/6**
+  - ONDA2 booking calendar sync: **8/8**
+  - ONDA2 public booking page: **8/8**
+  - OpenAPI + import tool: **9/9**
+- ✅ Sintassi `node --check` ok su tutti i file src e test chiave.
 - ✅ DB di test `cms-test-pg` up, funzionante.
+- ✅ Nessun segreto/personale nel codice.
+- ✅ `.env.example` allineato, nessun gap.
