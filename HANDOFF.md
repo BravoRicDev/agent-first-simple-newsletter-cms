@@ -13,41 +13,45 @@ riparte esattamente da qui.
 - **ONDA 2 Phase 2 refinements — updateCalendarEvent su PUT booking**:
   **COMPLETO** (tryUpdateEvent fire-and-forget + test 8/8 pass).
 
-## COSTRUITO IN QUESTO RUN (nuovo commit)
+## COSTRUITO IN QUESTO RUN (nuovo commit: 6f7d423)
 1. **Migration** — nessuna nuova migration.
 
-2. **src/services/booking-calendar.js**: nuova funzione `tryUpdateEvent(booking)`:
-   fire-and-forget wrapper per aggiornare evento Google Calendar esistente.
-   Legge config calendar, se non configurata o booking senza google_event_id
-   → return silenzioso. Chiama `updateCalendarEvent(booking, config)`, logga
-   warning su fallimento (mai throw). Non modifica google_event_id (già presente).
+2. **src/middleware/rate-limit-v1.js**: nuovo middleware `v1RateLimiter()`.
+   Due limiters statici (creati a init): generalLimiter (120 req/min per GET)
+   e writeLimiter (60 req/min per POST/PUT/DELETE). Skip loopback. Headers
+   standard RateLimit-Remaining/Reset. Messaggio errore italiano. Per-tenant
+   configurabilita futura (via tenant_config key=rate_limits).
 
-3. **src/services/booking.js — updateBooking()**: dopo l'UPDATE, se
-   `existing.google_event_id` è valorizzato, importa dinamicamente `tryUpdateEvent`
-   da `./booking-calendar.js` e lo chiama fire-and-forget. Pattern identico a
-   createBooking/tryCreateEvent e cancelBooking/tryDeleteEvent.
+3. **src/middleware/body-validate-v1.js**: nuovo middleware `v1BodyValidator()`.
+   POST/PUT: verifica Content-Type application/json → 415 altrimenti.
+   POST: body non vuoto → 400. Limite 1MB → 413. GET/DELETE: nessuna check.
 
-4. **test/onda2-booking-calendar.test.js**: 2 nuovi test (ora 8 totali):
-   - "booking update con google_event_id ma senza config → graceful skip"
-   - "booking update con google_event_id e config attiva ma OAuth fittizio → graceful skip"
+4. **src/routes/v1.js**: montaggio di `v1RateLimiter()` e `v1BodyValidator()`
+   dopo `requireTenant()` ma prima di tutte le route.
+
+5. **test/v1-rate-limit.test.js**: 9 test (4 rate limit GET + 1 WRITE POST +
+   3 body validation + 1 loopback exemption) — **9/9 pass, 0 fail**.
 
 ## PUNTI DI VERIFICA (questo run)
-- **ONDA 2 Phase 2 refinements**: 8/8 test pass (onda2-booking-calendar).
-- Suite booking completa: onda2-booking (6/6) + booking-calendar (8/8) + booking-public (8/8) = **22/22, 0 fail**.
-- Suite regressiva: f0-foundations (9/9) + onda1-contacts (8/8) = **17/17, 0 fail**.
-- `node --check` ok su booking-calendar.js, booking.js, test file.
+- **v1-rate-limit.test.js**: 9/9 pass.
+- Regressione: f0-foundations 9/9, onda1-contacts 8/8, onda1-opportunities-v1
+  4/4, onda2-booking 6/6 — **tutti pass, 0 fail**.
+- `node --check` ok su rate-limit-v1.js, body-validate-v1.js, v1.js, test file.
 - Nessuna migrazione nuova.
 - Nessun nome del CRM di origine nei nuovi file.
 - Nessun segreto/personale nel codice. Nessun push (nessun remote).
-- **NOTA**: `claude-code` non loggato (fallback su tool agente profilo coding).
+- **ERRORE NOTO**: `ERR_ERL_CREATED_IN_REQUEST_HANDLER` evitato creando
+  limiters statici (non in handler). `closeDb()` chiamato una volta sola
+  nell'after globale (non per-suite) per evitare "pool già chiuso".
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **Hardening auth/rate-limit**: rate limiting surface /v1 e validazione body
-   piu stretta.
-2. **OpenAPI booking-public**: documentazione OpenAPI dei nuovi endpoint
-   pubblici di booking.
-3. **ONDA 2 Phase 2 refinements avanzati**: creazione contatto CRM al momento
+1. **OpenAPI booking-public**: documentazione OpenAPI dei nuovi endpoint
+   pubblici di booking (da aggiungere a v1-openapi o file separato).
+2. **ONDA 2 Phase 2 refinements avanzati**: creazione contatto CRM al momento
    del booking (booking → contatto) o altre integrazioni.
+3. **Rate-limit per-tenant (tenant_config)**: estendere v1RateLimiter per
+   leggere configurazione da tenant_config key=rate_limits, permettendo a
+   ogni tenant di personalizzare windowMs e max per general/write.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
