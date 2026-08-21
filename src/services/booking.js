@@ -58,6 +58,14 @@ async function readBookingConfig(siteId) {
 
     const win = parseInt(map.booking_window_days, 10);
     if (Number.isInteger(win) && win >= 0) cfg.windowDays = win;
+
+    // booking_auto_create_contact: default true se assente o non booleano valido
+    if (map.booking_auto_create_contact === false || map.booking_auto_create_contact === "false") {
+      cfg.autoCreateContact = false;
+    } else {
+      cfg.autoCreateContact = map.booking_auto_create_contact !== undefined
+        ? Boolean(map.booking_auto_create_contact) : true;
+    }
   } catch (err) {
     // La lettura della config non deve MAI far fallire la creazione: in caso
     // di errore si procede con i default "nulli" (nessuna voce applicata).
@@ -164,6 +172,22 @@ export async function createBooking(siteId, data = {}) {
   );
 
   const booking = result.rows[0];
+
+  // Auto-create/update contatto CRM (fire-and-forget, controllato da config)
+  try {
+    const cfgContact = await readBookingConfig(siteId);
+    if (cfgContact.autoCreateContact !== false) {
+      const { upsertContactByEmail } = await import("./contacts-v1.js");
+      upsertContactByEmail(siteId, contactEmail, {
+        name: contactName,
+        phone: contactPhone || undefined,
+      }).catch((err) => {
+        logger.warn(`booking: upsertContactByEmail fallito (email=${contactEmail}): ${err.message}`);
+      });
+    }
+  } catch (err) {
+    logger.warn(`booking: auto-create contact fallito: ${err.message}`);
+  }
 
   // Emetti evento booking_created → webhook OUT (fire-and-forget)
   try {

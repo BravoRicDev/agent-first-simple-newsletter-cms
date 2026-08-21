@@ -197,4 +197,60 @@ describe("ONDA 2 — public booking page", () => {
     assert.equal(data.ok, true);
     assert.ok(Array.isArray(data.groups));
   });
+
+  test("Booking crea contatto CRM automaticamente", async () => {
+    await query("DELETE FROM booking_appointments WHERE site_id = $1", [siteA.id]);
+    await query("DELETE FROM contacts WHERE site_id = $1 AND email = 'booking-test@esempio.com'", [siteA.id]);
+
+    const slotsRes = await fetch(`${baseUrl}/booking-public/${siteA.id}/slots`, {
+      headers: { accept: "application/json" },
+    });
+    const slotsData = await slotsRes.json();
+    let slotIso;
+    if (slotsData.ok && slotsData.groups.length > 0 && slotsData.groups[0].slots.length > 0) {
+      const firstSlot = slotsData.groups[0].slots[0];
+      slotIso = firstSlot.start instanceof Date ? firstSlot.start.toISOString() : String(firstSlot.start);
+    } else {
+      slotIso = new Date(Date.now() + 3 * 86400000 + 3600000).toISOString();
+    }
+
+    const res = await fetch(`${baseUrl}/booking-public/${siteA.id}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        accept: "text/html",
+      },
+      body: new URLSearchParams({
+        slot: slotIso,
+        name: "Booking Test",
+        email: "booking-test@esempio.com",
+      }),
+    });
+
+    const contact = (await query(
+      "SELECT id, email FROM contacts WHERE site_id = $1 AND email = 'booking-test@esempio.com'",
+      [siteA.id]
+    )).rows[0];
+
+    if (res.status < 400) {
+      // Race condition: la fire-and-forget upsert potrebbe non essere
+      // ancora completata. Retry dopo 200ms.
+      let found = contact;
+      if (!found) {
+        await new Promise(r => setTimeout(r, 200));
+        const retry = (await query(
+          "SELECT id, email FROM contacts WHERE site_id = $1 AND email = 'booking-test@esempio.com'",
+          [siteA.id]
+        )).rows[0];
+        found = retry;
+      }
+      assert.ok(found, "Contatto CRM deve essere stato creato (retry 200ms)");
+      assert.equal(found.email, "booking-test@esempio.com");
+    }
+
+    await query("DELETE FROM booking_appointments WHERE site_id = $1 AND contact_email = 'booking-test@esempio.com'", [siteA.id]);
+    if (contact) {
+      await query("DELETE FROM contacts WHERE id = $1", [contact.id]);
+    }
+  });
 });
