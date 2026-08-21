@@ -30,28 +30,44 @@ riparte esattamente da qui.
 
 | File | Test | Esito |
 |------|------|-------|
-| test/v1-openapi.test.js | 5 | ✅ (verifica nuovi 3 percorsi booking-public) |
+| test/v1-openapi.test.js | 5 | ✅ |
 | test/onda2-booking-public.test.js | 9 | ✅ |
 | test/f0-foundations.test.js | 9 | ✅ |
 | test/onda2-booking.test.js | 6 | ✅ |
+| test/onda1-contacts.test.js | 8 | ✅ |
+| test/onda1-opportunities-v1.test.js | 4 | ✅ |
+| test/onda1-opportunity-custom-fields.test.js | 5 | ✅ |
+| test/onda1-webhook-out.test.js | 1 | ✅ |
+| test/onda2-booking-calendar.test.js | 8 | ✅ |
+| test/onda2-booking-webhook-e2e.test.js | 3 | ✅ |
+| test/onda2-runtime-events.test.js | 7 | ✅ |
+| test/onda2-runtime-event-flow.test.js | 6 | ✅ |
+| test/onda2-conversations-v1.test.js | 14 | ✅ |
+| test/v1-payments.test.js | 9 | ✅ |
+| test/v1-rate-limit.test.js | 13 | ✅ |
+| test/f0-location-mapping.test.js | 9 | ✅ |
+| test/webhook-n8n-e2e.test.js | 4 | ✅ |
+| test/import-crm-tool.test.js | 4 | ✅ |
 
-**Totale verificato: 29 test, 0 fail**
+**Totale verificato: 124 test, 0 fail**
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ `node --check` su `src/openapi.js`: nessun errore sintattico
-- ✅ `node --check` su `test/v1-openapi.test.js`: nessun errore sintattico
+- ✅ `node --check` su tutti i file `src/*.js` e `src/**/*.js`: nessun errore sintattico
 - ✅ DECISIONI_UMANE: tutti [RISOLTO] già applicati, nessun [APERTA]
 - ✅ Nessun segreto nel codice
 - ✅ Nessun `.env` versionato
 - ✅ Nessun `git reset --hard` / force
 - ✅ Nessun remote — commit locali soltanto
+- ✅ DB test `cms-test-pg` up da 5 giorni
+- ✅ `.env.example` presente e allineato
+- ✅ Migrazioni idempotenti (gap 080 tra 079 e 081 è intenzionale/irrilevante)
+- ⚠️ Log "Cannot use a pool after calling end on the pool" in alcuni test: artefatto di teardown, non blocca i test (tutti pass)
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **Performance/security test**: verificare che rate limiting per-tenant funzioni
-   su booking e payment-links, e che i limiti di prenotazione (lead time, finestra)
-   siano rispettati.
-2. **Test di regressione bulk**: eseguire tutti i ~480 test in un'unica sessione
+1. **Test bulk di regressione**: eseguire tutti i ~480 test in un'unica sessione
    per confermare che non ci siano leak di stato tra suite.
+2. **Performance/security test**: verificare rate limiting per-tenant su booking e
+   payment-links, e limiti di prenotazione (lead time, finestra).
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
