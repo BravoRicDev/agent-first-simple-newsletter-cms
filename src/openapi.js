@@ -65,6 +65,7 @@ const SPEC = {
     { name: "Booking", description: "ONDA 2 — appuntamenti prenotati dai contatti (booking_appointments)" },
     { name: "Payment Links", description: "ONDA 2 — link di pagamento Stripe (payment_links)" },
     { name: "Conversazioni", description: "ONDA 2 — conversazioni outbound (thread email/whatsapp per contatto)" },
+    { name: "Booking Public", description: "ONDA 2 — route pubbliche di prenotazione (nessun auth richiesto)" },
   ],
   paths: buildPaths(),
   components: {
@@ -228,6 +229,34 @@ const SPEC = {
           start_time: { type: "string", format: "date-time" },
           end_time: { type: "string", format: "date-time", description: "Opzionale: se assente usa la durata default (30 min o booking_duration_minutes per-tenant)" },
           timezone: { type: "string", description: "Opzionale: se assente usa booking_timezone per-tenant o 'UTC'" },
+        },
+      },
+      BookingSlots: {
+        type: "object",
+        description: "Slot disponibili per la public booking page. Gruppati per giorno.",
+        properties: {
+          ok: { type: "boolean" },
+          groups: {
+            type: "array",
+            description: "Slot raggruppati per giorno",
+            items: {
+              type: "object",
+              properties: {
+                date: { type: "string", description: "Data ISO (YYYY-MM-DD)" },
+                slots: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      start: { type: "string", format: "date-time", description: "Inizio slot" },
+                      end: { type: "string", format: "date-time", description: "Fine slot" },
+                      available: { type: "boolean" },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
       BookingCalendarConfig: {
@@ -814,6 +843,82 @@ function buildPaths() {
       description: "Disattiva la config attiva. I booking esistenti restano in DB ma gli eventi Google associati non vengono rimossi.",
       security: tenantSec(),
       responses: jsonResponse(200, { deleted: { type: "boolean" } }),
+    },
+  };
+
+  // ── Booking Public (ONDA 2 Phase 3) ─────────────────────────────────
+  base["/booking-public/{siteId}/slots"] = {
+    get: {
+      tags: ["Booking Public"],
+      summary: "Slot disponibili per prenotazione pubblica",
+      description: "JSON endpoint senza auth. Ritorna gli slot disponibili per un sito, opzionalmente filtrati per numero di giorni (?days=N).",
+      parameters: [
+        { name: "siteId", in: "path", required: true, schema: { type: "integer" }, description: "ID del sito" },
+        { name: "days", in: "query", schema: { type: "integer" }, description: "Numero di giorni da includere (default: configurazione per-tenant)" },
+      ],
+      responses: {
+        200: { description: "Slot disponibili", content: { "application/json": { schema: { $ref: "#/components/schemas/BookingSlots" } } } },
+        404: jsonError("Sito non trovato"),
+      },
+    },
+  };
+  base["/booking-public/{siteId}"] = {
+    get: {
+      tags: ["Booking Public"],
+      summary: "Pagina pubblica di prenotazione (HTML)",
+      description: "Ritorna il form HTML di prenotazione con gli slot del giorno. Non richiede auth. I visitatori vedono gli slot disponibili e possono prenotare un appuntamento.",
+      parameters: [{ name: "siteId", in: "path", required: true, schema: { type: "integer" } }],
+      responses: {
+        200: { description: "Pagina HTML del form prenotazione" },
+        404: { description: "Sito non trovato" },
+      },
+    },
+    post: {
+      tags: ["Booking Public"],
+      summary: "Crea una prenotazione pubblica",
+      description: "Invia il form di prenotazione. Rate limited (10 req/min per IP). Crea un booking e upserta automaticamente il contatto CRM.",
+      parameters: [{ name: "siteId", in: "path", required: true, schema: { type: "integer" } }],
+      requestBody: {
+        required: true,
+        content: {
+          "application/x-www-form-urlencoded": {
+            schema: {
+              type: "object",
+              required: ["slot", "name", "email"],
+              properties: {
+                slot: { type: "string", format: "date-time", description: "ISO data/ora dello slot selezionato" },
+                name: { type: "string", description: "Nome del contatto" },
+                email: { type: "string", format: "email", description: "Email del contatto" },
+                phone: { type: "string", description: "Telefono (opzionale)" },
+                _honeypot: { type: "string", description: "Anti-spam honeypot (lasciare vuoto)" },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: "Prenotazione riuscita (AJAX: { ok: true }; HTML: redirect a /booking-public/:id/confirmed)" },
+        302: { description: "Redirect a /booking-public/:id/confirmed?email=..." },
+        400: { description: "Validazione fallita (email/nome/slot non valido)" },
+        409: { description: "Slot non più disponibile" },
+        404: { description: "Sito non trovato" },
+        429: { description: "Troppe richieste (rate limit 10/min)" },
+      },
+    },
+  };
+  base["/booking-public/{siteId}/confirmed"] = {
+    get: {
+      tags: ["Booking Public"],
+      summary: "Pagina di conferma prenotazione (HTML)",
+      description: "Pagina HTML di conferma dopo una prenotazione riuscita. Non richiede auth.",
+      parameters: [
+        { name: "siteId", in: "path", required: true, schema: { type: "integer" } },
+        { name: "email", in: "query", schema: { type: "string", format: "email" }, description: "Email del contatto (mostrata nella conferma)" },
+      ],
+      responses: {
+        200: { description: "Pagina HTML di conferma" },
+        404: { description: "Sito non trovato" },
+      },
     },
   };
 

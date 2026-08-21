@@ -63,6 +63,8 @@ describe("v1 — documentazione OpenAPI", () => {
       "/contacts/{id}/workflow",
       // api-keys + capabilities
       "/api-keys", "/api-keys/{id}", "/capabilities",
+      // booking-public (ONDA 2 Phase 3 — no auth)
+      "/booking-public/{siteId}/slots", "/booking-public/{siteId}", "/booking-public/{siteId}/confirmed",
       // booking (ONDA 2)
       "/bookings", "/bookings/{id}",
       // booking calendar config (ONDA 2)
