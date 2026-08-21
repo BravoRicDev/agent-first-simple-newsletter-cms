@@ -61,6 +61,41 @@ riparte esattamente da qui.
 - Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
 - Nessun commit/push eseguito (working tree rimasta pulita).
 
+## MONITORAGGIO (POLISH cron, 21/08/2026 — full suite)
+- Repo LIBERO all'inizio run (nessun processo claude/codex/opencode, nessun
+  index.lock, working tree pulita), confermato anche a fine lavoro.
+- RIESEGUITA la suite COMPLETA (tutti i file .test.js, ~80, via
+  `./scripts/test.sh <gruppi di file>` in gruppi isolati): **621 pass, 6 skip
+  (newsletter attesi), 0 fail**. Esito per gruppo:
+  - v1-planning-onda3: 9/9
+  - v1-activities (+http) + v1-email-stats (+http): 15/15
+  - v1-reports (+http) + v1-dashboard-funnel (+http): 31/31
+  - v1-openapi + f0-foundations + f0-location-mapping + onda1-contacts: 31/31
+  - onda1-opportunities-v1 + opportunity-custom-fields + webhook-out + import-crm-tool: 14/14
+  - newsletter-bounce/engagement/complaints/verification/base-url: 64 pass, 6 skip (attesi)
+  - onda2-booking (+public/calendar/webhook-e2e): 26/26
+  - onda2-conversations-v1 + runtime-events + runtime-event-flow + v1-payments + v1-rate-limit: 49/49
+  - crm-suite/opportunities/opportunity-board/webhooks/pipeline/api-tokens: 45/45
+  - crm-conversations/segments/workflows + contacts/calls/call-reminders: 35/35
+  - rbac/oauth/modules/settings/sites/export-import: 47/47
+  - forms-crm/multipart/redirect/tag + tracking/tracked-links: 37/37
+  - newsletter.test NON ESISTE; email-templates/calendar-sync/calendars/calendars-agent/recurring: 38/38
+  - dashboard/reports/media-protected/agent-runtime/agent-builder (+agent-helper/payments/webhooks/reports/sandbox/kb: file NON ESISTENTI): 38/38
+  - auth-rate-limit/backup-jobs/call-recordings/call-summaries/channel-limits/client-services/hitl/kb: 62/62
+  - newsletter-auto-confirm/payments/privacy/quizzes/public/route-order/sandbox/seo/suggestions/webhook-n8n-e2e: 80/80
+- `node --check` su TUTTI i file src e test: SINTASSI OK (0 errori).
+- Migrazione `./scripts/test.sh` (node db/migrate.js) su DB test (cms-test-pg,
+  Up 6 days): completata senza errori. Nessuna migrazione pendente.
+- Nota numerazione migrazioni: salta `080` (presenti 079 e 081). NON è un
+  problema: migrate.js applica i file per ordinamento filename, quindi 081 viene
+  eseguito regolarmente dopo 079. Nessun fix necessario.
+- `.env.example` ben formattato (60 righe, DB/payments/cloudflare/social
+  presenti), nessun segreto reale versionato.
+- Nessun .env/secret untracked; occorrenze regex `postgres://` in
+  backup.js/calls.test.js sono solo commenti con placeholder (*** ) — nessun
+  segreto reale.
+- Nessun fix strutturale eseguito (solo verifica full-suite). Working tree rimasta pulita.
+
 ## PUNTI DI VERIFICA (questo run)
 - ✅ **9 nuovi test planning Onda 3** (`v1-planning-onda3.test.js`), tutti passano
   (sequences stats, PUT tags replace, DELETE task, import + jobs)
