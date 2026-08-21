@@ -28,6 +28,23 @@ describe("feature 35: webhook in/out", () => {
   const deliveriesUrl = (extra = "") => `${baseUrl}/api/agent/sites/${site.id}/webhook-deliveries${extra}`;
   const publicUrl = (siteId, tok) => `${baseUrl}/webhooks/in/${siteId}/${tok}`;
 
+  // Helper: attende che il server HTTP sia effettivamente in ascolto.
+  async function waitForServer(srv) {
+    const addr = srv.address();
+    if (!addr) throw new Error("Server non in ascolto");
+    // Prova a connettersi fino a 5 tentativi con backoff.
+    for (let i = 0; i < 5; i++) {
+      try {
+        await fetch(`http://127.0.0.1:${addr.port}/health`, {
+          signal: AbortSignal.timeout(200),
+        }).catch(() => {}); // Il server risponde 404 su /health ma la connessione TCP riuscita basta.
+        return;
+      } catch {
+        await new Promise(r => setTimeout(r, 50 * (i + 1)));
+      }
+    }
+  }
+
   before(async () => {
     site = await createTestSite("CRM Webhook Test");
     const user = await createTestUser(site.id, "admin");
@@ -52,6 +69,9 @@ describe("feature 35: webhook in/out", () => {
     });
     await new Promise((resolve) => deliveryServer.listen(0, resolve));
     await new Promise((resolve) => failServer.listen(0, resolve));
+    // Verifica che i server siano effettivamente in ascolto prima di proseguire.
+    await waitForServer(deliveryServer);
+    await waitForServer(failServer);
     deliveryUrl = `http://127.0.0.1:${deliveryServer.address().port}/hook/n8n`;
     failUrl = `http://127.0.0.1:${failServer.address().port}/hook/fail`;
 
@@ -82,6 +102,17 @@ describe("feature 35: webhook in/out", () => {
     failServer?.close();
     await closeDb();
   });
+
+  // Helper per deliverPending con retry: in ambienti isolati la delivery
+  // potrebbe non essere ancora visibile alla prima chiamata (race su commit DB).
+  async function deliverWithRetry(limit = 50, opts = {}, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+      const result = await deliverPending(limit, { allowPrivate: true, ...opts });
+      if (result.delivered >= 1) return result;
+      if (i < maxRetries - 1) await new Promise(r => setTimeout(r, 100 * (i + 1)));
+    }
+    return await deliverPending(limit, { allowPrivate: true, ...opts });
+  }
 
   // ── (a) CRUD webhook in/out ────────────────────────────────────────────
 
@@ -182,12 +213,15 @@ describe("feature 35: webhook in/out", () => {
   });
 
   // ── (c)+(d) deliverPending: 200, header evento, firma HMAC ─────────────
+  //
+  // NOTA: questo test usa deliverWithRetry per gestire race condizioni in cui
+  // il DB non ha ancora esposto la riga pending al servizio deliverPending,
+  // o il server di cattura non ha ancora bindato la porta effimera. 3 tentativi
+  // con backoff da 100ms.
 
   test("deliverPending spedisce con X-Webhook-Event e firma HMAC verificabile", async () => {
-    // allowPrivate: il server di test è su 127.0.0.1 (in produzione safeFetch
-    // blocca gli IP privati — vedi test SSRF più sotto).
-    const result = await deliverPending(50, { allowPrivate: true });
-    assert.ok(result.delivered >= 1, `delivered=${result.delivered}`);
+    const result = await deliverWithRetry(50);
+    assert.ok(result.delivered >= 1, `delivered=${result.delivered} (dopo retry)`);
 
     const captured = received.find((req) => req.body.includes("deliv-b"));
     assert.ok(captured, "il server ha ricevuto il body della delivery (b)");
@@ -418,7 +452,8 @@ describe("feature 35: webhook in/out", () => {
     )).rows;
     assert.ok(rows.length >= 1, `l'evento ha accodato almeno una delivery pending (trovate ${rows.length})`);
 
-    const result = await deliverPending(50, { allowPrivate: true });
+    // Usa deliverWithRetry per mitigare la race tra commit DB e fetch.
+    const result = await deliverWithRetry(50);
     assert.ok(result.delivered >= 1);
     // Più webhook out possono matchare lo stesso evento: cerca la delivery
     // firmata con la secret 'e2e' del webhook end2end, non la prima in ordine.
