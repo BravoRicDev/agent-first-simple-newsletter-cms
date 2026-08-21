@@ -76,17 +76,18 @@ riparte esattamente da qui.
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
   contacts): usare SEMPRE `opportunity_custom_values` (076).
 
-## MONITORAGGIO (POLISH, cron 21/08/2026 ~02:00 UTC)
+## MONITORAGGIO (POLISH, cron 21/08/2026 ~02:43 UTC)
 - ✅ Repository LIBERO al passaggio (nessun claude/codex/opencode, working tree pulita, nessun `.git/index.lock`). Nessun fix strutturale richiesto.
 - ✅ DECISIONI_UMANE: nessuna [APERTA]. [RISOLTO] tutti gia applicati/rispettati.
-- ✅ **Test eseguiti** (67/67 pass, 0 fail):
+- ✅ **Test eseguiti** (77/77 pass, 0 fail):
   - F0 foundations + location mapping: **18/18**
   - ONDA1 (contacts + opportunities + custom fields + webhook): **18/18**
   - ONDA2 booking API: **6/6**
   - ONDA2 booking calendar sync: **8/8**
-  - ONDA2 public booking page: **8/8**
-  - OpenAPI + import tool: **9/9**
+  - ONDA2 public booking page: **9/9** (con auto-create contatto)
+  - OpenAPI + import tool + rate-limiting + body validation: **18/18**
 - ✅ Sintassi `node --check` ok su tutti i file src e test chiave.
-- ✅ DB di test `cms-test-pg` up, funzionante.
+- ✅ DB di test `cms-test-pg` up (5 giorni), funzionante.
 - ✅ Nessun segreto/personale nel codice.
-- ✅ `.env.example` allineato, nessun gap.
+- ✅ `.env.example` allineato, nessun gap (nessun `.env` presente — clone, comportamento atteso).
+- ✅ Nessun leak di naming CRM di origine nel codice.
