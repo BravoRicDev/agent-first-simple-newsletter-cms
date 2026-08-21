@@ -182,3 +182,57 @@ export async function listEmailStatsCampaigns(siteId) {
   return result;
 }
 
+// Elenco sequenze email del tenant con stats aggregate per-sequenza
+// (passi attivi, invii, aperture, click). Naming generico ("API compatibili
+// con CRM diffusi"). Ogni sequenza è per-tenant (site_id).
+export async function listEmailStatsSequences(siteId) {
+  const sequences = (await query(
+    `SELECT seq.id, seq.name, seq.active,
+            COUNT(st.id)::int AS steps
+     FROM newsletter_sequences seq
+     LEFT JOIN newsletter_sequence_steps st ON st.sequence_id = seq.id
+     WHERE seq.site_id = $1
+     GROUP BY seq.id ORDER BY seq.created_at DESC, seq.id DESC`,
+    [siteId]
+  )).rows;
+
+  const result = [];
+  for (const seq of sequences) {
+    const sends = (await query(
+      `SELECT COUNT(*)::int AS sent, COUNT(s.opened_at)::int AS opened
+       FROM newsletter_sequence_sends s
+       WHERE s.step_id IN (
+         SELECT id FROM newsletter_sequence_steps WHERE sequence_id = $1
+       )`,
+      [seq.id]
+    )).rows[0];
+
+    const clicks = (await query(
+      `SELECT COUNT(DISTINCT email)::int AS clickers
+       FROM newsletter_send_events
+       WHERE kind = 'sequence' AND event_type = 'click' AND send_id IN (
+         SELECT id FROM newsletter_sequence_sends WHERE step_id IN (
+           SELECT id FROM newsletter_sequence_steps WHERE sequence_id = $1
+         )
+       )`,
+      [seq.id]
+    )).rows[0];
+
+    const total = parseInt(sends?.sent || 0, 10);
+    const opened = parseInt(sends?.opened || 0, 10);
+    const clickers = parseInt(clicks?.clickers || 0, 10);
+    result.push({
+      id: seq.id,
+      name: seq.name,
+      active: seq.active,
+      steps: parseInt(seq.steps || 0, 10),
+      total,
+      sent: total,
+      opened,
+      clickers,
+      ...withRates(total, opened, clickers),
+    });
+  }
+  return result;
+}
+

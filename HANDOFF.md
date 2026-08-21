@@ -4,44 +4,38 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- **LEADER+QUALITY CRON (21/08/2026) — ONDA 3: Analitica & Reporting v1 API**:
+- **LEADER+QUALITY CRON (21/08/2026) — PLANNING ONDA 3 (continuazione)**:
   - Working tree pulita dopo commit.
-  - **COSTRUITO**: surface v1 di analitica e reporting: `/v1/activities`,
-    `/v1/contacts/:id/activities`, `/v1/email-stats`,
-    `/v1/email-stats/campaigns`, `/v1/email-stats/campaigns/:id`, `/v1/reports`
-    (CRUD), `/v1/reports/:id/run` (generazione dry-run), `/v1/reports/:id/runs`
-    (storico), con test service-level + HTTP e documentazione OpenAPI.
+  - **COSTRUITO**: completati i ritardi del planning Onda 3: stats sequenze
+    email (`/v1/email-stats/sequences` + `/:id`), `PUT /v1/contacts/:id/tags`
+    (replace completo), `DELETE /v1/contacts/:id/tasks/:taskId`, e import tool
+    collegato a un endpoint `POST /v1/import` (+ storico `/v1/import/jobs`).
+    Con test HTTP e documentazione OpenAPI.
   - claude-code non disponibile (non autenticato al login) → fallback su
     DeepSeek (tools agente) con lo stesso task ampio, come da AGENTS.md.
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **ONDA 3 — Analitica & Reporting v1 API** (blocco sostanziale):
-   - `src/routes/v1.js`: aggiunte nuove route, tutte dietro requireTenant()
-     (per-tenant):
-     - `GET /activities` (filtri email|contactEmail, eventType anche CSV,
-       limit/offset) e `GET /contacts/:id/activities`.
-     - `GET /email-stats` (aggregato tenant: invii/aperture/click/rate),
-       `GET /email-stats/campaigns` (campagne + stats per-campagna),
-       `GET /email-stats/campaigns/:id` (dettaglio campagna).
-     - `GET|POST /reports`, `GET|PUT|DELETE /reports/:id`,
-       `POST /reports/:id/run` (generateReport DRY-RUN, NON invia email),
-       `GET /reports/:id/runs` (storico esecuzioni).
-   - `src/services/newsletter-stats.js`: nuove funzioni `getEmailStatsAggregate`
-     e `listEmailStatsCampaigns` (con helper interni per compute rate).
-   - `src/openapi.js`: definizioni OpenAPI per le nuove route (tags Attività,
-     Email Stats, Report). Route `GET /v1/funnel` ripristinata (non persa).
-   - Test nuovi (tutti passano):
-     - `test/v1-activities.test.js` (4), `test/v1-email-stats.test.js` (3),
-       `test/v1-reports.test.js` (8) — service-level.
-     - `test/v1-activities-http.test.js` (3),
-       `test/v1-email-stats-http.test.js` (5),
-       `test/v1-reports-http.test.js` (9) — HTTP con auth Bearer per-sito.
+1. **PLANNING ONDA 3 — ritardi chiusi** (blocco sostanziale):
+   - `src/services/newsletter-stats.js`: nuovo `listEmailStatsSequences(siteId)`
+     (elenco sequenze per-tenant con passi/invii/aperture/click/rate).
+     `getEmailStatsSequence(siteId, sequenceId)` era già pronto e ora esposto.
+   - `src/services/contacts-v1.js`: nuovo `setContactTags(siteId, contactId, tags)`
+     per la sostituzione COMPLETA dei tags (PUT replace).
+   - `src/routes/v1.js` (tutte dietro requireTenant, per-tenant):
+     - `GET /email-stats/sequences` e `GET /email-stats/sequences/:id`.
+     - `PUT /contacts/:id/tags` (replace tags).
+     - `DELETE /contacts/:id/tasks/:taskId` (verifica contatto + task, poi delete).
+     - `POST /import` (bulk upsert contatti+task via importCrmData),
+       `GET /import/jobs` (storico job), `GET /import/jobs/:id`.
+   - `src/openapi.js`: documentate sequences stats, PUT tags, DELETE task e
+     sezione Import (POST /v1/import + jobs).
+   - Test nuovi `test/v1-planning-onda3.test.js` (9) — HTTP con auth Bearer
+     per-sito, tutti passano.
 
-2. **Verifica regressioni**: F0 foundations (9/9), Onda 1 contatti (8/8),
-   Onda 1 opportunità (8/8) [21 pass in 3 file], custom fields (…), webhook-out,
-   location-mapping, dashboard/funnel (14/14), OpenAPI (5/5) — tutti ✅.
-   Totale verificato in questo run: 32 test nuovi + 40 esistenti = 72 test, 0 fail.
+2. **Verifica regressioni**: v1-email-stats (service+http), v1-openapi,
+   onda1-contacts, import-crm-tool, f0-foundations — tutti ✅.
+   Totale verificato in questo run: 9 nuovi + 34 esistenti = 43 test, 0 fail.
 
 ## MONITORAGGIO (POLISH cron, run precedente)
 - RIESEGUITA l'intera suite a gruppi isolati via `./scripts/test.sh <file>`:
@@ -68,26 +62,26 @@ riparte esattamente da qui.
 - Nessun commit/push eseguito (working tree rimasta pulita).
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ **32 nuovi test Analitica & Reporting** (17 service + 15 HTTP), tutti passano
-- ✅ **Nessuna regressione**: F0 9/9, Onda 1 contatti 8/8, opportunità 8/8,
-  dashboard/funnel 14/14, OpenAPI 5/5
+- ✅ **9 nuovi test planning Onda 3** (`v1-planning-onda3.test.js`), tutti passano
+  (sequences stats, PUT tags replace, DELETE task, import + jobs)
+- ✅ **Nessuna regressione**: v1-email-stats (service+http), v1-openapi,
+  onda1-contacts, import-crm-tool, f0-foundations — 34/34 pass
 - ✅ **Sintassi OK**: `node --check` su src/routes/v1.js, src/openapi.js,
-  src/services/newsletter-stats.js e sui 6 file di test
-- ✅ **OpenAPI aggiornato**: tags + paths per attività, email-stats, reports
-  (route /v1/funnel ripristinata)
+  src/services/newsletter-stats.js, src/services/contacts-v1.js e sul test
+- ✅ **OpenAPI aggiornato**: sequences stats, PUT /contacts/:id/tags,
+  DELETE /contacts/:id/tasks/:taskId, sezione Import (POST /v1/import + jobs)
 - ✅ **Nessun segreto versionato**, nessun riferimento CRM-specifico
-- ✅ **POST /v1/reports/:id/run usa SOLO generateReport (dry-run)**, nessuna
-  email SMTP inviata in test
+- ✅ **Nessuna migrazione SQL nuova** necessaria (tabelle già esistenti)
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **Onda 3 planning (continua)**:
-   - `GET /v1/email-stats/sequences` (stats sequenze email, service già pronto:
-     `getEmailStatsSequence` in newsletter-stats.js).
-   - `PUT /v1/contacts/:id/tags` (sostituzione tags completa) e
-     `DELETE /v1/contacts/:id/tasks/:taskId`.
-   - Import tool: collegare l'import dati (tool progettato, migrazione NON
-     eseguita) a un endpoint v1 per il bulk-upsert.
-2. **Oppure**: attendere input umano per priorità Onda 3.
+1. **Onda 3 planning (ultimi ritardi)**:
+   - `GET /v1/email-stats/sequences` ora coperto. Restano possibili rifiniture:
+     filtri query su `/v1/activities` (date range, paginazione cursor) e
+     export CSV delle statistiche (`GET /v1/email-stats.csv` o export attività).
+   - Import avanzato: accettare file CSV/JSON su `/v1/import` (multipart) oltre
+     al body JSON attuale, con validazione errori per-riga.
+2. **Oppure**: ONDA 4 tuning (webhook out più eventi, es. contact_updated,
+   opportunity_stage_changed) o attesa input umano per priorità.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).

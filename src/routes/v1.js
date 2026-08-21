@@ -18,9 +18,9 @@ import {
   createContact, getContact, updateContact, deleteContact,
   listContacts, searchContacts, upsertContactByEmail, findDuplicateContacts,
   addContactNote, listContactNotes, deleteContactNote,
-  listContactTags, addContactTags, removeContactTag,
+  listContactTags, addContactTags, removeContactTag, setContactTags,
 } from "../services/contacts-v1.js";
-import { listTasks, createTask, updateTask, getFunnel } from "../services/tasks.js";
+import { listTasks, createTask, updateTask, deleteTask, getTask, getFunnel } from "../services/tasks.js";
 import {
   listBookings, getBooking, createBooking,
   updateBooking, cancelBooking,
@@ -37,7 +37,9 @@ import {
 } from "../services/conversations.js";
 import {
   getEmailStatsCampaign, getEmailStatsAggregate, listEmailStatsCampaigns,
+  getEmailStatsSequence, listEmailStatsSequences,
 } from "../services/newsletter-stats.js";
+import { importCrmData, listImportJobs, getImportJob } from "../services/export-import.js";
 import {
   listConfigs as listReportConfigs, getConfig as getReportConfig,
   createConfig as createReportConfig, updateConfig as updateReportConfig,
@@ -548,6 +550,16 @@ router.delete("/contacts/:id/tags/:tag", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.put("/contacts/:id/tags", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const body = req.body || {};
+    const tags = await setContactTags(siteId, req.params.id, body.tags ?? body.tag);
+    if (tags === null) return res.status(404).json({ error: "Contatto non trovato" });
+    res.json({ tags });
+  } catch (err) { next(err); }
+});
+
 // ── Contatti: tasks ──────────────────────────────────────────────────────
 
 router.get("/contacts/:id/tasks", async (req, res, next) => {
@@ -588,6 +600,18 @@ router.put("/contacts/:id/tasks/:taskId", async (req, res, next) => {
     });
     if (!task) return res.status(404).json({ error: "Task non trovata" });
     res.json({ task });
+  } catch (err) { next(err); }
+});
+
+router.delete("/contacts/:id/tasks/:taskId", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const contact = await getContact(siteId, req.params.id);
+    if (!contact) return res.status(404).json({ error: "Contatto non trovato" });
+    const task = await getTask(siteId, req.params.taskId);
+    if (!task) return res.status(404).json({ error: "Task non trovata" });
+    await deleteTask(siteId, req.params.taskId);
+    res.json({ deleted: true, id: parseInt(req.params.taskId, 10) });
   } catch (err) { next(err); }
 });
 
@@ -1112,6 +1136,21 @@ router.get("/email-stats/campaigns/:id", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get("/email-stats/sequences", async (req, res, next) => {
+  try {
+    const sequences = await listEmailStatsSequences(req.tenant.siteId);
+    res.json({ sequences });
+  } catch (err) { next(err); }
+});
+
+router.get("/email-stats/sequences/:id", async (req, res, next) => {
+  try {
+    const stats = await getEmailStatsSequence(req.tenant.siteId, req.params.id);
+    if (!stats || stats.error) return res.status(404).json({ error: stats?.error || "Sequenza non trovata" });
+    res.json({ emailStats: stats });
+  } catch (err) { next(err); }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // ONDA 3 — Report (config CRUD + generazione dry-run + storico run)
 // ─────────────────────────────────────────────────────────────────────────
@@ -1169,6 +1208,41 @@ router.post("/reports/:id/run", async (req, res, next) => {
     const report = await generateReport(req.tenant.siteId, req.params.id);
     if (!report) return res.status(404).json({ error: "Report non trovato" });
     res.json({ report });
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ONDA 2/3 — Import dati (bulk upsert) collegato al tool di import
+// POST /v1/import  → importCrmData (contatti + task upsert per email)
+// ─────────────────────────────────────────────────────────────────────────
+
+router.post("/import", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const body = req.body || {};
+    const created_by = body.createdBy || body.created_by || "";
+    const result = await importCrmData(siteId, {
+      contacts: Array.isArray(body.contacts) ? body.contacts : [],
+      tasks: Array.isArray(body.tasks) ? body.tasks : [],
+      created_by: String(created_by),
+    });
+    res.status(201).json(result);
+  } catch (err) { next(err); }
+});
+
+router.get("/import/jobs", async (req, res, next) => {
+  try {
+    const { limit } = req.query || {};
+    const jobs = await listImportJobs(req.tenant.siteId, { limit: parseInt(limit, 10) || 50 });
+    res.json({ jobs });
+  } catch (err) { next(err); }
+});
+
+router.get("/import/jobs/:id", async (req, res, next) => {
+  try {
+    const job = await getImportJob(req.tenant.siteId, req.params.id);
+    if (!job) return res.status(404).json({ error: "Job di import non trovato" });
+    res.json({ job });
   } catch (err) { next(err); }
 });
 

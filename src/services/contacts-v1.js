@@ -362,3 +362,14 @@ export async function removeContactTag(siteId, contactId, tag) {
   await query("UPDATE contacts SET tags = $1, updated_at = NOW() WHERE site_id = $2 AND id = $3", [merged, siteId, parseInt(contactId, 10)]);
   return merged;
 }
+
+// Sostituzione COMPLETA dei tags del contatto (PUT replace). Ritorna il nuovo
+// array di tags ([])
+export async function setContactTags(siteId, contactId, tagsInput) {
+  const row = (await query("SELECT id, tags FROM contacts WHERE site_id = $1 AND id = $2", [siteId, parseInt(contactId, 10)])).rows[0];
+  if (!row) return null;
+  const incoming = Array.isArray(tagsInput) ? tagsInput : (String(tagsInput || "").split(","));
+  const clean = [...new Set(incoming.map((t) => String(t).trim().slice(0, 100)).filter(Boolean))];
+  await query("UPDATE contacts SET tags = $1, updated_at = NOW() WHERE site_id = $2 AND id = $3", [clean, siteId, parseInt(contactId, 10)]);
+  return clean;
+}

@@ -674,6 +674,13 @@ function buildPaths() {
       requestBody: jsonBody({ type: "object", properties: { tag: { type: "string" }, tags: { type: "array", items: { type: "string" } } } }),
       responses: jsonResponse(200, { tags: { type: "array", items: { type: "string" } } }),
     },
+    put: {
+      tags: ["Contatti"], summary: "Sostituisce COMPLETAMENTE i tag del contatto (replace)",
+      description: "Il body { tags: [] } (o { tag }) diventa il nuovo set di tag del contatto.",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { tag: { type: "string" }, tags: { type: "array", items: { type: "string" } } } }),
+      responses: jsonResponse(200, { tags: { type: "array", items: { type: "string" } } }),
+    },
   };
   base["/contacts/{id}/tags/{tag}"] = {
     delete: {
@@ -702,6 +709,11 @@ function buildPaths() {
       parameters: [pathId(), pathId("taskId")], security: tenantSec(),
       requestBody: jsonBody({ type: "object", properties: { title: { type: "string" }, notes: { type: "string" }, status: { type: "string" }, dueAt: { type: "string" }, assigneeId: { type: "integer" } } }),
       responses: jsonResource("task", { type: "object" }),
+    },
+    delete: {
+      tags: ["Contatti"], summary: "Elimina un task del contatto",
+      parameters: [pathId(), pathId("taskId")], security: tenantSec(),
+      responses: jsonResponse(200, { deleted: { type: "boolean" }, id: { type: "integer" } }),
     },
   };
   base["/contacts/{id}/followers"] = {
@@ -1133,6 +1145,34 @@ function buildPaths() {
     },
   };
 
+  base["/v1/email-stats/sequences"] = {
+    get: {
+      tags: ["Email Stats"],
+      summary: "Elenco sequenze con statistiche",
+      description: "Lista delle sequenze email del tenant con per-sequenza: passi attivi, invii, aperture, click e tassi.",
+      security: tenantSec(),
+      responses: {
+        "200": { description: "Sequenze con statistiche", content: { "application/json": { schema: { type: "object", properties: { sequences: { type: "array" } } } } } },
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/email-stats/sequences/{id}"] = {
+    get: {
+      tags: ["Email Stats"],
+      summary: "Statistiche dettagliate di una sequenza",
+      description: "Statistiche complete di una sequenza email del tenant: passi, invii, aperture, click con URL. 404 se non trovata.",
+      security: tenantSec(),
+      parameters: [pathId()],
+      responses: {
+        "200": { description: "Statistiche sequenza", content: { "application/json": { schema: { type: "object", properties: { emailStats: { type: "object" } } } } } },
+        404: jsonError("Sequenza non trovata"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
   // ── ONDA 3: Report ────────────────────────────────────────────────
   base["/v1/reports"] = {
     get: {
@@ -1222,6 +1262,35 @@ function buildPaths() {
         "200": { description: "Storico run", content: { "application/json": { schema: { type: "object", properties: { runs: { type: "array" } } } } } },
         401: jsonError("Non autenticato"),
       },
+    },
+  };
+
+  // ── Import dati (bulk upsert) ─────────────────────────────────────
+  base["/v1/import"] = {
+    post: {
+      tags: ["Import"],
+      summary: "Import collegate dati (contatti + task, upsert per email)",
+      description: "Esegue un bulk upsert per-tenant: i contatti vengono inseriti/aggiornati per email, le task collegate. Ritorna job_id e conteggi.",
+      security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { contacts: { type: "array" }, tasks: { type: "array" }, createdBy: { type: "string" }, created_by: { type: "string" } } }),
+      responses: jsonResponse(201, { job_id: { type: "integer" }, imported: { type: "integer" }, skipped: { type: "integer" } }),
+    },
+  };
+  base["/v1/import/jobs"] = {
+    get: {
+      tags: ["Import"],
+      summary: "Elenco job di import del tenant",
+      security: tenantSec(),
+      parameters: [{ name: "limit", in: "query", schema: { type: "integer" }, description: "Max righe (default 50)" }],
+      responses: jsonResponse(200, { jobs: { type: "array" } }),
+    },
+  };
+  base["/v1/import/jobs/{id}"] = {
+    get: {
+      tags: ["Import"],
+      summary: "Dettaglio job di import",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResponse(200, { job: { type: "object" } }),
     },
   };
 
