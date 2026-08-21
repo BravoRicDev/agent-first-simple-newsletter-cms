@@ -7,13 +7,17 @@ SEGUIRE OBBLIGATORIAMENTE.
 Aspettare discorso diretto già definito dalla roadmap: niente domande all'umano
 se la risposta è già in ROADMAP.md / DECISIONI_UMANE.md / HANDOFF.md.
 
-## Provider: litellm-proxy (come l'ambiente di Riccardo)
-- Usare SEMPRE litellm-proxy (http://127.0.0.1:4000) come provider primario.
-- L'agente lavora coi propri tool nativi (terminal, read_file, write_file,
-  patch, search_files, execute_code) — NON delegare a claude-code.
-- Claude-code è SOLO un fallback se i tool nativi falliscono per errore/limite.
-- Lavorare a BLOCCHI FUNZIONALI INTERI (3-5 endpoint correlati per volta) —
-  non microtask. Verifica solo a fine blocco, non dopo ogni file.
+## Provider: litellm-proxy + delega a Claude Code
+- litellm-proxy (http://127.0.0.1:4000) è il provider base per i fallback —
+  ha tutti i modelli (Claude, DeepSeek, ecc.).
+- L'agente delega a **Claude Code** (`claude -p '<task ampio>' --model
+  claude-sonnet-4-20250514 --dangerously-skip-permissions --max-turns 300`)
+  per scrivere il codice. Claude Code usa la propria auth Anthropic.
+- Claude Code lavora su task AMPI e autosufficienti (3-5 endpoint correlati con
+  servizi, test, migrazioni tutti insieme) — non microtask.
+- Verifica solo a fine blocco, non dopo ogni file.
+- Se Claude Code fallisce (errore/limite), fallback sui tool nativi
+  dell'agente (deepseek-v4-flash via litellm-proxy).
 
 ## VINCOLI
 - Niente `git reset --hard` / force.
