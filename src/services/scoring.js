@@ -64,7 +64,7 @@ async function checkThresholds(siteId, email, score, { depth = 0 } = {}) {
   if (depth > 3) return;
   const thresholds = (await query(
     `SELECT id, min_score, action_type, action_config FROM scoring_thresholds
-     WHERE site_id = $1 AND enabled = true ORDER BY min_score DESC`,
+     WHERE site_id = $1 AND enabled = true AND trigger_on = 'above' ORDER BY min_score DESC`,
     [siteId]
   )).rows;
 
@@ -109,41 +109,98 @@ async function executeThresholdAction(siteId, email, th, { depth } = {}) {
   }
 }
 
-// Decadimento giornaliero: score * 0.95 per ogni giorno senza eventi.
-// Chiamato dal tick scheduler una volta al giorno per contatto.
-export async function applyScoringDecay(siteId = null) {
-  const params = [];
-  let where = "c.score != 0 AND c.score_updated_at IS NOT NULL";
-  if (siteId) {
-    params.push(siteId);
-    where += ` AND c.site_id = $${params.length}`;
-  }
-  // giorni senza eventi = floor((NOW() - score_updated_at) / 1 day)
+// Configurazione decay per sito (settings globali per-tenant, stesso
+// pattern riusato di tracking.js/site-seo.js — nessuna tabella dedicata).
+// scoring_decay_rate: fattore di moltiplicazione per periodo (0<rate<1).
+// scoring_decay_days: lunghezza del periodo in giorni senza eventi.
+async function getScoringDecayConfig(siteId) {
+  if (!siteId) return { rate: 0.95, days: 1 };
   const rows = (await query(
-    `SELECT c.id, c.score, c.score_updated_at
-     FROM contacts c
-     WHERE ${where} AND c.score_updated_at < NOW() - INTERVAL '1 day'
+    "SELECT key, value FROM settings WHERE site_id = $1 AND key = ANY($2)",
+    [siteId, ["scoring_decay_rate", "scoring_decay_days"]]
+  )).rows;
+  const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const rate = Number(map.scoring_decay_rate);
+  const days = Number(map.scoring_decay_days);
+  return {
+    rate: Number.isFinite(rate) && rate > 0 && rate < 1 ? rate : 0.95,
+    days: Number.isFinite(days) && days > 0 ? days : 1,
+  };
+}
+
+// Soglie 'below': azione scattata quando il decadimento fa scendere il
+// punteggio sotto min_score (es. rimuovi tag "hot", notifica raffreddamento).
+// Scatta solo sull'attraversamento (oldScore >= min > newScore), non ad ogni
+// tick in cui il punteggio resta sotto soglia.
+async function checkDecayThresholds(siteId, email, oldScore, newScore, { depth = 0 } = {}) {
+  if (depth > 3) return;
+  const thresholds = (await query(
+    `SELECT id, min_score, action_type, action_config FROM scoring_thresholds
+     WHERE site_id = $1 AND enabled = true AND trigger_on = 'below' ORDER BY min_score ASC`,
+    [siteId]
+  )).rows;
+  for (const th of thresholds) {
+    const min = Number(th.min_score);
+    if (!(oldScore >= min && newScore < min)) continue;
+    try {
+      await executeThresholdAction(siteId, email, th, { depth });
+    } catch (err) {
+      logger.error(`Scoring decay threshold ${th.id} fallita (site=${siteId}, ${email}): ${err.message}`);
+    }
+  }
+}
+
+// Decadimento periodico: score * rate^periodi senza eventi (default
+// rate=0.95, periodo=1 giorno; configurabile per sito via settings
+// scoring_decay_rate/scoring_decay_days). Chiamato dal tick scheduler.
+async function applyScoreDecayForSite(siteId) {
+  const { rate, days: decayDays } = await getScoringDecayConfig(siteId);
+  const rows = (await query(
+    `SELECT id, email, score, score_updated_at
+     FROM contacts
+     WHERE site_id = $1 AND score != 0 AND score_updated_at IS NOT NULL
+       AND score_updated_at < NOW() - ($2 || ' days')::interval
      LIMIT 5000`,
-    params
+    [siteId, String(decayDays)]
   )).rows;
 
   let decayed = 0;
   for (const row of rows) {
-    const days = Math.floor((Date.now() - new Date(row.score_updated_at).getTime()) / (24 * 3600 * 1000));
-    if (days <= 0) continue;
-    // Calcolo diretto: round(score * 0.95^days). Un loop giorno-per-giorno
-    // con Math.round resta fermo su score piccoli (es. 10*0.95=9.5 → round
-    // =10 → loop infinito senza cambiare nulla).
-    const score = Math.round(Number(row.score) * Math.pow(0.95, days));
-    if (score === Number(row.score)) continue;
+    const elapsedDays = (Date.now() - new Date(row.score_updated_at).getTime()) / (24 * 3600 * 1000);
+    const periods = Math.floor(elapsedDays / decayDays);
+    if (periods <= 0) continue;
+    const oldScore = Number(row.score);
+    // Calcolo diretto: round(score * rate^periodi). Un loop periodo-per-
+    // periodo con Math.round resta fermo su score piccoli (es. 10*0.95=9.5
+    // → round=10 → loop infinito senza cambiare nulla).
+    const newScore = Math.round(oldScore * Math.pow(rate, periods));
+    if (newScore === oldScore) continue;
     await query(
       `UPDATE contacts SET score = $1, score_updated_at = NOW(), updated_at = NOW() WHERE id = $2`,
-      [score, row.id]
+      [newScore, row.id]
     );
     decayed++;
+    await checkDecayThresholds(siteId, row.email, oldScore, newScore, { depth: 1 });
   }
   return { decayed };
 }
+
+// siteId=null → decadimento su tutti i siti con contatti "scorati".
+export async function applyScoreDecay(siteId = null) {
+  if (siteId) return applyScoreDecayForSite(siteId);
+  const sites = (await query(
+    "SELECT DISTINCT site_id FROM contacts WHERE score != 0"
+  )).rows;
+  let decayed = 0;
+  for (const row of sites) {
+    const r = await applyScoreDecayForSite(row.site_id);
+    decayed += r.decayed;
+  }
+  return { decayed };
+}
+
+// Alias storico: nome usato dallo scheduler interno e dai test esistenti.
+export const applyScoringDecay = applyScoreDecay;
 
 // Sanitizzazione regole/azioni per le route.
 export function sanitizeScoringRule(raw) {
@@ -177,5 +234,6 @@ export function sanitizeScoringThreshold(raw) {
     action_type: actionType,
     action_config: raw.action_config && typeof raw.action_config === "object" ? raw.action_config : {},
     enabled: raw.enabled !== false,
+    trigger_on: raw.trigger_on === "below" ? "below" : "above",
   };
 }

@@ -1217,6 +1217,11 @@ const TOOL_META = {
     description: { en: "Lists follow-up execution log (filter by rule_id/email).", it: "Elenca il log delle esecuzioni follow-up (filtro per rule_id/email)." },
     inputSchema: { site_id: z.number(), rule_id: z.number().optional(), email: z.string().optional(), limit: z.number().int().max(500).optional() },
   },
+  "POST /api/agent/tick": {
+    name: "tick_run",
+    description: { en: "Runs an on-demand scheduler tick: due delayed workflow actions, scoring decay, dynamic segment refresh. Without site_id processes all sites (superadmin only).", it: "Esegue un tick scheduler on-demand: azioni differite dei workflow scadute, decadimento scoring, refresh segmenti dinamici. Senza site_id processa tutti i siti (solo superadmin)." },
+    inputSchema: { site_id: z.number().optional(), run_decay: z.boolean().optional(), run_segments: z.boolean().optional() },
+  },
 
   // ── Ruoli/permessi granulari, turni, audit (Advanced features) ─────────────────
   "GET /api/agent/sites/:siteId/roles": {

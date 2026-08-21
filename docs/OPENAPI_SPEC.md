@@ -64,6 +64,16 @@ Quando aggiungi/modifichi una route in `src/routes/v1.js`:
 Lo spec NON è un file statico: è derivato dal codice, quindi non può andare fuori
 sincrono con le route reali (a patto di mantenerlo come sopra).
 
+## Route operative fuori dallo spec (non /v1)
+
+`POST /api/agent/tick` (ONDA2 Phase 6 — `src/routes/agent-tick.js`,
+`src/services/tick.js`) esegue un tick scheduler on-demand (azioni differite
+dei workflow, decay scoring, refresh segmenti dinamici). È una route
+operativa per agenti autenticati (`requireAuth` + `requireAgent`), non fa
+parte della surface `/v1` API-compatibile e quindi **non** compare in questo
+spec OpenAPI: lo spec documenta solo i 6 blocchi elencati sopra, la surface
+pubblica pensata per client CRM-compatibili.
+
 ## Verifica
 
 `./scripts/test.sh test/v1-openapi.test.js` copre:

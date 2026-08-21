@@ -234,6 +234,80 @@ export async function recountSegment(siteId, segmentId) {
   return { total };
 }
 
+// Refresh periodico (tick scheduler): rivaluta TUTTI i segmenti dinamici
+// abilitati del sito contro TUTTI gli email conosciuti, aggiungendo i nuovi
+// match e rimuovendo i membri che non soddisfano più le regole. A differenza
+// di refreshSegmentsForContact (incrementale, un contatto alla volta, ad
+// ogni evento) questo è pensato per correggere drift accumulato — es.
+// regole basate su `event ... lt_days_ago` il cui esito cambia col solo
+// passare del tempo, senza un nuovo evento che lo triggeri.
+// siteId=null → refresh su tutti i siti con almeno un segmento abilitato.
+export async function refreshSegments(siteId = null) {
+  if (siteId) return refreshSegmentsForSite(siteId);
+  const sites = (await query(
+    "SELECT DISTINCT site_id FROM segments WHERE enabled = true"
+  )).rows;
+  let segmentsCount = 0, added = 0, removed = 0;
+  for (const row of sites) {
+    const r = await refreshSegmentsForSite(row.site_id);
+    segmentsCount += r.segments;
+    added += r.added;
+    removed += r.removed;
+  }
+  return { segments: segmentsCount, added, removed };
+}
+
+async function refreshSegmentsForSite(siteId) {
+  const segments = (await query(
+    "SELECT id, rules, match_mode FROM segments WHERE site_id = $1 AND enabled = true",
+    [siteId]
+  )).rows;
+  if (segments.length === 0) return { segments: 0, added: 0, removed: 0 };
+
+  const emails = (await query(
+    `SELECT DISTINCT email FROM (
+       SELECT email FROM contacts WHERE site_id = $1
+       UNION
+       SELECT lower(data->>'email') AS email FROM form_submissions
+         WHERE site_id = $1 AND data->>'email' IS NOT NULL
+     ) u WHERE email IS NOT NULL`,
+    [siteId]
+  )).rows.map((r) => r.email).filter(Boolean);
+
+  let added = 0, removed = 0;
+  for (const segment of segments) {
+    const currentRows = (await query(
+      "SELECT email FROM segment_members WHERE site_id = $1 AND segment_id = $2",
+      [siteId, segment.id]
+    )).rows;
+    const current = new Set(currentRows.map((r) => r.email));
+    const matched = new Set();
+
+    for (const email of emails) {
+      const ctx = await loadContactContext(siteId, email);
+      if (!evalSegment(segment, ctx)) continue;
+      matched.add(email);
+      if (current.has(email)) continue;
+      await query(
+        `INSERT INTO segment_members (site_id, segment_id, email) VALUES ($1, $2, $3)
+         ON CONFLICT (segment_id, email) DO UPDATE SET matched_at = NOW()`,
+        [siteId, segment.id, email]
+      );
+      added++;
+    }
+
+    for (const email of current) {
+      if (matched.has(email)) continue;
+      await query(
+        "DELETE FROM segment_members WHERE site_id = $1 AND segment_id = $2 AND email = $3",
+        [siteId, segment.id, email]
+      );
+      removed++;
+    }
+  }
+  return { segments: segments.length, added, removed };
+}
+
 // Anteprima: quanti contatti matchano una definizione senza salvarla.
 // Accetta rules array + match_mode e valuta sugli email conosciuti (max 500).
 // Le email vengono da contacts + contact_events (un contatto può esistere

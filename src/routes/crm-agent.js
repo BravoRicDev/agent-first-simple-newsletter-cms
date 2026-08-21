@@ -326,9 +326,9 @@ export function registerCrmRoutes(router) {
       if (!clean) return res.status(400).json({ error: "min_score obbligatorio" });
       try {
         const result = await query(
-          `INSERT INTO scoring_thresholds (site_id, min_score, action_type, action_config, enabled)
-           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [siteId, clean.min_score, clean.action_type, JSON.stringify(clean.action_config), clean.enabled]
+          `INSERT INTO scoring_thresholds (site_id, min_score, action_type, action_config, enabled, trigger_on)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          [siteId, clean.min_score, clean.action_type, JSON.stringify(clean.action_config), clean.enabled, clean.trigger_on]
         );
         res.json({ threshold: result.rows[0] });
       } catch (err) {
