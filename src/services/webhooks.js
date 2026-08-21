@@ -16,9 +16,8 @@ import { createTask } from "./tasks.js";
 // IN: handleIncoming() riceve eventi esterni (endpoint pubblico con token)
 // e applica il mapping {event_type: {action, config}} del webhook.
 //
-// events.js importa QUESTO modulo dinamicamente (nessun ciclo statico);
-// qui events.js viene importato dinamicamente solo dentro l'azione
-// emit_event, con la stessa convenzione del resto del codice.
+// WEBHOOK OUT ENRICHMENT: prima della delivery, arricchisce il payload
+// con i dati completi del contatto e/o opportunità (incluse custom fields).
 // ─────────────────────────────────────────────────────────────────────────
 
 const DIRECTIONS = new Set(["in", "out"]);
@@ -182,6 +181,211 @@ async function recordDeliveryFailure(delivery, error) {
   }
 }
 
+// ── WEBHOOK OUT ENRICHMENT ──────────────────────────────────────────────
+//
+// Arricchisce il payload di una delivery con i dati completi del contatto
+// e/o opportunità (incluse custom fields) prima dell'invio.
+// Lect+Quality: il payload esce con { event_type, payload } dove payload
+// ora include i sub-oggetti `contact` e/o `opportunity` con dati completi.
+// ─────────────────────────────────────────────────────────────────────────
+
+const CONTACT_EVENT_TYPES = new Set([
+  "contact_created", "contact_updated", "contact_deleted",
+  "tag_added", "stage_changed", "custom_field_updated",
+]);
+const OPPORTUNITY_EVENT_TYPES = new Set([
+  "opportunity_stage_changed", "opportunity_status_changed",
+  "opportunity_deleted", "opportunity_created",
+  "quote_sent", "quote_viewed", "quote_signed",
+]);
+
+function parsePayload(row) {
+  if (!row) return {};
+  const raw = row.payload;
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return {}; }
+  }
+  if (raw && typeof raw === "object") return raw;
+  return {};
+}
+
+// Carica contatto completo + custom values (object_key='contact').
+// Ritorna l'oggetto serializzato o null se non trovato (già cancellato).
+async function loadFullContact(siteId, contactId) {
+  const id = parseInt(contactId, 10);
+  if (!Number.isFinite(id)) return null;
+
+  const row = (await query(
+    `SELECT c.*, cv.values AS custom_values
+     FROM contacts c
+     LEFT JOIN contact_custom_values cv
+       ON cv.site_id = c.site_id AND cv.contact_id = c.id AND cv.object_key = 'contact'
+     WHERE c.id = $1 AND c.site_id = $2`,
+    [id, siteId]
+  )).rows[0];
+  if (!row) return null;
+
+  const cv = row.custom_values
+    ? (typeof row.custom_values === "string" ? JSON.parse(row.custom_values) : row.custom_values)
+    : {};
+
+  const profile = {
+    name: cv.name ?? "",
+    firstName: cv.firstName ?? "",
+    lastName: cv.lastName ?? "",
+    phone: cv.phone ?? "",
+    companyName: cv.companyName ?? "",
+    website: cv.website ?? "",
+  };
+  const custom = {};
+  for (const [k, v] of Object.entries(cv)) {
+    if (!["name", "firstName", "lastName", "phone", "companyName", "website"].includes(k)) {
+      custom[k] = v;
+    }
+  }
+
+  return {
+    id: row.id,
+    email: row.email,
+    ...profile,
+    tags: row.tags || [],
+    status: row.status || "",
+    notes: row.notes || "",
+    value_estimate: row.value_estimate !== null && row.value_estimate !== undefined
+      ? Number(row.value_estimate) : null,
+    is_client: !!row.is_client,
+    client_status: row.client_status || "inactive",
+    customFields: custom,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Carica opportunità completa + custom values (object_key='opportunity').
+// Ritorna l'oggetto serializzato o null se non trovata (già cancellata).
+async function loadFullOpportunity(siteId, opportunityId) {
+  const id = parseInt(opportunityId, 10);
+  if (!Number.isFinite(id)) return null;
+
+  const row = (await query(
+    `SELECT o.*, p.name AS pipeline_name, ocv.values AS custom_values
+     FROM opportunities o
+     LEFT JOIN pipelines p ON p.id = o.pipeline_id
+     LEFT JOIN opportunity_custom_values ocv
+       ON ocv.site_id = o.site_id AND ocv.opportunity_id = o.id
+     WHERE o.id = $1 AND o.site_id = $2`,
+    [id, siteId]
+  )).rows[0];
+  if (!row) return null;
+
+  const cv = row.custom_values
+    ? (typeof row.custom_values === "string" ? JSON.parse(row.custom_values) : row.custom_values)
+    : {};
+
+  return {
+    id: row.id,
+    contactEmail: row.contact_email,
+    pipeline_id: row.pipeline_id,
+    pipelineName: row.pipeline_name || null,
+    stage: row.stage,
+    title: row.title,
+    amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : 0,
+    probability: row.probability,
+    status: row.status,
+    expectedCloseDate: row.expected_close_at,
+    notes: row.notes,
+    customFields: { ...(cv || {}) },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Arricchisce il payload di una delivery con i dati del contatto e/o
+// opportunità. Modifica delivery.payload IN-PLACE aggiungendo i campi
+// `contact` e/o `opportunity` se gli ID sono presenti nel payload
+// originale e i dati esistono ancora in DB.
+// Per eventi di cancellazione (contact_deleted, opportunity_deleted),
+// arricchisce comunque se il record esiste ancora (best-effort).
+export async function enrichPayload(delivery) {
+  const siteId = delivery.site_id;
+  const eventType = delivery.event_type;
+  let payload = parsePayload(delivery);
+
+  const isContactEvent = CONTACT_EVENT_TYPES.has(eventType)
+    || eventType.startsWith("contact_");
+  const isOpportunityEvent = OPPORTUNITY_EVENT_TYPES.has(eventType)
+    || eventType.startsWith("opportunity_") || eventType.startsWith("quote_");
+
+  if (isContactEvent && payload.contact_id) {
+    try {
+      const contact = await loadFullContact(siteId, payload.contact_id);
+      if (contact) payload.contact = contact;
+    } catch (err) {
+      logger.error(`webhook enrich: loadFullContact fallito (delivery=${delivery.id}): ${err.message}`);
+    }
+  }
+
+  if (isOpportunityEvent && payload.opportunity_id) {
+    try {
+      const opportunity = await loadFullOpportunity(siteId, payload.opportunity_id);
+      if (opportunity) payload.opportunity = opportunity;
+    } catch (err) {
+      logger.error(`webhook enrich: loadFullOpportunity fallito (delivery=${delivery.id}): ${err.message}`);
+    }
+  }
+
+  // Se è un evento di contatto con email ma senza contact_id, prova a
+  // risolvere il contatto per email (es. eventi legacy senza contact_id).
+  if (isContactEvent && !payload.contact_id && payload.email) {
+    try {
+      const row = (await query(
+        "SELECT id FROM contacts WHERE site_id = $1 AND LOWER(email) = $2",
+        [siteId, String(payload.email).trim().toLowerCase()]
+      )).rows[0];
+      if (row) {
+        const contact = await loadFullContact(siteId, row.id);
+        if (contact) payload.contact = contact;
+      }
+    } catch (err) {
+      logger.error(`webhook enrich: loadContactByEmail fallito (delivery=${delivery.id}): ${err.message}`);
+    }
+  }
+
+  // Se è un evento di opportunità con contactEmail ma senza il sub-oggetto
+  // contact ancora popolato, prova a caricare anche il contatto.
+  if (isOpportunityEvent && payload.opportunity?.contactEmail && !payload.contact) {
+    try {
+      const row = (await query(
+        "SELECT id FROM contacts WHERE site_id = $1 AND LOWER(email) = $2",
+        [siteId, String(payload.opportunity.contactEmail).trim().toLowerCase()]
+      )).rows[0];
+      if (row) {
+        const contact = await loadFullContact(siteId, row.id);
+        if (contact) payload.contact = contact;
+      }
+    } catch (err) {
+      logger.error(`webhook enrich: loadContactFromOpportunity fallito (delivery=${delivery.id}): ${err.message}`);
+    }
+  }
+
+  // Salva il payload arricchito SOLO se sono stati aggiunti dati (evita
+  // UPDATE inutili).
+  const origStr = JSON.stringify(delivery.payload);
+  const newStr = JSON.stringify(payload);
+  if (newStr !== origStr) {
+    delivery.payload = payload;
+  }
+}
+
+// Eventi che vanno arricchiti con dati completi contatto/opportunità.
+function shouldEnrich(eventType) {
+  return CONTACT_EVENT_TYPES.has(eventType)
+    || OPPORTUNITY_EVENT_TYPES.has(eventType)
+    || eventType.startsWith("contact_")
+    || eventType.startsWith("opportunity_")
+    || eventType.startsWith("quote_");
+}
+
 // Spedisce fino a `limit` delivery pending con next_attempt_at <= NOW().
 // Con { siteId } filtra per sito (endpoint agent); senza, run globale.
 // { allowPrivate } è SOLO per i test con server HTTP locali: di default il
@@ -210,6 +414,11 @@ export async function deliverPending(limit = 50, { siteId = null, allowPrivate =
   let failed = 0;
   for (const delivery of rows) {
     try {
+      // ENRICHMENT: arricchisci il payload con dati completi contatto/opportunità
+      if (shouldEnrich(delivery.event_type)) {
+        await enrichPayload(delivery);
+      }
+
       const body = JSON.stringify({ event_type: delivery.event_type, payload: delivery.payload });
       const headers = {
         "Content-Type": "application/json",
