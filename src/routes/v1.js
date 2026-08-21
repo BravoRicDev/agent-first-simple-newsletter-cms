@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { Router } from "express";
 import { query } from "../db.js";
 import { requireTenant } from "../middleware/tenant-api.js";
+import { v1RateLimiter } from "../middleware/rate-limit-v1.js";
+import { v1BodyValidator } from "../middleware/body-validate-v1.js";
 import {
   listCustomFields, getCustomField, createCustomField,
   updateCustomField, deleteCustomField, listByObjectKey,
@@ -45,6 +47,10 @@ router.use(openapiRouter);
 // Tutte le route API sotto passano da requireTenant() (tenancy + auth Bearer,
 // header Version ignorato).
 router.use(requireTenant());
+
+// Rate limiting + body validation per tutta la surface /v1
+router.use(v1RateLimiter());
+router.use(v1BodyValidator());
 
 function sha256(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("hex");
