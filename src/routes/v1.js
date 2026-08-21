@@ -35,6 +35,14 @@ import {
   listConversations, getConversation, listConversationMessages,
   addConversationMessage, setConversationStatus, deleteConversation,
 } from "../services/conversations.js";
+import {
+  getEmailStatsCampaign, getEmailStatsAggregate, listEmailStatsCampaigns,
+} from "../services/newsletter-stats.js";
+import {
+  listConfigs as listReportConfigs, getConfig as getReportConfig,
+  createConfig as createReportConfig, updateConfig as updateReportConfig,
+  deleteConfig as deleteReportConfig, generateReport, listRuns,
+} from "../services/reports.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Surface API compatibile ("API compatibili con CRM diffusi"), montata su
@@ -1019,6 +1027,148 @@ router.get("/funnel", async (req, res, next) => {
     const { from, to } = req.query;
     const funnel = await getFunnel(req.tenant.siteId, { from, to });
     res.json({ funnel });
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ONDA 3 — Attività (log centralizzato da contact_events, per-tenant)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Helper comune per leggere attività da contact_events.
+async function fetchActivities(siteId, { email = null, eventType = null, limit = 50, offset = 0 } = {}) {
+  const params = [siteId];
+  let where = "WHERE site_id = $1";
+  if (email) { params.push(email); where += ` AND email = $${params.length}`; }
+  if (eventType) {
+    // event_type è un singolo valore; chi vuole più tipi passa un CSV.
+    const types = String(eventType).split(",").map((s) => s.trim()).filter(Boolean);
+    if (types.length) {
+      where += ` AND event_type = ANY($${params.length + 1}::varchar[])`;
+      params.push(types);
+    }
+  }
+  const tIdx = params.length + 1;
+  const offIdx = params.length + 2;
+  const rows = (await query(
+    `SELECT id, email, event_type, payload, created_at FROM contact_events ${where}
+     ORDER BY id DESC LIMIT $${tIdx} OFFSET $${offIdx}`,
+    [...params, limit, offset]
+  )).rows;
+
+  const total = (await query(
+    `SELECT COUNT(*)::int AS total FROM contact_events ${where}`,
+    params
+  )).rows[0].total;
+
+  return { activities: rows, total };
+}
+
+router.get("/activities", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const q = req.query || {};
+    const lim = Math.min(parseInt(q.limit, 10) || 50, 200);
+    const off = parseInt(q.offset, 10) || 0;
+    const email = q.email || q.contactEmail || null;
+    const { activities, total } = await fetchActivities(siteId, {
+      email, eventType: q.eventType, limit: lim, offset: off,
+    });
+    res.json({ activities, total });
+  } catch (err) { next(err); }
+});
+
+router.get("/contacts/:id/activities", async (req, res, next) => {
+  try {
+    const contact = await getContact(req.tenant.siteId, req.params.id);
+    if (!contact) return res.status(404).json({ error: "Contatto non trovato" });
+    const result = await fetchActivities(req.tenant.siteId, { email: contact.email, limit: 50, offset: 0 });
+    res.json({ activities: result.activities });
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ONDA 3 — Statistiche email (aggregate tenant + per campagna)
+// ─────────────────────────────────────────────────────────────────────────
+
+router.get("/email-stats", async (req, res, next) => {
+  try {
+    const stats = await getEmailStatsAggregate(req.tenant.siteId);
+    res.json({ emailStats: stats });
+  } catch (err) { next(err); }
+});
+
+router.get("/email-stats/campaigns", async (req, res, next) => {
+  try {
+    const campaigns = await listEmailStatsCampaigns(req.tenant.siteId);
+    res.json({ campaigns });
+  } catch (err) { next(err); }
+});
+
+router.get("/email-stats/campaigns/:id", async (req, res, next) => {
+  try {
+    const stats = await getEmailStatsCampaign(req.tenant.siteId, req.params.id);
+    if (!stats || stats.error) return res.status(404).json({ error: stats?.error || "Campagna non trovata" });
+    res.json({ emailStats: stats });
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// ONDA 3 — Report (config CRUD + generazione dry-run + storico run)
+// ─────────────────────────────────────────────────────────────────────────
+
+router.get("/reports", async (req, res, next) => {
+  try {
+    const reports = await listReportConfigs(req.tenant.siteId);
+    res.json({ reports });
+  } catch (err) { next(err); }
+});
+
+router.post("/reports", async (req, res, next) => {
+  try {
+    const report = await createReportConfig(req.tenant.siteId, req.body || {});
+    res.status(201).json({ report });
+  } catch (err) { next(err); }
+});
+
+router.get("/reports/:id/runs", async (req, res, next) => {
+  try {
+    const { limit } = req.query || {};
+    const runs = await listRuns(req.tenant.siteId, req.params.id, { limit: parseInt(limit, 10) || 50 });
+    res.json({ runs });
+  } catch (err) { next(err); }
+});
+
+router.get("/reports/:id", async (req, res, next) => {
+  try {
+    const report = await getReportConfig(req.tenant.siteId, req.params.id);
+    if (!report) return res.status(404).json({ error: "Report non trovato" });
+    res.json({ report });
+  } catch (err) { next(err); }
+});
+
+router.put("/reports/:id", async (req, res, next) => {
+  try {
+    const report = await updateReportConfig(req.tenant.siteId, req.params.id, req.body || {});
+    if (!report) return res.status(404).json({ error: "Report non trovato" });
+    res.json({ report });
+  } catch (err) { next(err); }
+});
+
+router.delete("/reports/:id", async (req, res, next) => {
+  try {
+    const id = await deleteReportConfig(req.tenant.siteId, req.params.id);
+    if (!id) return res.status(404).json({ error: "Report non trovato" });
+    res.json({ deleted: true, id: parseInt(req.params.id, 10) });
+  } catch (err) { next(err); }
+});
+
+// POST /reports/:id/run → generazione DRY-RUN (NON invia email SMTP): utile
+// per l'agente/consumer per ottenere i dati del report senza inviare nulla.
+router.post("/reports/:id/run", async (req, res, next) => {
+  try {
+    const report = await generateReport(req.tenant.siteId, req.params.id);
+    if (!report) return res.status(404).json({ error: "Report non trovato" });
+    res.json({ report });
   } catch (err) { next(err); }
 });
 

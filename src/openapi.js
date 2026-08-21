@@ -1056,6 +1056,175 @@ function buildPaths() {
     },
   };
 
+  // ── ONDA 3: Attività ──────────────────────────────────────────────
+  base["/v1/activities"] = {
+    get: {
+      tags: ["Attività"],
+      summary: "Log attività recenti del tenant",
+      description: "Restituisce gli eventi di attività (contact_events) del tenant, ordinati dal più recente. Filtrabile per email, eventType (anche CSV) con paginazione limit/offset.",
+      security: tenantSec(),
+      parameters: [
+        { name: "email", in: "query", schema: { type: "string" }, description: "Filtro per email (alias: contactEmail)" },
+        { name: "eventType", in: "query", schema: { type: "string" }, description: "Filtro per tipo evento (singolo o CSV)" },
+        { name: "limit", in: "query", schema: { type: "integer" }, description: "Max righe (default 50, max 200)" },
+        { name: "offset", in: "query", schema: { type: "integer" }, description: "Offset per paginazione" },
+      ],
+      responses: {
+        "200": { description: "Lista attività", content: { "application/json": { schema: { type: "object", properties: { activities: { type: "array" }, total: { type: "integer" } } } } } },
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/contacts/{id}/activities"] = {
+    get: {
+      tags: ["Attività"],
+      summary: "Attività di un singolo contatto",
+      description: "Restituisce il log attività (contact_events) per il contatto indicato. 404 se il contatto non esiste.",
+      security: tenantSec(),
+      parameters: [pathId()],
+      responses: {
+        "200": { description: "Attività del contatto", content: { "application/json": { schema: { type: "object", properties: { activities: { type: "array" } } } } } },
+        404: jsonError("Contatto non trovato"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  // ── ONDA 3: Statistiche email ─────────────────────────────────────
+  base["/v1/email-stats"] = {
+    get: {
+      tags: ["Email Stats"],
+      summary: "Statistiche email aggregate del tenant",
+      description: "Aggregato email del tenant: inviati, aperture, click, click-through rate (open/click su campagne).",
+      security: tenantSec(),
+      responses: {
+        "200": { description: "Statistiche aggregate", content: { "application/json": { schema: { type: "object", properties: { emailStats: { type: "object" } } } } } },
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/email-stats/campaigns"] = {
+    get: {
+      tags: ["Email Stats"],
+      summary: "Elenco campagne con statistiche",
+      description: "Lista delle campagne del tenant con per-campagna: inviati, aperture, click e tassi.",
+      security: tenantSec(),
+      responses: {
+        "200": { description: "Campagne con statistiche", content: { "application/json": { schema: { type: "object", properties: { campaigns: { type: "array" } } } } } },
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/email-stats/campaigns/{id}"] = {
+    get: {
+      tags: ["Email Stats"],
+      summary: "Statistiche dettagliate di una campagna",
+      description: "Statistiche complete di una campagna del tenant (invii, aperture, click con URL). 404 se non trovata.",
+      security: tenantSec(),
+      parameters: [pathId()],
+      responses: {
+        "200": { description: "Statistiche campagna", content: { "application/json": { schema: { type: "object", properties: { emailStats: { type: "object" } } } } } },
+        404: jsonError("Campagna non trovata"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  // ── ONDA 3: Report ────────────────────────────────────────────────
+  base["/v1/reports"] = {
+    get: {
+      tags: ["Report"],
+      summary: "Lista configurazioni report",
+      description: "Elenco delle configurazioni di report periodici del tenant.",
+      security: tenantSec(),
+      responses: {
+        "200": { description: "Configurazioni report", content: { "application/json": { schema: { type: "object", properties: { reports: { type: "array" } } } } } },
+        401: jsonError("Non autenticato"),
+      },
+    },
+    post: {
+      tags: ["Report"],
+      summary: "Crea una configurazione report",
+      description: "Crea una config report (kind weekly|monthly, sections whitelist, recipients max 20).",
+      security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { name: { type: "string" }, kind: { type: "string", enum: ["weekly", "monthly"] }, sections: { type: "array", items: { type: "string" } }, recipients: { type: "array", items: { type: "string", format: "email" } } }, required: ["name"] }),
+      responses: {
+        "201": { description: "Configurazione creata", content: { "application/json": { schema: { type: "object", properties: { report: { type: "object" } } } } } },
+        400: jsonError("Validazione fallita"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/reports/{id}"] = {
+    get: {
+      tags: ["Report"],
+      summary: "Dettaglio configurazione report",
+      security: tenantSec(),
+      parameters: [pathId()],
+      responses: {
+        "200": { description: "Configurazione", content: { "application/json": { schema: { type: "object", properties: { report: { type: "object" } } } } } },
+        404: jsonError("Report non trovato"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+    put: {
+      tags: ["Report"],
+      summary: "Aggiorna una configurazione report",
+      security: tenantSec(),
+      parameters: [pathId()],
+      requestBody: jsonBody({ type: "object" }),
+      responses: {
+        "200": { description: "Configurazione aggiornata", content: { "application/json": { schema: { type: "object", properties: { report: { type: "object" } } } } } },
+        404: jsonError("Report non trovato"),
+        400: jsonError("Validazione fallita"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+    delete: {
+      tags: ["Report"],
+      summary: "Elimina una configurazione report",
+      security: tenantSec(),
+      parameters: [pathId()],
+      responses: {
+        "200": { description: "Eliminata", content: { "application/json": { schema: { $ref: "#/components/schemas/Deleted" } } } },
+        404: jsonError("Report non trovato"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/reports/{id}/run"] = {
+    post: {
+      tags: ["Report"],
+      summary: "Genera un report (dry-run, non invia email)",
+      description: "Genera i dati del report { config_id, generated_at, json, html } senza inviare alcuna email SMTP.",
+      security: tenantSec(),
+      parameters: [pathId()],
+      responses: {
+        "200": { description: "Report generato", content: { "application/json": { schema: { type: "object", properties: { report: { type: "object" } } } } } },
+        404: jsonError("Report non trovato"),
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
+  base["/v1/reports/{id}/runs"] = {
+    get: {
+      tags: ["Report"],
+      summary: "Storico esecuzioni di un report",
+      security: tenantSec(),
+      parameters: [pathId(), { name: "limit", in: "query", schema: { type: "integer" }, description: "Max righe (default 50)" }],
+      responses: {
+        "200": { description: "Storico run", content: { "application/json": { schema: { type: "object", properties: { runs: { type: "array" } } } } } },
+        401: jsonError("Non autenticato"),
+      },
+    },
+  };
+
   return base;
 }
 
