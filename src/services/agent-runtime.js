@@ -42,6 +42,21 @@ function statusError(status, message) {
   return err;
 }
 
+function sanitizeEventTriggers(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 10).map((t) => {
+    if (!t || typeof t !== "object") return null;
+    const eventType = String(t.event_type || "").trim().slice(0, 100);
+    if (!eventType) return null;
+    return {
+      event_type: eventType,
+      enabled: t.enabled === undefined ? true : !!t.enabled,
+      initial_message: String(t.initial_message || "").trim().slice(0, 5000),
+      auto_close_days: Number.isInteger(parseInt(t.auto_close_days, 10)) ? parseInt(t.auto_close_days, 10) : null,
+    };
+  }).filter(Boolean);
+}
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -137,6 +152,7 @@ function sanitizeRuntimeInput(data = {}) {
     rules,
     fallback_text: String(data.fallback_text || "").slice(0, 5000),
     llm_prompt: String(data.llm_prompt || "").slice(0, 5000),
+    event_triggers: sanitizeEventTriggers(data.event_triggers),
   };
 }
 
@@ -483,5 +499,116 @@ export async function testRuntime(siteId, runtimeId, { message, contactEmail } =
   } catch (err) {
     logger.error(`agent-runtime: testRuntime fallito (runtime ${runtimeId}): ${err.message}`);
     return { error: err.message };
+  }
+}
+
+// ── Event-driven conversation triggers (ONDA 2 Phase 6) ────────────────────
+// Quando un evento CRM (booking_created, contact_created, form_submitted) viene
+// emesso, cerca runtimes attivi con event_triggers configurati per quel
+// event_type. Se trova un match, avvia una conversazione proattiva con il contatto.
+//
+// Chiamato da events.js con import dinamico (nessun ciclo statico).
+
+export async function triggerRuntimeForEvent({ siteId, eventType, contactEmail, payload = {} }) {
+  try {
+    const email = normalizeEmail(contactEmail);
+    if (!siteId || !eventType || !email) return { triggered: false };
+
+    const runtimes = (await query(
+      "SELECT * FROM agent_runtimes WHERE site_id = $1 AND enabled = true ORDER BY id ASC",
+      [siteId]
+    )).rows;
+
+    const matching = runtimes.filter((r) => {
+      const triggers = Array.isArray(r.event_triggers) ? r.event_triggers : [];
+      return triggers.some((t) => t && t.event_type === eventType && t.enabled !== false);
+    });
+
+    if (matching.length === 0) return { triggered: false };
+
+    let contact = { tags: [], pref_whatsapp: null, pref_email: null };
+    try {
+      contact = await getContactRecord(siteId, email);
+    } catch { /* graceful fallback */ }
+
+    const results = [];
+    for (const runtime of matching) {
+      try {
+        const triggers = Array.isArray(runtime.event_triggers) ? runtime.event_triggers : [];
+        const matchedTrigger = triggers.find((t) => t.event_type === eventType && t.enabled !== false);
+
+        const channel = runtime.channel || "email";
+        const convChannel = CONVERSATION_CHANNELS.includes(channel) ? channel : "email";
+
+        const prefField = channel === "whatsapp" ? "pref_whatsapp" : "pref_email";
+        if (contact && contact[prefField] === false) {
+          results.push({ runtime_id: runtime.id, triggered: false, skipped: "pref", channel });
+          continue;
+        }
+
+        let conversation = null;
+        try {
+          conversation = await getOrCreateConversation(siteId, email, convChannel);
+        } catch (err) {
+          logger.warn(`triggerRuntimeForEvent: getOrCreateConversation fallito (runtime ${runtime.id}): ${err.message}`);
+        }
+
+        const initialMessage = String(
+          matchedTrigger?.initial_message || runtime.fallback_text || ""
+        ).trim().slice(0, 5000);
+
+        let messageSent = false;
+        if (initialMessage && conversation?.id) {
+          try {
+            await addConversationMessage(siteId, email, convChannel, {
+              direction: "out",
+              body: initialMessage,
+              meta: {
+                runtime_id: runtime.id,
+                source_channel: channel,
+                event_triggered_by: eventType,
+                event_payload: payload,
+              },
+            });
+            messageSent = true;
+          } catch (err) {
+            logger.warn(`triggerRuntimeForEvent: addConversationMessage fallito (runtime ${runtime.id}): ${err.message}`);
+          }
+        }
+
+        if (messageSent && conversation?.id) {
+          try {
+            await setConversationStatus(siteId, conversation.id, "open");
+          } catch (err) {
+            logger.warn(`triggerRuntimeForEvent: setConversationStatus fallito (conv ${conversation.id}): ${err.message}`);
+          }
+        }
+
+        try {
+          await emitContactEvent(siteId, email, "agent_runtime_triggered", {
+            runtime_id: runtime.id,
+            event_type: eventType,
+            channel: channel,
+            initial_message: initialMessage.slice(0, 500),
+          });
+        } catch { /* fire-and-forget */ }
+
+        results.push({
+          runtime_id: runtime.id,
+          triggered: true,
+          conversation_id: conversation?.id || null,
+          message_sent: messageSent,
+          initial_message: initialMessage ? initialMessage.slice(0, 200) : null,
+        });
+      } catch (err) {
+        logger.error(`triggerRuntimeForEvent: runtime ${runtime.id} fallito: ${err.message}`);
+        results.push({ runtime_id: runtime.id, triggered: false, error: err.message });
+      }
+    }
+
+    return { triggered: results.length > 0, results };
+  } catch (err) {
+    logger.error(`triggerRuntimeForEvent fallito (site ${siteId}, ${eventType}): ${err.message}`);
+    return { triggered: false, error: err.message };
   }
 }

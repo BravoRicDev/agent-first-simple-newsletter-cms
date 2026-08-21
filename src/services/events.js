@@ -80,6 +80,24 @@ export async function emitContactEvent(siteId, email, eventType, payload = {}, {
     })()
   );
 
+  // Agent runtime event triggers (ONDA 2 Phase 6): avvia conversazioni
+  // automatiche su eventi CRM (booking_created, contact_created, ecc.)
+  consumers.push(
+    (async () => {
+      try {
+        const { triggerRuntimeForEvent } = await import("./agent-runtime.js");
+        await triggerRuntimeForEvent({
+          siteId,
+          eventType,
+          contactEmail: normalized,
+          payload: payload || {},
+        });
+      } catch (err) {
+        logger.error(`Agent runtime event trigger fallito (site=${siteId}, ${eventType}): ${err.message}`);
+      }
+    })()
+  );
+
   await Promise.allSettled(consumers);
 }
 
