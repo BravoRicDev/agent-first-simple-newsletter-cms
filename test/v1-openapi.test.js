@@ -78,6 +78,12 @@ describe("v1 — documentazione OpenAPI", () => {
       "/payment-links", "/payment-links/{id}", "/payment-links/{id}/mark-paid",
       // conversations (ONDA 2 Phase 5)
       "/conversations", "/conversations/{id}", "/conversations/{id}/messages", "/conversations/{id}/status",
+      // segments (CRM agent)
+      "/segments", "/segments/preview", "/segments/{id}", "/segments/{id}/members", "/segments/{id}/recount",
+      // workflows (CRM agent)
+      "/workflows", "/workflows/{id}", "/workflows/{id}/runs", "/workflows/{id}/test",
+      // scoring (CRM agent)
+      "/scoring-rules", "/scoring-rules/{id}", "/scoring-thresholds", "/scoring-thresholds/{id}",
     ];
     for (const p of expected) {
       assert.ok(paths.has(p), `route ${p} documentata nello spec`);

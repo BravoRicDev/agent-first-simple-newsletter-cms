@@ -4,63 +4,72 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- **ONDA 4 — v1 API enrichment (21/08/2026) — COMPLETATO**:
+- **ONDA 4 — CRM agent feature su /v1 (21/08/2026) — COMPLETATO**:
   - Working tree pulita dopo commit locale.
-  - **COSTRUITO**: surface /v1 arricchita con Quotes API (CRUD + status + PDF),
-    Kanban Board, Contact Merge.
-  - Nuovi test `onda1-quotes-v1.test.js` (13 test) e `onda1-kanban-merge-v1.test.js`
-    (8 test) coprono: CRUD preventivi, cambio stato, generazione PDF, merge
-    contatti, board kanban, e spostamento stage + isolamento tenant.
-  - OpenAPI spec aggiornato con route quotes, board, merge.
+  - **COSTRUITO**: Segmenti, Workflow, Scoring esposti su /v1 con route complete,
+    OpenAPI spec, e 36 test di copertura.
+  - Nuovo test `v1-segments-workflows-scoring.test.js` (36 test) copre: CRUD
+    segmenti, preview, members, recount, CRUD workflow, test, runs, CRUD scoring
+    rules, CRUD scoring thresholds, tenant isolation, validazione.
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **Quotes API — /v1/quotes**:
-   - Route: `GET /quotes`, `POST /quotes`, `GET /quotes/:id`, `PUT /quotes/:id`,
-     `PUT /quotes/:id/status`, `DELETE /quotes/:id`, `GET /quotes/:id/pdf`
-   - Servizi riusati da `src/services/opportunities.js` (già esistenti)
-   - PDF generato al volo con pdfkit e servito inline
-   - Eventi quote_sent/viewed/signed emessi via setQuoteStatus → webhook OUT
+1. **Segmenti — /v1/segments**:
+   - Route: `GET /segments`, `POST /segments`, `GET /segments/:id`,
+     `PUT /segments/:id`, `DELETE /segments/:id`, `GET /segments/:id/members`,
+     `POST /segments/:id/recount`, `POST /segments/preview`
+   - Servizio riusato da `src/services/segments.js` (già esistente)
+   - Regole dinamiche valutate in-memory, membership materializzata
 
-2. **Kanban Board — /v1/opportunities/board + move**:
-   - `GET /opportunities/board` — raggruppa opp. per stage con colonne
-   - `PUT /opportunities/:id/move` — sposta opportunità tra stage (kanban drag&drop)
+2. **Workflow — /v1/workflows**:
+   - Route: `GET /workflows`, `POST /workflows`, `GET /workflows/:id`,
+     `PUT /workflows/:id`, `DELETE /workflows/:id`, `GET /workflows/:id/runs`,
+     `POST /workflows/:id/test`
+   - Servizio riusato da `src/services/workflows.js` (già esistente)
+   - Azioni: add_tag, remove_tag, set_stage, send_campaign, send_sequence,
+     create_task, notify_email, wait_days
 
-3. **Contact Merge — /v1/contacts/merge**:
-   - `POST /contacts/merge` — unisce due contatti (source → into) con merge transazionale
+3. **Scoring — /v1/scoring-rules**:
+   - Route: `GET /scoring-rules`, `POST /scoring-rules`,
+     `GET /scoring-rules/:id`, `PUT /scoring-rules/:id`, `DELETE /scoring-rules/:id`
+   - Servizio riusato da `src/services/scoring.js` (già esistente)
 
-4. **OpenAPI spec**:
-   - Schema `Quote` aggiunto a components.schemas
-   - Paths: `/quotes`, `/quotes/{id}`, `/quotes/{id}/status`, `/quotes/{id}/pdf`
-   - Paths: `/opportunities/board`, `/opportunities/{id}/move`, `/contacts/merge`
+4. **Scoring Thresholds — /v1/scoring-thresholds**:
+   - Route: `GET /scoring-thresholds`, `POST /scoring-thresholds`,
+     `DELETE /scoring-thresholds/:id`
+   - Soglie: set_stage, add_tag, notify_email
 
-5. **Test (26 test, 0 fail)**:
-   - `test/onda1-quotes-v1.test.js`: 13 test — tutti pass
-   - `test/onda1-kanban-merge-v1.test.js`: 8 test — tutti pass
+5. **OpenAPI spec**:
+   - Schemi `Segment`, `Workflow`, `ScoringRule`, `ScoringThreshold`
+   - Paths: segmenti (5 paths), workflow (5 paths), scoring (4 paths)
+   - Tags: Segmenti, Workflows, Scoring
+
+6. **Test (41 test, 0 fail)**:
+   - `test/v1-segments-workflows-scoring.test.js`: 36 test — tutti pass
    - `test/v1-openapi.test.js`: 5 test — tutti pass (aggiornato per nuove route)
 
-6. **Verifica regressioni** (31 test suite v1): 31/31 pass — 0 fail
-
 ## PUNTI DI VERIFICA (questo run)
-- ✅ **26 test nuovI + 5 test OpenAPI = 31 test, 0 fail** — nessuna regressione
+- ✅ **36 test nuovi + 5 test OpenAPI = 41 test, 0 fail** — nessuna regressione
 - ✅ **Sintassi OK**: `node --check` su tutti i file toccati
 - ✅ **Nessun segreto**, nessun riferimento CRM-specifico nel codice
-- ✅ **Migrazioni SQL**: nessuna migrazione nuova (tabelle già esistenti da 045)
+- ✅ **Migrazioni SQL**: nessuna migrazione nuova (tabelle già esistenti: segments,
+      segment_members, workflows, workflow_actions, workflow_runs,
+      scoring_rules, scoring_thresholds, workflow_delayed_actions)
 - ✅ **Nessuna decisione [APERTA]** in DECISIONI_UMANE.md
-- ✅ **Commit locale** — 6 file modificati
+- ✅ **Commit locale** — 4 file modificati
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **ONDA 4 — Expose CRM agent routes su /v1**: segmenti, workflow, scoring sono
-   esposti solo su `/api/agent/` ma sono già pronti. Potrebbero essere utili
-   anche su `/v1/` per consumatori esterni.
-2. **Oppure**: attendere input umano per definire prossimo backlog.
-3. **Oppure**: arricchire payload webhook OUT con dati completi contatto/opportunità.
+1. **ONDA 4 — Webhook OUT event enrichment migliorato**: arricchire payload
+   webhook OUT con dati completi contatto/opportunità e campi custom.
+2. **Oppure**: ONDA 2 Phase 6 — Event-driven triggers avanzati (scheduler
+   tick per delayed actions, scoring decay, segment refresh periodico).
+3. **Oppure**: attendere input umano per definire prossimo backlog.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
 - ONDA 2 Phase 1-6 (booking, calendar sync, public page, payments, conversations, event-driven triggers).
 - ONDA 3 (Dashboard/Funnel, Analitica & Reporting, export CSV, import avanzato file CSV/JSON).
-- ONDA 4 (Webhook OUT event enrichment + Quotes/Board/Merge v1 API).
+- ONDA 4 (Webhook OUT event enrichment + Quotes/Board/Merge v1 API + Segmenti/Workflow/Scoring v1 API).
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.

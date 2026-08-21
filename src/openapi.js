@@ -68,6 +68,9 @@ const SPEC = {
     { name: "Booking Public", description: "ONDA 2 — route pubbliche di prenotazione (nessun auth richiesto)" },
     { name: "Dashboard", description: "ONDA 3 — metriche KPI del CRM" },
     { name: "Funnel", description: "ONDA 3 — dati funnel di conversione per canale" },
+    { name: "Segmenti", description: "Segmenti dinamici (regole su campi/eventi contatto)" },
+    { name: "Workflows", description: "Workflow automatizzati (evento → azioni)" },
+    { name: "Scoring", description: "Lead scoring (regole punti + soglie azione)" },
   ],
   paths: buildPaths(),
   components: {
@@ -365,6 +368,66 @@ const SPEC = {
           signed_at: { type: "string", nullable: true },
           created_at: { type: "string" },
           updated_at: { type: "string" },
+        },
+      },
+      Segment: {
+        type: "object",
+        description: "Segmento dinamico. rules JSONB [{field, op, value}], match_mode ∈ all|any.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          name: { type: "string" },
+          description: { type: "string" },
+          rules: { type: "array" },
+          match_mode: { type: "string", enum: ["all", "any"] },
+          enabled: { type: "boolean" },
+          members: { type: "integer" },
+          created_at: { type: "string", format: "date-time" },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      Workflow: {
+        type: "object",
+        description: "Workflow automatico. trigger_type ∈ form_submitted|contact_created|etc., actions JSONB array.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          name: { type: "string" },
+          active: { type: "boolean" },
+          trigger_type: { type: "string" },
+          trigger_config: { type: "object" },
+          action_count: { type: "integer" },
+          actions: { type: "array" },
+          created_at: { type: "string", format: "date-time" },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      ScoringRule: {
+        type: "object",
+        description: "Regola di scoring: assegna punti quando un evento matcha event_filter.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          name: { type: "string" },
+          event_type: { type: "string" },
+          event_filter: { type: "object" },
+          points: { type: "integer" },
+          enabled: { type: "boolean" },
+          created_at: { type: "string", format: "date-time" },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      ScoringThreshold: {
+        type: "object",
+        description: "Soglia di scoring: esegue un'azione quando il punteggio raggiunge min_score.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          min_score: { type: "integer" },
+          action_type: { type: "string", enum: ["set_stage", "add_tag", "notify_email"] },
+          action_config: { type: "object" },
+          enabled: { type: "boolean" },
+          created_at: { type: "string", format: "date-time" },
         },
       },
     },
@@ -897,6 +960,159 @@ function buildPaths() {
       tags: ["Capabilities"], summary: "Registry delle capability (agent-first)",
       security: tenantSec(),
       responses: jsonResponse(200, { capabilities: { type: "array", items: { type: "object" } } }),
+    },
+  };
+
+  // ── Segmenti (CRM agent) ──────────────────────────────────────────────
+  base["/segments"] = {
+    get: {
+      tags: ["Segmenti"], summary: "Lista segmenti del tenant",
+      description: "Segmenti dinamici con conteggio membri (LEFT JOIN segment_members).",
+      security: tenantSec(), responses: jsonList("segments", "Segment", "Segmenti del tenant"),
+    },
+    post: {
+      tags: ["Segmenti"], summary: "Crea un segmento dinamico",
+      requestBody: jsonBody({ type: "object", required: ["name"], properties: { name: { type: "string" }, description: { type: "string" }, rules: { type: "array" }, match_mode: { type: "string", enum: ["all", "any"] } } }),
+      responses: jsonCreated("segment", "Segment"),
+    },
+  };
+  base["/segments/preview"] = {
+    post: {
+      tags: ["Segmenti"], summary: "Anteprima segmento (senza salvare)",
+      description: "Valuta le rules contro i contatti conosciuti e restituisce { total, sample }.",
+      requestBody: jsonBody({ type: "object", properties: { rules: { type: "array" }, match_mode: { type: "string", enum: ["all", "any"] } } }),
+      security: tenantSec(),
+      responses: jsonResponse(200, { total: { type: "integer" }, sample: { type: "array", items: { type: "string" } } }),
+    },
+  };
+  base["/segments/{id}"] = {
+    get: {
+      tags: ["Segmenti"], summary: "Dettaglio segmento",
+      parameters: [pathId()], security: tenantSec(), responses: jsonResource("segment", "Segment"),
+    },
+    put: {
+      tags: ["Segmenti"], summary: "Aggiorna un segmento",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { name: { type: "string" }, description: { type: "string" }, rules: { type: "array" }, match_mode: { type: "string" }, enabled: { type: "boolean" } } }),
+      responses: jsonResource("segment", "Segment"),
+    },
+    delete: {
+      tags: ["Segmenti"], summary: "Elimina segmento",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
+    },
+  };
+  base["/segments/{id}/members"] = {
+    get: {
+      tags: ["Segmenti"], summary: "Membri del segmento (paginati)",
+      parameters: [pathId(), { name: "limit", in: "query", schema: { type: "integer" } }, { name: "offset", in: "query", schema: { type: "integer" } }],
+      security: tenantSec(),
+      responses: jsonResponse(200, { members: { type: "array", items: { type: "object" } }, total: { type: "integer" } }),
+    },
+  };
+  base["/segments/{id}/recount"] = {
+    post: {
+      tags: ["Segmenti"], summary: "Ricalcola membership del segmento",
+      description: "Rivaluta TUTTI i contatti del sito contro il segmento e aggiorna segment_members.",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResponse(200, { total: { type: "integer" } }),
+    },
+  };
+
+  // ── Workflows (CRM agent) ────────────────────────────────────────────
+  base["/workflows"] = {
+    get: {
+      tags: ["Workflows"], summary: "Lista workflow del tenant",
+      description: "Con conteggio azioni (LEFT JOIN workflow_actions).",
+      security: tenantSec(), responses: jsonList("workflows", "Workflow", "Workflow del tenant"),
+    },
+    post: {
+      tags: ["Workflows"], summary: "Crea un workflow",
+      description: "Il body include trigger_type, trigger_config, e actions array.",
+      requestBody: jsonBody({ type: "object", required: ["name", "trigger_type"], properties: { name: { type: "string" }, active: { type: "boolean" }, trigger_type: { type: "string" }, trigger_config: { type: "object" }, actions: { type: "array" } } }),
+      responses: jsonCreated("workflow", "Workflow"),
+    },
+  };
+  base["/workflows/{id}"] = {
+    get: {
+      tags: ["Workflows"], summary: "Dettaglio workflow con actions",
+      parameters: [pathId()], security: tenantSec(), responses: jsonResource("workflow", "Workflow"),
+    },
+    put: {
+      tags: ["Workflows"], summary: "Aggiorna un workflow",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { name: { type: "string" }, active: { type: "boolean" }, trigger_type: { type: "string" }, trigger_config: { type: "object" }, actions: { type: "array" } } }),
+      responses: jsonResource("workflow", "Workflow"),
+    },
+    delete: {
+      tags: ["Workflows"], summary: "Elimina workflow",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
+    },
+  };
+  base["/workflows/{id}/runs"] = {
+    get: {
+      tags: ["Workflows"], summary: "Storico esecuzioni workflow",
+      description: "Elenco delle esecuzioni del workflow, ordinate dalla più recente.",
+      parameters: [pathId(), { name: "limit", in: "query", schema: { type: "integer" }, description: "Max righe (default 50, max 200)" }],
+      security: tenantSec(),
+      responses: jsonResponse(200, { runs: { type: "array", items: { type: "object" } } }),
+    },
+  };
+  base["/workflows/{id}/test"] = {
+    post: {
+      tags: ["Workflows"], summary: "Testa un workflow su un contatto",
+      description: "Esegue il workflow su un email specifico. Non persistente (simulazione).",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", required: ["email"], properties: { email: { type: "string", format: "email" } } }),
+      responses: jsonResponse(200, { }),
+    },
+  };
+
+  // ── Scoring (CRM agent) ──────────────────────────────────────────────
+  base["/scoring-rules"] = {
+    get: {
+      tags: ["Scoring"], summary: "Lista regole di scoring del tenant",
+      description: "Regole ordinate per punti decrescenti.",
+      security: tenantSec(), responses: jsonList("rules", "ScoringRule", "Regole di scoring"),
+    },
+    post: {
+      tags: ["Scoring"], summary: "Crea una regola di scoring",
+      requestBody: jsonBody({ type: "object", required: ["name", "event_type"], properties: { name: { type: "string" }, event_type: { type: "string" }, event_filter: { type: "object" }, points: { type: "integer" }, enabled: { type: "boolean" } } }),
+      responses: jsonCreated("rule", "ScoringRule"),
+    },
+  };
+  base["/scoring-rules/{id}"] = {
+    get: {
+      tags: ["Scoring"], summary: "Dettaglio regola di scoring",
+      parameters: [pathId()], security: tenantSec(), responses: jsonResource("rule", "ScoringRule"),
+    },
+    put: {
+      tags: ["Scoring"], summary: "Aggiorna una regola di scoring",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { name: { type: "string" }, event_type: { type: "string" }, event_filter: { type: "object" }, points: { type: "integer" }, enabled: { type: "boolean" } } }),
+      responses: jsonResource("rule", "ScoringRule"),
+    },
+    delete: {
+      tags: ["Scoring"], summary: "Elimina una regola di scoring",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
+    },
+  };
+  base["/scoring-thresholds"] = {
+    get: {
+      tags: ["Scoring"], summary: "Lista soglie di scoring del tenant",
+      description: "Soglie ordinate per min_score crescente.",
+      security: tenantSec(), responses: jsonList("thresholds", "ScoringThreshold", "Soglie di scoring"),
+    },
+    post: {
+      tags: ["Scoring"], summary: "Crea una soglia di scoring",
+      description: "Alla prima soglia superata esegue l'azione configurata (set_stage|add_tag|notify_email).",
+      requestBody: jsonBody({ type: "object", required: ["min_score"], properties: { min_score: { type: "integer" }, action_type: { type: "string", enum: ["set_stage", "add_tag", "notify_email"] }, action_config: { type: "object" }, enabled: { type: "boolean" } } }),
+      responses: jsonCreated("threshold", "ScoringThreshold"),
+    },
+  };
+  base["/scoring-thresholds/{id}"] = {
+    delete: {
+      tags: ["Scoring"], summary: "Elimina una soglia di scoring",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
     },
   };
 

@@ -52,6 +52,13 @@ import {
   createConfig as createReportConfig, updateConfig as updateReportConfig,
   deleteConfig as deleteReportConfig, generateReport, listRuns,
 } from "../services/reports.js";
+import {
+  sanitizeSegmentRules, listSegmentMembers, recountSegment, previewSegment,
+} from "../services/segments.js";
+import { sanitizeWorkflow, testWorkflow } from "../services/workflows.js";
+import {
+  sanitizeScoringRule, sanitizeScoringThreshold,
+} from "../services/scoring.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Helper CSV (export ONDA 3). Genera un documento CSV testuale con header,
@@ -933,6 +940,366 @@ router.get("/quotes/:id/pdf", async (req, res, next) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="preventivo-${quote.quote_number}.pdf"`);
     doc.pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// CRM agent features su /v1: Segmenti, Workflow, Scoring
+// Route statiche PRIMA delle parametriche (/segments/preview prima di /:id)
+// ─────────────────────────────────────────────────────────────────────────
+
+// ── Segmenti ──────────────────────────────────────────────────────────
+// Route statica preview PRIMA di /:id
+
+router.get("/segments", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const segments = (await query(
+      `SELECT s.*, COUNT(m.email)::int AS members
+       FROM segments s LEFT JOIN segment_members m ON m.segment_id = s.id
+       WHERE s.site_id = $1 GROUP BY s.id ORDER BY s.name`,
+      [siteId]
+    )).rows;
+    res.json({ segments });
+  } catch (err) { next(err); }
+});
+
+router.post("/segments", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const name = String((req.body || {}).name || "").trim().slice(0, 255);
+    if (!name) return res.status(400).json({ error: "Nome segmento obbligatorio" });
+    const rules = sanitizeSegmentRules(req.body.rules);
+    const matchMode = req.body.match_mode === "any" ? "any" : "all";
+    const description = String(req.body.description || "").slice(0, 2000);
+    const enabled = req.body.enabled !== false;
+    try {
+      const result = await query(
+        `INSERT INTO segments (site_id, name, description, rules, match_mode, enabled)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [siteId, name, description, JSON.stringify(rules), matchMode, enabled]
+      );
+      res.status(201).json({ segment: result.rows[0] });
+    } catch (err) {
+      if (err.code === "23505") return res.status(409).json({ error: "Segmento con questo nome già esistente" });
+      throw err;
+    }
+  } catch (err) { next(err); }
+});
+
+router.get("/segments/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const segment = (await query(
+      `SELECT s.*, COUNT(m.email)::int AS members
+       FROM segments s LEFT JOIN segment_members m ON m.segment_id = s.id
+       WHERE s.id = $1 AND s.site_id = $2 GROUP BY s.id`,
+      [id, siteId]
+    )).rows[0];
+    if (!segment) return res.status(404).json({ error: "Segmento non trovato" });
+    res.json({ segment });
+  } catch (err) { next(err); }
+});
+
+router.put("/segments/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const b = req.body || {};
+    const current = (await query("SELECT * FROM segments WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!current) return res.status(404).json({ error: "Segmento non trovato" });
+    const name = b.name !== undefined ? String(b.name).trim().slice(0, 255) : current.name;
+    const rules = b.rules !== undefined ? sanitizeSegmentRules(b.rules) : current.rules;
+    const matchMode = b.match_mode !== undefined ? (b.match_mode === "any" ? "any" : "all") : current.match_mode;
+    const description = b.description !== undefined ? String(b.description).slice(0, 2000) : current.description;
+    const enabled = b.enabled !== undefined ? !!b.enabled : current.enabled;
+    if (!name) return res.status(400).json({ error: "Nome obbligatorio" });
+    try {
+      await query(
+        `UPDATE segments SET name = $1, description = $2, rules = $3, match_mode = $4, enabled = $5, updated_at = NOW()
+         WHERE id = $6 AND site_id = $7`,
+        [name, description, JSON.stringify(rules), matchMode, enabled, id, siteId]
+      );
+    } catch (err) {
+      if (err.code === "23505") return res.status(409).json({ error: "Segmento con questo nome già esistente" });
+      throw err;
+    }
+    const row = (await query("SELECT * FROM segments WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    res.json({ segment: row });
+  } catch (err) { next(err); }
+});
+
+router.delete("/segments/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const result = await query("DELETE FROM segments WHERE id = $1 AND site_id = $2", [id, siteId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Segmento non trovato" });
+    res.json({ deleted: true, id });
+  } catch (err) { next(err); }
+});
+
+router.get("/segments/:id/members", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const segment = (await query("SELECT id FROM segments WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!segment) return res.status(404).json({ error: "Segmento non trovato" });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const result = await listSegmentMembers(siteId, id, { limit, offset });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.post("/segments/:id/recount", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const segment = (await query("SELECT id FROM segments WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!segment) return res.status(404).json({ error: "Segmento non trovato" });
+    const result = await recountSegment(siteId, id);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+router.post("/segments/preview", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.body || {};
+    const rules = sanitizeSegmentRules(b.rules);
+    const matchMode = b.match_mode === "any" ? "any" : "all";
+    const result = await previewSegment(siteId, rules, matchMode);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ── Workflow ──────────────────────────────────────────────────────────
+
+router.get("/workflows", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const workflows = (await query(
+      `SELECT w.*, COUNT(a.id)::int AS action_count
+       FROM workflows w LEFT JOIN workflow_actions a ON a.workflow_id = w.id
+       WHERE w.site_id = $1 GROUP BY w.id ORDER BY w.name`,
+      [siteId]
+    )).rows;
+    res.json({ workflows });
+  } catch (err) { next(err); }
+});
+
+router.post("/workflows", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const clean = sanitizeWorkflow(req.body);
+    if (!clean || !clean.name) return res.status(400).json({ error: "Nome e trigger_type obbligatori" });
+    const wfResult = await query(
+      `INSERT INTO workflows (site_id, name, active, trigger_type, trigger_config)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [siteId, clean.name, clean.active, clean.trigger_type, JSON.stringify(clean.trigger_config)]
+    );
+    const workflow = wfResult.rows[0];
+    const actions = [];
+    for (const action of clean.actions) {
+      const aResult = await query(
+        `INSERT INTO workflow_actions (workflow_id, action_order, action_type, action_config)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [workflow.id, action.action_order, action.action_type, JSON.stringify(action.action_config)]
+      );
+      actions.push(aResult.rows[0]);
+    }
+    res.status(201).json({ workflow: { ...workflow, actions } });
+  } catch (err) { next(err); }
+});
+
+router.get("/workflows/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const workflow = (await query("SELECT * FROM workflows WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!workflow) return res.status(404).json({ error: "Workflow non trovato" });
+    const actions = (await query(
+      "SELECT * FROM workflow_actions WHERE workflow_id = $1 ORDER BY action_order",
+      [id]
+    )).rows;
+    res.json({ workflow: { ...workflow, actions } });
+  } catch (err) { next(err); }
+});
+
+router.put("/workflows/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const b = req.body || {};
+    const current = (await query("SELECT * FROM workflows WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!current) return res.status(404).json({ error: "Workflow non trovato" });
+    const clean = sanitizeWorkflow({ ...b, name: b.name ?? current.name, trigger_type: b.trigger_type ?? current.trigger_type });
+    if (!clean) return res.status(400).json({ error: "trigger_type non valido" });
+    const name = b.name !== undefined ? String(b.name).trim().slice(0, 255) : current.name;
+    const active = b.active !== undefined ? !!b.active : current.active;
+    const triggerConfig = b.trigger_config !== undefined ? b.trigger_config : current.trigger_config;
+    await query(
+      `UPDATE workflows SET name = $1, active = $2, trigger_config = $3, trigger_type = $4, updated_at = NOW()
+       WHERE id = $5 AND site_id = $6`,
+      [name, active, JSON.stringify(triggerConfig), clean.trigger_type, id, siteId]
+    );
+    if (b.actions !== undefined) {
+      await query("DELETE FROM workflow_actions WHERE workflow_id = $1", [id]);
+      for (const action of clean.actions) {
+        await query(
+          `INSERT INTO workflow_actions (workflow_id, action_order, action_type, action_config)
+           VALUES ($1, $2, $3, $4)`,
+          [id, action.action_order, action.action_type, JSON.stringify(action.action_config)]
+        );
+      }
+    }
+    const row = (await query("SELECT * FROM workflows WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    const actions = (await query(
+      "SELECT * FROM workflow_actions WHERE workflow_id = $1 ORDER BY action_order", [id]
+    )).rows;
+    res.json({ workflow: { ...row, actions } });
+  } catch (err) { next(err); }
+});
+
+router.delete("/workflows/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const result = await query("DELETE FROM workflows WHERE id = $1 AND site_id = $2", [id, siteId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Workflow non trovato" });
+    res.json({ deleted: true, id });
+  } catch (err) { next(err); }
+});
+
+router.get("/workflows/:id/runs", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const workflow = (await query("SELECT id FROM workflows WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!workflow) return res.status(404).json({ error: "Workflow non trovato" });
+    const runs = (await query(
+      `SELECT id, email, trigger_type, status, error, created_at FROM workflow_runs
+       WHERE workflow_id = $1 AND site_id = $2 ORDER BY created_at DESC LIMIT $3`,
+      [id, siteId, limit]
+    )).rows;
+    res.json({ runs });
+  } catch (err) { next(err); }
+});
+
+router.post("/workflows/:id/test", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const email = String((req.body || {}).email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Email non valida" });
+    const workflow = (await query("SELECT id FROM workflows WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!workflow) return res.status(404).json({ error: "Workflow non trovato" });
+    const result = await testWorkflow(siteId, id, email);
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+// ── Scoring ───────────────────────────────────────────────────────────
+
+router.get("/scoring-rules", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const rules = (await query("SELECT * FROM scoring_rules WHERE site_id = $1 ORDER BY points DESC", [siteId])).rows;
+    res.json({ rules });
+  } catch (err) { next(err); }
+});
+
+router.post("/scoring-rules", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const clean = sanitizeScoringRule(req.body);
+    if (!clean || !clean.name) return res.status(400).json({ error: "Nome e event_type obbligatori" });
+    const result = await query(
+      `INSERT INTO scoring_rules (site_id, name, event_type, event_filter, points, enabled)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [siteId, clean.name, clean.event_type, JSON.stringify(clean.event_filter), clean.points, clean.enabled]
+    );
+    res.status(201).json({ rule: result.rows[0] });
+  } catch (err) { next(err); }
+});
+
+router.get("/scoring-rules/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const rule = (await query("SELECT * FROM scoring_rules WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!rule) return res.status(404).json({ error: "Regola di scoring non trovata" });
+    res.json({ rule });
+  } catch (err) { next(err); }
+});
+
+router.put("/scoring-rules/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const b = req.body || {};
+    const current = (await query("SELECT * FROM scoring_rules WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    if (!current) return res.status(404).json({ error: "Regola di scoring non trovata" });
+    const name = b.name !== undefined ? String(b.name).trim().slice(0, 255) : current.name;
+    const points = b.points !== undefined ? (Number.isFinite(Number(b.points)) ? Number(b.points) : current.points) : current.points;
+    const enabled = b.enabled !== undefined ? !!b.enabled : current.enabled;
+    const eventFilter = b.event_filter !== undefined ? b.event_filter : current.event_filter;
+    await query(
+      `UPDATE scoring_rules SET name = $1, points = $2, enabled = $3, event_filter = $4 WHERE id = $5 AND site_id = $6`,
+      [name, points, enabled, JSON.stringify(eventFilter), id, siteId]
+    );
+    const row = (await query("SELECT * FROM scoring_rules WHERE id = $1 AND site_id = $2", [id, siteId])).rows[0];
+    res.json({ rule: row });
+  } catch (err) { next(err); }
+});
+
+router.delete("/scoring-rules/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const result = await query("DELETE FROM scoring_rules WHERE id = $1 AND site_id = $2", [id, siteId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Regola di scoring non trovata" });
+    res.json({ deleted: true, id });
+  } catch (err) { next(err); }
+});
+
+router.get("/scoring-thresholds", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const thresholds = (await query("SELECT * FROM scoring_thresholds WHERE site_id = $1 ORDER BY min_score", [siteId])).rows;
+    res.json({ thresholds });
+  } catch (err) { next(err); }
+});
+
+router.post("/scoring-thresholds", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const clean = sanitizeScoringThreshold(req.body);
+    if (!clean) return res.status(400).json({ error: "min_score obbligatorio" });
+    try {
+      const result = await query(
+        `INSERT INTO scoring_thresholds (site_id, min_score, action_type, action_config, enabled)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [siteId, clean.min_score, clean.action_type, JSON.stringify(clean.action_config), clean.enabled]
+      );
+      res.status(201).json({ threshold: result.rows[0] });
+    } catch (err) {
+      if (err.code === "23505") return res.status(409).json({ error: "Soglia per questo min_score già esistente" });
+      throw err;
+    }
+  } catch (err) { next(err); }
+});
+
+router.delete("/scoring-thresholds/:id", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const id = parseInt(req.params.id, 10);
+    const result = await query("DELETE FROM scoring_thresholds WHERE id = $1 AND site_id = $2", [id, siteId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Soglia di scoring non trovata" });
+    res.json({ deleted: true, id });
   } catch (err) { next(err); }
 });
 
