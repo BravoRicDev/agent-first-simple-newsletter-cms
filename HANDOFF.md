@@ -6,36 +6,36 @@ riparte esattamente da qui.
 ## FASE CORRENTE
 - **LEADER+QUALITY CRON (21/08/2026) — PLANNING ONDA 3 (continuazione)**:
   - Working tree pulita dopo commit.
-  - **COSTRUITO**: completati i ritardi del planning Onda 3: stats sequenze
-    email (`/v1/email-stats/sequences` + `/:id`), `PUT /v1/contacts/:id/tags`
-    (replace completo), `DELETE /v1/contacts/:id/tasks/:taskId`, e import tool
-    collegato a un endpoint `POST /v1/import` (+ storico `/v1/import/jobs`).
-    Con test HTTP e documentazione OpenAPI.
+  - **COSTRUITO**: completato il primo "prossimo blocco" suggerito: export CSV +
+    filtri temporali + paginazione a cursore su Attività e Statistiche email.
   - claude-code non disponibile (non autenticato al login) → fallback su
     DeepSeek (tools agente) con lo stesso task ampio, come da AGENTS.md.
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **PLANNING ONDA 3 — ritardi chiusi** (blocco sostanziale):
-   - `src/services/newsletter-stats.js`: nuovo `listEmailStatsSequences(siteId)`
-     (elenco sequenze per-tenant con passi/invii/aperture/click/rate).
-     `getEmailStatsSequence(siteId, sequenceId)` era già pronto e ora esposto.
-   - `src/services/contacts-v1.js`: nuovo `setContactTags(siteId, contactId, tags)`
-     per la sostituzione COMPLETA dei tags (PUT replace).
-   - `src/routes/v1.js` (tutte dietro requireTenant, per-tenant):
-     - `GET /email-stats/sequences` e `GET /email-stats/sequences/:id`.
-     - `PUT /contacts/:id/tags` (replace tags).
-     - `DELETE /contacts/:id/tasks/:taskId` (verifica contatto + task, poi delete).
-     - `POST /import` (bulk upsert contatti+task via importCrmData),
-       `GET /import/jobs` (storico job), `GET /import/jobs/:id`.
-   - `src/openapi.js`: documentate sequences stats, PUT tags, DELETE task e
-     sezione Import (POST /v1/import + jobs).
-   - Test nuovi `test/v1-planning-onda3.test.js` (9) — HTTP con auth Bearer
-     per-sito, tutti passano.
+1. **PLANNING ONDA 3 — export CSV + filtri temporali + cursor pagination**
+   (blocco sostanziale, primo "prossimo blocco" suggerito dal run precedente):
+   - `src/routes/v1.js`:
+     - Nuovo helper `toCsv(rows, columns)` (esportato): genera un documento
+       CSV con header, escape di quote/virgole/a-capo, separatore `,`.
+     - `fetchActivities` ora supporta `from`/`to` (range su created_at),
+       `cursor` (paginazione keyset su id DESC, più efficiente dell'offset)
+       e ritorna anche `nextCursor` (ultima id se c'è una pagina successiva).
+     - `GET /v1/activities`: passa i nuovi filtri; con `?format=csv` restituisce
+       `text/csv` con download header. Alias `startDate`/`endDate` per from/to.
+     - `GET /v1/email-stats/campaigns` e `GET /v1/email-stats/sequences`:
+       con `?format=csv` restituiscono il documento CSV (text/csv).
+   - `src/openapi.js`: documentati i nuovi parametri (from, to, cursor, format)
+     e `nextCursor` per /v1/activities; nota format=csv su campaigns/sequences.
+   - Test nuovi `test/v1-csv-export.test.js` (11): paginazione a cursore senza
+     duplicati tra pagine, filtri eventType/email/from, export CSV (header +
+     conteggio righe) per activities/campaigns/sequences, 401 senza auth,
+     unit test su toCsv (escape). Tutti passano.
 
-2. **Verifica regressioni**: v1-email-stats (service+http), v1-openapi,
-   onda1-contacts, import-crm-tool, f0-foundations — tutti ✅.
-   Totale verificato in questo run: 9 nuovi + 34 esistenti = 43 test, 0 fail.
+2. **Verifica regressioni**: v1-email-stats-http, v1-openapi,
+   v1-planning-onda3, v1-activities (23 test) + f0-foundations +
+   onda1-webhook-out (10 test) — tutti ✅. Totale verificato in questo run:
+   11 nuovi + 33 esistenti = 44 test, 0 fail.
 
 ## MONITORAGGIO (POLISH cron, run precedente)
 - RIESEGUITA l'intera suite a gruppi isolati via `./scripts/test.sh <file>`:
@@ -97,26 +97,26 @@ riparte esattamente da qui.
 - Nessun fix strutturale eseguito (solo verifica full-suite). Working tree rimasta pulita.
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ **9 nuovi test planning Onda 3** (`v1-planning-onda3.test.js`), tutti passano
-  (sequences stats, PUT tags replace, DELETE task, import + jobs)
-- ✅ **Nessuna regressione**: v1-email-stats (service+http), v1-openapi,
-  onda1-contacts, import-crm-tool, f0-foundations — 34/34 pass
-- ✅ **Sintassi OK**: `node --check` su src/routes/v1.js, src/openapi.js,
-  src/services/newsletter-stats.js, src/services/contacts-v1.js e sul test
-- ✅ **OpenAPI aggiornato**: sequences stats, PUT /contacts/:id/tags,
-  DELETE /contacts/:id/tasks/:taskId, sezione Import (POST /v1/import + jobs)
+- ✅ **11 nuovi test CSV** (`test/v1-csv-export.test.js`), tutti passano
+  (cursor pagination, filtri from/to/eventType/email, export CSV per
+  activities/campaigns/sequences/filtered, 401 senza auth, unit toCsv)
+- ✅ **Nessuna regressione**: v1-email-stats-http, v1-openapi,
+  v1-planning-onda3, v1-activities, f0-foundations, onda1-webhook-out —
+  33/33 pass
+- ✅ **Sintassi OK**: `node --check` su src/routes/v1.js, src/openapi.js e sul
+  test v1-csv-export.test.js
+- ✅ **OpenAPI aggiornato**: from/to/cursor/format su /v1/activities,
+  format=csv su /v1/email-stats/campaigns e /sequences
 - ✅ **Nessun segreto versionato**, nessun riferimento CRM-specifico
-- ✅ **Nessuna migrazione SQL nuova** necessaria (tabelle già esistenti)
+- ✅ **Nessuna migrazione SQL nuova** necessaria (niente cambi di schema)
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **Onda 3 planning (ultimi ritardi)**:
-   - `GET /v1/email-stats/sequences` ora coperto. Restano possibili rifiniture:
-     filtri query su `/v1/activities` (date range, paginazione cursor) e
-     export CSV delle statistiche (`GET /v1/email-stats.csv` o export attività).
-   - Import avanzato: accettare file CSV/JSON su `/v1/import` (multipart) oltre
-     al body JSON attuale, con validazione errori per-riga.
-2. **Oppure**: ONDA 4 tuning (webhook out più eventi, es. contact_updated,
-   opportunity_stage_changed) o attesa input umano per priorità.
+1. **Onda 3 planning (ultimo ritardo)**: import avanzato su `/v1/import` —
+   accettare file CSV/JSON (multipart o text/csv) oltre al body JSON attuale,
+   con validazione errori per-riga e report dettagliato per-jobs.
+2. **Oppure**: ONDA 4 tuning — webhook out su più eventi già presenti
+   (opportunity_stage/status_changed, contact_updated, quote_*); eventuale
+   arricchimento payload o nuovi trigger. Attendere input umano per priorità.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
