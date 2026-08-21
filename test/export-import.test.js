@@ -105,7 +105,7 @@ describe("crm: export/import completo", () => {
     assert.equal(body.imported, 2);
     assert.equal(body.skipped, 1);
     assert.ok(body.job_id);
-    assert.deepEqual(body.errors, [{ row: 2, error: "email mancante o non valida" }]);
+    assert.deepEqual(body.errors, [{ row: 2, line: 3, error: "email mancante o non valida" }]);
 
     const jobRow = (await query("SELECT * FROM import_jobs WHERE id = $1", [body.job_id])).rows[0];
     assert.ok(jobRow);

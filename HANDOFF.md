@@ -1,149 +1,95 @@
-# HANDOFF — passaggio di consegna
-
-File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
-riparte esattamente da qui.
-
-## FASE CORRENTE
-- **LEADER+QUALITY CRON (21/08/2026) — PLANNING ONDA 3 (continuazione)**:
-  - Working tree pulita dopo commit.
-  - **COSTRUITO**: completato il primo "prossimo blocco" suggerito: export CSV +
-    filtri temporali + paginazione a cursore su Attività e Statistiche email.
-  - claude-code non disponibile (non autenticato al login) → fallback su
-    DeepSeek (tools agente) con lo stesso task ampio, come da AGENTS.md.
-
-## COSTRUITO IN QUESTO RUN
-
-1. **PLANNING ONDA 3 — export CSV + filtri temporali + cursor pagination**
-   (blocco sostanziale, primo "prossimo blocco" suggerito dal run precedente):
-   - `src/routes/v1.js`:
-     - Nuovo helper `toCsv(rows, columns)` (esportato): genera un documento
-       CSV con header, escape di quote/virgole/a-capo, separatore `,`.
-     - `fetchActivities` ora supporta `from`/`to` (range su created_at),
-       `cursor` (paginazione keyset su id DESC, più efficiente dell'offset)
-       e ritorna anche `nextCursor` (ultima id se c'è una pagina successiva).
-     - `GET /v1/activities`: passa i nuovi filtri; con `?format=csv` restituisce
-       `text/csv` con download header. Alias `startDate`/`endDate` per from/to.
-     - `GET /v1/email-stats/campaigns` e `GET /v1/email-stats/sequences`:
-       con `?format=csv` restituiscono il documento CSV (text/csv).
-   - `src/openapi.js`: documentati i nuovi parametri (from, to, cursor, format)
-     e `nextCursor` per /v1/activities; nota format=csv su campaigns/sequences.
-   - Test nuovi `test/v1-csv-export.test.js` (11): paginazione a cursore senza
-     duplicati tra pagine, filtri eventType/email/from, export CSV (header +
-     conteggio righe) per activities/campaigns/sequences, 401 senza auth,
-     unit test su toCsv (escape). Tutti passano.
-
-2. **Verifica regressioni**: v1-email-stats-http, v1-openapi,
-   v1-planning-onda3, v1-activities (23 test) + f0-foundations +
-   onda1-webhook-out (10 test) — tutti ✅. Totale verificato in questo run:
-   11 nuovi + 33 esistenti = 44 test, 0 fail.
-
-## MONITORAGGIO (POLISH cron, run precedente)
-- RIESEGUITA l'intera suite a gruppi isolati via `./scripts/test.sh <file>`:
-  tutti i ~70 file passano, 0 fail, unica eccezione newsletter (6 skip attesi).
-- Working tree pulita, repo libero, nessun segreto, nessun nome CRM-specifico.
-- Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
-
-## MONITORAGGIO (POLISH cron, 21/08/2026 run attuale)
-- Repo LIBERO all'inizio run (nessun processo dev, nessun index.lock, working tree pulita).
-- RIESEGUITI i test a gruppi isolati via `./scripts/test.sh <file>` — esito per file:
-  - `v1-activities.test.js` + `v1-activities-http.test.js`: 7/7 pass
-  - `v1-email-stats.test.js` + `v1-email-stats-http.test.js`: 8/8 pass
-  - `v1-reports.test.js` + `v1-reports-http.test.js`: 17/17 pass
-  - `f0-foundations` + `onda1-contacts` + `onda1-opportunities-v1` + `onda1-opportunity-custom-fields`: 26/26 pass
-  - `v1-dashboard-funnel` + `v1-openapi` + `f0-location-mapping`: 21/21 pass
-  - `onda1-webhook-out`: 1/1 pass
-  - `newsletter-bounce` + `newsletter-engagement`: 25/25 pass
-  - Totale rieseguito in questo run: 105 test, 0 fail, 0 skip.
-- `node --check` su tutti i file: SRC SINTASSI OK. `node --check` file test ok.
-- `.env.example` allineato (DATABASE_URL, JWT_SECRET, vars richieste presenti).
-- Nessun fix strutturale necessario (solo verifica, nessun errore banale riscontrato).
-- Nessun segreto versionato, nessun nome CRM-specifico.
-- Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
-- Nessun commit/push eseguito (working tree rimasta pulita).
-
-## MONITORAGGIO (POLISH cron, 21/08/2026 — full suite)
-- Repo LIBERO all'inizio run (nessun processo claude/codex/opencode, nessun
-  index.lock, working tree pulita), confermato anche a fine lavoro.
-- RIESEGUITA la suite COMPLETA (tutti i file .test.js, ~80, via
-  `./scripts/test.sh <gruppi di file>` in gruppi isolati): **621 pass, 6 skip
-  (newsletter attesi), 0 fail**. Esito per gruppo:
-  - v1-planning-onda3: 9/9
-  - v1-activities (+http) + v1-email-stats (+http): 15/15
-  - v1-reports (+http) + v1-dashboard-funnel (+http): 31/31
-  - v1-openapi + f0-foundations + f0-location-mapping + onda1-contacts: 31/31
-  - onda1-opportunities-v1 + opportunity-custom-fields + webhook-out + import-crm-tool: 14/14
-  - newsletter-bounce/engagement/complaints/verification/base-url: 64 pass, 6 skip (attesi)
-  - onda2-booking (+public/calendar/webhook-e2e): 26/26
-  - onda2-conversations-v1 + runtime-events + runtime-event-flow + v1-payments + v1-rate-limit: 49/49
-  - crm-suite/opportunities/opportunity-board/webhooks/pipeline/api-tokens: 45/45
-  - crm-conversations/segments/workflows + contacts/calls/call-reminders: 35/35
-  - rbac/oauth/modules/settings/sites/export-import: 47/47
-  - forms-crm/multipart/redirect/tag + tracking/tracked-links: 37/37
-  - newsletter.test NON ESISTE; email-templates/calendar-sync/calendars/calendars-agent/recurring: 38/38
-  - dashboard/reports/media-protected/agent-runtime/agent-builder (+agent-helper/payments/webhooks/reports/sandbox/kb: file NON ESISTENTI): 38/38
-  - auth-rate-limit/backup-jobs/call-recordings/call-summaries/channel-limits/client-services/hitl/kb: 62/62
-  - newsletter-auto-confirm/payments/privacy/quizzes/public/route-order/sandbox/seo/suggestions/webhook-n8n-e2e: 80/80
-- `node --check` su TUTTI i file src e test: SINTASSI OK (0 errori).
-- Migrazione `./scripts/test.sh` (node db/migrate.js) su DB test (cms-test-pg,
-  Up 6 days): completata senza errori. Nessuna migrazione pendente.
-- Nota numerazione migrazioni: salta `080` (presenti 079 e 081). NON è un
-  problema: migrate.js applica i file per ordinamento filename, quindi 081 viene
-  eseguito regolarmente dopo 079. Nessun fix necessario.
-- `.env.example` ben formattato (60 righe, DB/payments/cloudflare/social
-  presenti), nessun segreto reale versionato.
-- Nessun .env/secret untracked; occorrenze regex `postgres://` in
-  backup.js/calls.test.js sono solo commenti con placeholder (*** ) — nessun
-  segreto reale.
-- Nessun fix strutturale eseguito (solo verifica full-suite). Working tree rimasta pulita.
-
-## PUNTI DI VERIFICA (questo run)
-- ✅ **11 nuovi test CSV** (`test/v1-csv-export.test.js`), tutti passano
-  (cursor pagination, filtri from/to/eventType/email, export CSV per
-  activities/campaigns/sequences/filtered, 401 senza auth, unit toCsv)
-- ✅ **Nessuna regressione**: v1-email-stats-http, v1-openapi,
-  v1-planning-onda3, v1-activities, f0-foundations, onda1-webhook-out —
-  33/33 pass
-- ✅ **Sintassi OK**: `node --check` su src/routes/v1.js, src/openapi.js e sul
-  test v1-csv-export.test.js
-- ✅ **OpenAPI aggiornato**: from/to/cursor/format su /v1/activities,
-  format=csv su /v1/email-stats/campaigns e /sequences
-- ✅ **Nessun segreto versionato**, nessun riferimento CRM-specifico
-- ✅ **Nessuna migrazione SQL nuova** necessaria (niente cambi di schema)
-
-## MONITORAGGIO (POLISH cron, 21/08/2026 — run completo)
-- Repo LIBERO all'inizio del run (nessun processo claude/codex/opencode, nessun
-  index.lock, working tree pulita), confermato anche a fine lavoro.
-- RIESEGUITA l'intera suite (81 file .test.js) in gruppi isolati via
-  `./scripts/test.sh <file...>` per evitare il timeout noto sul DB. Esito
-  TOTALE: **568 pass, 6 skip (newsletter attesi), 0 fail**.
-- `node --check` su tutti i file in src+test: SINTASSI OK (nessun output errore).
-- `.env.example` riletto riga-per-riga: RISULTATO ALLINEATO (DATABASE_URL,
-  JWT_SECRET e tutte le vars presenti). La precedente "concatenaione" era solo
-  un artefatto di rendering del terminale, non un problema reale.
-- `cms-test-pg` container attivo (Up 6 days).
-- Nessun fix strutturale necessario: solo verifica, nessun errore banale
-  riscontrato, nessun segreto versionato (match `postgres://` solo in commenti
-  con placeholder ***), nessun nome CRM-specifico in src.
-- Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
-- Nessun commit/push eseguito (working tree rimasta pulita).
-
-## PROSSIMO BLOCCO CONSIGLIATO
-1. **Onda 3 planning (ultimo ritardo)**: import avanzato su `/v1/import` —
-   accettare file CSV/JSON (multipart o text/csv) oltre al body JSON attuale,
-   con validazione errori per-riga e report dettagliato per-jobs.
-2. **Oppure**: ONDA 4 tuning — webhook out su più eventi già presenti
-   (opportunity_stage/status_changed, contact_updated, quote_*); eventuale
-   arricchimento payload o nuovi trigger. Attendere input umano per priorità.
-
-## COSE GIÀ PRONTE
-- Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
-- ONDA 2 Phase 1-5 (booking, calendar sync, public page, payments, conversations).
-- ONDA 2 Phase 6 (event-driven agent conversation triggers).
-- ONDA 3: Dashboard/Funnel (run precedente) + Analitica & Reporting (questo run).
-
-## COSE DA NON FARE
-- NON pushare su GitHub (nessun remote). Solo commit locali.
-- NON usare il nome del CRM di origine nel codice/docs/README.
-- NON risolvere decisioni [APERTA] — spettano all'umano.
-- NON riportare custom fields opportunità in `contact_custom_values` (FK su
-  contacts): usare SEMPRE `opportunity_custom_values` (076).
+1|# HANDOFF — passaggio di consegna
+2|
+3|File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
+4|riparte esattamente da qui.
+5|
+6|## FASE CORRENTE
+7|- **LEADER+QUALITY CRON (21/08/2026) — PLANNING ONDA 3 (continuazione)**:
+8|  - Working tree pulita dopo commit.
+9|  - **COSTRUITO**: Import avanzato su `/v1/import`: file CSV/JSON via multipart
+10|    (`campo file`) o body `text/csv` grezzo, oltre al body JSON backward-compat.
+11|    Ogni job registra filename, ogni errore riporta il numero di riga fisica.
+12|  - claude-code non disponibile (non autenticato) → fallback su DeepSeek (tools
+13|    agente) con lo stesso task ampio, come da AGENTS.md.
+14|
+15|## COSTRUITO IN QUESTO RUN
+16|
+17|1. **PLANNING ONDA 3 — import avanzato /v1/import (file CSV/JSON + text/csv)**:
+18|   - `src/services/csv.js`: Nuova funzione `parseCsv(text, {hasHeader, maxRows})` —
+19|     parser CSV robusto con quote/doppie quote/embedded newline/filtro righe vuote.
+20|   - `src/services/export-import.js`:
+21|     - `importContactRows` e `importTaskRows` ora accettano `lineOffset` e
+22|       producono errori con `{row, line, error}` per report per-riga.
+23|     - `insertImportJob` accetta e registra `filename` (non più vuoto).
+24|     - `importContacts`, `importCrmData`: passano `filename` e `lineOffset`.
+25|     - Nuova `importFromFile(siteId, {filename, text, created_by})` — deduce JSON
+26|       o CSV dall'estensione/contenuto, parsifica e importa contatti/task con
+27|       report completo. JSON non valido → job con errore (0 importati).
+28|   - `src/middleware/body-validate-v1.js`: ora permette `multipart/form-data` e
+29|     `text/csv` (non più 415 per la route /v1/import).
+30|   - `src/routes/v1.js`:
+31|     - aggiunto `multer` per upload multipart (`file` field, 10MB limite).
+32|     - aggiunto `express.text({type:["text/csv"]})` a livello router.
+33|     - Route `/v1/import` riscritta per gestire 3 varianti: JSON body, multipart
+34|       file (CSV o JSON), body text/csv raw.
+35|     - `readRawBody` helper (semplificato con express.text).
+36|   - `src/openapi.js`: /v1/import documenta ora i 3 content-type supportati e la
+37|     risposta comprehensive (job_id, imported, skipped, tasks_*, errors con line).
+38|   - `test/v1-import-file.test.js` (7 test nuovi): multipart CSV (2 buoni + valid
+39|     per-riga skipped con line number), JSON array, body text/csv, JSON malformato
+40|     (errore line 1), backward compat JSON body, GET /import/jobs con filename.
+41|
+42|2. **Fix correlati**:
+43|   - `test/export-import.test.js`: aggiornato `deepEqual` per includere `line`
+44|     (aggiunto dal nuovo formato errori).
+45|
+46|3. **Verifica regressioni**:
+47|   - New file test: 7/7 pass
+48|   - export-import: 8/8 pass
+49|   - v1-planning-onda3: 9/9 pass
+50|   - v1-csv-export: 11/11 pass
+51|   - f0-foundations + onda1-contacts + opportunities + custom-fields + webhook:
+52|     32/32 pass
+53|   - f0-location-mapping + v1-dashboard-funnel + v1-reports + v1-email-stats + http:
+54|     59/59 pass (10 suite)
+55|   - Totale verificato in questo run: 7 nuovi + 59 regressione = 66 test, 0 fail.
+56|
+57|## PUNTI DI VERIFICA (questo run)
+58|- ✅ **7 nuovi test import-file** (`test/v1-import-file.test.js`), tutti passano
+59|  (multipart CSV/JSON, text/csv, backward compat, errori con line number, filename
+60|  registrato, JSON malformato, GET jobs).
+61|- ✅ **Nessuna regressione**: 59 test esistenti in 10 suite, 0 fail.
+62|- ✅ **Sintassi OK**: `node --check` su csv.js, export-import.js, v1.js, openapi.js,
+63|  body-validate-v1.js, test file — tutti ok.
+64|- ✅ **OpenAPI aggiornato**: /v1/import tre content-type + risposta arricchita.
+65|- ✅ **Migrazioni SQL**: nessuna migrazione nuova necessaria (niente cambi di
+66|  schema — filename era già nel DB con default).
+67|- ✅ **Nessun segreto versionato**, nessun riferimento CRM-specifico.
+68|- ✅ **Nessuna decisione [APERTA]** in DECISIONI_UMANE.md.
+69|
+70|## PROSSIMO BLOCCO CONSIGLIATO
+71|1. **Onda 3 planning (ultimo ritardo dopo questo)**: import avanzato su
+72|   `/v1/import` — accettare file CSV/JSON (multipart o text/csv) oltre al body
+73|   JSON attuale, con validazione errori per-riga e report dettagliato per job.
+74|   **COMPLETATO in questo run — prossimo blocco**.
+75|2. **Oppure**: ONDA 4 tuning — webhook out su più eventi già presenti
+76|   (opportunity_stage/status_changed, contact_updated, quote_*); eventuale
+77|   arricchimento payload o nuovi trigger. Attendere input umano per priorità.
+78|3. **Review ROADMAP**: verificare se ONDA 3 planning è ora completo (import
+79|   file/CSV era l'ultima milestone delle activity/import/stat CSV) e se si passa
+80|   al backlog Onda 4.
+81|
+82|## COSE GIÀ PRONTE
+83|- Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
+84|- ONDA 2 Phase 1-5 (booking, calendar sync, public page, payments, conversations).
+85|- ONDA 2 Phase 6 (event-driven agent conversation triggers).
+86|- ONDA 3: Dashboard/Funnel + Analitica & Reporting + export CSV + import avanzato
+87|  (file CSV/JSON via multipart/text-csv). Planning Onda 3 **sostanzialmente**
+88|  **completo**.
+89|
+90|## COSE DA NON FARE
+91|- NON pushare su GitHub (nessun remote). Solo commit locali.
+92|- NON usare il nome del CRM di origine nel codice/docs/README.
+93|- NON risolvere decisioni [APERTA] — spettano all'umano.
+94|- NON riportare custom fields opportunità in `contact_custom_values` (FK su
+95|  contacts): usare SEMPRE `opportunity_custom_values` (076).

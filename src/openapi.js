@@ -1280,10 +1280,23 @@ function buildPaths() {
     post: {
       tags: ["Import"],
       summary: "Import collegate dati (contatti + task, upsert per email)",
-      description: "Esegue un bulk upsert per-tenant: i contatti vengono inseriti/aggiornati per email, le task collegate. Ritorna job_id e conteggi.",
+      description: "Esegue un bulk upsert per-tenant: i contatti vengono inseriti/aggiornati per email, le task collegate. Ritorna job_id e conteggi. Oltre al body JSON (contacts/tasks), accetta un file CSV o JSON via multipart/form-data (campo `file`) o un body text/csv (prima riga = colonne). Entry non valide sono saltate e riportate in `errors` con numero `line`.",
       security: tenantSec(),
-      requestBody: jsonBody({ type: "object", properties: { contacts: { type: "array" }, tasks: { type: "array" }, createdBy: { type: "string" }, created_by: { type: "string" } } }),
-      responses: jsonResponse(201, { job_id: { type: "integer" }, imported: { type: "integer" }, skipped: { type: "integer" } }),
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: { type: "object", properties: { contacts: { type: "array" }, tasks: { type: "array" }, createdBy: { type: "string" }, created_by: { type: "string" } } },
+          },
+          "multipart/form-data": {
+            schema: { type: "object", properties: { file: { type: "string", format: "binary" }, created_by: { type: "string" } } },
+          },
+          "text/csv": {
+            schema: { type: "string", description: "Contatti CSV (prima riga = colonne, es. email,tags,notes)" },
+          },
+        },
+      },
+      responses: jsonResponse(201, { job_id: { type: "integer" }, imported: { type: "integer" }, skipped: { type: "integer" }, tasks_imported: { type: "integer" }, tasks_skipped: { type: "integer" }, errors: { type: "array" } }),
     },
   };
   base["/v1/import/jobs"] = {

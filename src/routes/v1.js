@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { Router } from "express";
+import express from "express";
+import multer from "multer";
 import { query } from "../db.js";
 import { requireTenant } from "../middleware/tenant-api.js";
 import { v1RateLimiter } from "../middleware/rate-limit-v1.js";
@@ -39,7 +41,7 @@ import {
   getEmailStatsCampaign, getEmailStatsAggregate, listEmailStatsCampaigns,
   getEmailStatsSequence, listEmailStatsSequences,
 } from "../services/newsletter-stats.js";
-import { importCrmData, listImportJobs, getImportJob } from "../services/export-import.js";
+import { importCrmData, listImportJobs, getImportJob, importFromFile } from "../services/export-import.js";
 import {
   listConfigs as listReportConfigs, getConfig as getReportConfig,
   createConfig as createReportConfig, updateConfig as updateReportConfig,
@@ -82,7 +84,9 @@ const router = Router();
 router.use(openapiRouter);
 
 // Tutte le route API sotto passano da requireTenant() (tenancy + auth Bearer,
-// header Version ignorato).
+// header Version ignorato). Montiamo PRIMA un parser text/csv per supportare
+// /v1/import con body CSV grezzo (express.json non parsaa text/csv).
+router.use(express.text({ type: ["text/csv"], limit: "5mb" }));
 router.use(requireTenant());
 
 // Rate limiting + body validation per tutta la surface /v1
@@ -1295,12 +1299,61 @@ router.post("/reports/:id/run", async (req, res, next) => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // ONDA 2/3 — Import dati (bulk upsert) collegato al tool di import
-// POST /v1/import  → importCrmData (contatti + task upsert per email)
-// ─────────────────────────────────────────────────────────────────────────
+// POST /v1/import  → importCrmData (contatti + task upsert per email) o
+//                    importFromFile (upload CSV/JSON via multipart o body
+//                    text/csv). Fino a 10MB di file in memoria.
+// Varianti supportate:
+//   1) body JSON   { contacts: [...], tasks: [...], created_by }   (upsert)
+//   2) multipart/form-data  con campo `file` (CSV o JSON) + `created_by`
+//   3) body text/csv  → contatti, prima riga = colonne
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+}).single("file");
 
-router.post("/import", async (req, res, next) => {
+// Legge il body grezzo come stringa (per text/csv, che express.json non
+// parsa). Conciliando: multer.single consuma il body SOLO per multipart;
+// per gli altri content-type il stream resta leggibile qui.
+function readRawBody(req) {
+  return new Promise((resolve) => {
+    // express.text({type:"text/csv"}) setta req.body = stringa se content-type
+    // matching; per altri content-type il body è già stato parsato da express.json.
+    if (typeof req.body === "string") return resolve(req.body);
+    if (Buffer.isBuffer(req.body)) return resolve(req.body.toString("utf8"));
+    resolve("");
+  });
+}
+
+router.post("/import", importUpload, async (req, res, next) => {
   try {
     const { siteId } = req.tenant;
+    const contentType = (req.get("Content-Type") || "").toLowerCase();
+
+    // Caso multipart: file in req.file.buffer
+    if (req.file && req.file.buffer) {
+      const result = await importFromFile(siteId, {
+        filename: req.file.originalname || "upload.dat",
+        text: req.file.buffer.toString("utf8"),
+        created_by: (req.body && (req.body.created_by || req.body.createdBy)) || "",
+      });
+      res.status(201).json(result);
+      return;
+    }
+
+    // Caso text/csv o application/octet-stream da body grezzo: usiamo
+    // importFromFile che deduce la tipologia (estensioni/contenuto).
+    if (contentType.includes("text/csv")) {
+      const rawText = await readRawBody(req);
+      const result = await importFromFile(siteId, {
+        filename: req.query.filename || "import.csv",
+        text: rawText,
+        created_by: (req.body && (req.body.created_by || req.body.createdBy)) || "",
+      });
+      res.status(201).json(result);
+      return;
+    }
+
+    // Caso JSON attuale (backward compatible)
     const body = req.body || {};
     const created_by = body.createdBy || body.created_by || "";
     const result = await importCrmData(siteId, {

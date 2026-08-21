@@ -1,6 +1,6 @@
 import { query } from "../db.js";
 import { createTask } from "./tasks.js";
-import { buildCsv } from "./csv.js";
+import { buildCsv, parseCsv } from "./csv.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Feature 39 — Export/import completo del CRM.
@@ -155,7 +155,9 @@ async function upsertContactRow(siteId, raw) {
 const MAX_ERRORS = 20;
 
 // Importa righe contatti → { imported, skipped, errors } (senza job).
-async function importContactRows(siteId, rows) {
+// lineOffset: numero di riga fisica nel file sorgente (0 = righe senza
+// header, 1+ = header già consumato), per un report `line` accurato.
+async function importContactRows(siteId, rows, lineOffset = 0) {
   let imported = 0;
   let skipped = 0;
   const errors = [];
@@ -167,11 +169,11 @@ async function importContactRows(siteId, rows) {
         imported++;
       } else {
         skipped++;
-        if (errors.length < MAX_ERRORS) errors.push({ row: i, error: res.error });
+        if (errors.length < MAX_ERRORS) errors.push({ row: i, line: lineOffset + i + 1, error: res.error });
       }
     } catch (err) {
       skipped++;
-      if (errors.length < MAX_ERRORS) errors.push({ row: i, error: err.message });
+      if (errors.length < MAX_ERRORS) errors.push({ row: i, line: lineOffset + i + 1, error: err.message });
     }
   }
   return { imported, skipped, errors };
@@ -179,7 +181,7 @@ async function importContactRows(siteId, rows) {
 
 // Importa righe task → { imported, skipped, errors }. Ogni riga: title
 // obbligatorio, email, due_at, notes.
-async function importTaskRows(siteId, rows, created_by = "") {
+async function importTaskRows(siteId, rows, created_by = "", lineOffset = 0) {
   let imported = 0;
   let skipped = 0;
   const errors = [];
@@ -192,7 +194,7 @@ async function importTaskRows(siteId, rows, created_by = "") {
     const title = String(raw.title || "").trim().slice(0, 255);
     if (!title) {
       skipped++;
-      if (errors.length < MAX_ERRORS) errors.push({ row: i, error: "title obbligatorio" });
+      if (errors.length < MAX_ERRORS) errors.push({ row: i, line: lineOffset + i + 1, error: "title obbligatorio" });
       continue;
     }
     try {
@@ -206,17 +208,17 @@ async function importTaskRows(siteId, rows, created_by = "") {
       imported++;
     } catch (err) {
       skipped++;
-      if (errors.length < MAX_ERRORS) errors.push({ row: i, error: err.message });
+      if (errors.length < MAX_ERRORS) errors.push({ row: i, line: lineOffset + i + 1, error: err.message });
     }
   }
   return { imported, skipped, errors };
 }
 
-async function insertImportJob(siteId, kind, stats, created_by = "") {
+async function insertImportJob(siteId, kind, stats, created_by = "", filename = "") {
   const result = await query(
     `INSERT INTO import_jobs (site_id, kind, filename, status, stats, error, created_by)
-     VALUES ($1, $2, '', 'done', $3, '', $4) RETURNING *`,
-    [siteId, kind, JSON.stringify(stats), String(created_by || "").slice(0, 255)]
+     VALUES ($1, $2, $3, 'done', $4, '', $5) RETURNING *`,
+    [siteId, kind, String(filename || "").slice(0, 255), JSON.stringify(stats), String(created_by || "").slice(0, 255)]
   );
   return result.rows[0];
 }
@@ -224,30 +226,74 @@ async function insertImportJob(siteId, kind, stats, created_by = "") {
 // ── Import (pubblici, con job) ───────────────────────────────────────────
 
 // Import contatti (upsert per email). Ritorna { job_id, imported, skipped, errors }.
-export async function importContacts(siteId, { rows = [], created_by = "" } = {}) {
+export async function importContacts(siteId, { rows = [], created_by = "", filename = "" } = {}) {
   const res = await importContactRows(siteId, rows);
-  const job = await insertImportJob(siteId, "contacts", res, created_by);
+  const job = await insertImportJob(siteId, "contacts", res, created_by, filename);
   return { job_id: job.id, imported: res.imported, skipped: res.skipped, errors: res.errors };
 }
 
 // Import CRM completo: contatti + task in un unico job (kind 'crm').
 // Ritorna { job_id, imported, skipped, tasks_imported, tasks_skipped, errors }.
-export async function importCrmData(siteId, { contacts = [], tasks = [], created_by = "" } = {}) {
-  const c = await importContactRows(siteId, contacts);
-  const t = await importTaskRows(siteId, tasks, created_by);
+export async function importCrmData(siteId, { contacts = [], tasks = [], created_by = "", filename = "", lineOffset = 0 } = {}) {
+  const c = await importContactRows(siteId, contacts, lineOffset);
+  const t = await importTaskRows(siteId, tasks, created_by, lineOffset);
   const errors = [...c.errors, ...t.errors].slice(0, MAX_ERRORS);
   const stats = {
     imported: c.imported, skipped: c.skipped,
     tasks_imported: t.imported, tasks_skipped: t.skipped,
     errors,
   };
-  const job = await insertImportJob(siteId, "crm", stats, created_by);
+  const job = await insertImportJob(siteId, "crm", stats, created_by, filename);
   return {
     job_id: job.id,
     imported: c.imported, skipped: c.skipped,
     tasks_imported: t.imported, tasks_skipped: t.skipped,
     errors,
   };
+}
+
+// ── Import da file (CSV/JSON) ────────────────────────────────────────────
+// Decodifica il contenuto di un file (stringa) e importa i dati. Supporta:
+//   - CSV  → header = colonne; ogni riga è un contatto (upsert per email).
+//   - JSON → array di contatti oppure { contacts, tasks } (upsert per email).
+// La tipologia è dedotta dall'estensione del filename, con fallback sul
+// primo carattere (`{`/`[` → JSON, altrimenti CSV). filename viene
+// registrato nel job di import per il report.
+export async function importFromFile(siteId, { filename = "", text = "", created_by = "" } = {}) {
+  const name = String(filename || "").toLowerCase();
+  const isJsonName = /\.json$/i.test(name);
+  const isCsvName = /\.csv$/i.test(name);
+  const trimmed = String(text ?? "").trimStart();
+  const looksJson = isJsonName || trimmed.startsWith("{") || trimmed.startsWith("[");
+  const looksCsv = isCsvName || (!looksJson && trimmed.startsWith(",") === false && trimmed.length > 0);
+
+  let contacts = [];
+  let tasks = [];
+  let lineOffset = 0;
+
+  if (looksJson) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(text ?? ""));
+    } catch (err) {
+      const job = await insertImportJob(siteId, "crm",
+        { imported: 0, skipped: 0, tasks_imported: 0, tasks_skipped: 0, errors: [{ row: 0, line: 1, error: `JSON non valido: ${err.message}` }] },
+        created_by, filename);
+      return { job_id: job.id, imported: 0, skipped: 0, tasks_imported: 0, tasks_skipped: 0, errors: [{ row: 0, line: 1, error: `JSON non valido: ${err.message}` }] };
+    }
+    if (Array.isArray(parsed)) {
+      contacts = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      contacts = Array.isArray(parsed.contacts) ? parsed.contacts : [];
+      tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+    }
+  } else if (looksCsv) {
+    const rows = parseCsv(String(text ?? ""), { hasHeader: true });
+    contacts = rows;
+    lineOffset = 1; // la prima riga del CSV è l'header
+  }
+
+  return importCrmData(siteId, { contacts, tasks, created_by, filename, lineOffset });
 }
 
 // ── Log job ──────────────────────────────────────────────────────────────

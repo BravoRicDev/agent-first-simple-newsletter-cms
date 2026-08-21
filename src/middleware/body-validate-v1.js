@@ -17,14 +17,20 @@ export function v1BodyValidator() {
       return next();
     }
 
-    // POST e PUT: verifica Content-Type
+    // POST e PUT: verifica Content-Type. Oltre a JSON/urlencoded, la route
+    // /v1/import accetta multipart/form-data (upload CSV/JSON) e text/csv
+    // (body CSV grezzo): qui vengono solo tollerati (il parsing lo fa la
+    // route/multer), non validati come JSON.
     const contentType = (req.get("Content-Type") || "").toLowerCase().trim();
-    if (contentType && !contentType.includes("application/json") && !contentType.includes("application/x-www-form-urlencoded")) {
-      return res.status(415).json({ error: "Content-Type deve essere application/json" });
+    const isJsonLike = contentType.includes("application/json") || contentType.includes("application/x-www-form-urlencoded");
+    const isUpload = contentType.includes("multipart/form-data") || contentType.includes("text/csv");
+    if (contentType && !isJsonLike && !isUpload) {
+      return res.status(415).json({ error: "Content-Type deve essere application/json (o multipart/text/csv per /v1/import)" });
     }
 
-    // POST: body non vuoto
-    if (req.method === "POST") {
+    // POST: body non vuoto (per multipart/text-csv il body è gestito
+    // dalla route, qui non lo blocchiamo se è un upload di file)
+    if (req.method === "POST" && isJsonLike) {
       const body = req.body;
       if (body === undefined || body === null || body === "") {
         return res.status(400).json({ error: "Body JSON richiesto" });
