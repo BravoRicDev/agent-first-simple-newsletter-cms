@@ -63,6 +63,7 @@ const SPEC = {
     { name: "API keys", description: "API key per-sito (Bearer)" },
     { name: "Capabilities", description: "Registry delle capability (agent-first)" },
     { name: "Booking", description: "ONDA 2 — appuntamenti prenotati dai contatti (booking_appointments)" },
+    { name: "Payment Links", description: "ONDA 2 — link di pagamento Stripe (payment_links)" },
   ],
   paths: buildPaths(),
   components: {
@@ -239,6 +240,38 @@ const SPEC = {
           active: { type: "boolean" },
           created_at: { type: "string", format: "date-time" },
           updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      PaymentLink: {
+        type: "object",
+        description: "ONDA 2 — link di pagamento Stripe (payment_links). status ∈ draft|active|paid|expired.",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          opportunity_id: { type: "integer", nullable: true },
+          contact_email: { type: "string" },
+          title: { type: "string" },
+          amount: { type: "number" },
+          currency: { type: "string" },
+          description: { type: "string" },
+          status: { type: "string", enum: ["draft", "active", "paid", "expired"] },
+          stripe_url: { type: "string" },
+          token: { type: "string" },
+          created_at: { type: "string", format: "date-time" },
+          paid_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      PaymentLinkCreate: {
+        type: "object",
+        required: ["title"],
+        properties: {
+          title: { type: "string" },
+          amount: { type: "number" },
+          contact_email: { type: "string" },
+          description: { type: "string" },
+          currency: { type: "string" },
+          opportunity_id: { type: "integer" },
         },
       },
     },
@@ -741,6 +774,53 @@ function buildPaths() {
       description: "Disattiva la config attiva. I booking esistenti restano in DB ma gli eventi Google associati non vengono rimossi.",
       security: tenantSec(),
       responses: jsonResponse(200, { deleted: { type: "boolean" } }),
+    },
+  };
+
+  // ── Payment Links (ONDA 2) ──────────────────────────────────────────────
+  base["/payment-links"] = {
+    get: {
+      tags: ["Payment Links"], summary: "Lista payment link del tenant",
+      description: "Filtri opzionali: ?status=draft|active|paid|expired.",
+      parameters: [
+        { name: "status", in: "query", schema: { type: "string", enum: ["draft", "active", "paid", "expired"] } },
+        { name: "limit", in: "query", schema: { type: "integer" } },
+        { name: "offset", in: "query", schema: { type: "integer" } },
+      ],
+      security: tenantSec(),
+      responses: listWithTotal("paymentLinks", "PaymentLink"),
+    },
+    post: {
+      tags: ["Payment Links"], summary: "Crea un payment link",
+      description: "Crea un link di pagamento. Se stripeSecretKey configurato, genera anche un Payment Link Stripe reale.",
+      requestBody: jsonBody({ $ref: "#/components/schemas/PaymentLinkCreate" }),
+      security: tenantSec(),
+      responses: jsonCreated("paymentLink", "PaymentLink"),
+    },
+  };
+  base["/payment-links/{id}"] = {
+    get: {
+      tags: ["Payment Links"], summary: "Dettaglio payment link",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResource("paymentLink", "PaymentLink"),
+    },
+    put: {
+      tags: ["Payment Links"], summary: "Aggiorna un payment link",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { title: { type: "string" }, description: { type: "string" }, amount: { type: "number" }, status: { type: "string", enum: ["draft", "active", "paid", "expired"] } } }),
+      responses: jsonResource("paymentLink", "PaymentLink"),
+    },
+    delete: {
+      tags: ["Payment Links"], summary: "Elimina un payment link",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
+    },
+  };
+  base["/payment-links/{id}/mark-paid"] = {
+    post: {
+      tags: ["Payment Links"], summary: "Marca un payment link come pagato",
+      description: "Imposta status=paid e paid_at=NOW. Emette evento payment_paid → webhook out.",
+      parameters: [pathId()], security: tenantSec(),
+      responses: jsonResponse(200, { paymentLink: { $ref: "#/components/schemas/PaymentLink" }, already: { type: "boolean" } }),
     },
   };
 

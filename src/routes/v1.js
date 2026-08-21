@@ -26,6 +26,10 @@ import {
   updateBooking, cancelBooking,
 } from "../services/booking.js";
 import { openapiRouter } from "../openapi.js";
+import {
+  listPaymentLinks, getPaymentLink, createPaymentLink,
+  updatePaymentLink, deletePaymentLink, markPaid,
+} from "../services/payments.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Surface API compatibile ("API compatibili con CRM diffusi"), montata su
@@ -879,6 +883,57 @@ router.delete("/booking-calendar-config", async (req, res, next) => {
       [existing.id]
     );
     res.json({ deleted: true });
+  } catch (err) { next(err); }
+});
+
+// ── Payment Links (ONDA 2) ────────────────────────────────────────────────
+
+router.post("/payment-links/:id/mark-paid", async (req, res, next) => {
+  try {
+    const result = await markPaid(req.tenant.siteId, req.params.id, { by: "v1_api" });
+    if (!result || !result.link) return res.status(404).json({ error: "Payment link non trovato" });
+    res.json({ paymentLink: result.link, already: !!result.already });
+  } catch (err) { next(err); }
+});
+
+router.post("/payment-links", async (req, res, next) => {
+  try {
+    const link = await createPaymentLink(req.tenant.siteId, req.body || {});
+    if (!link) return res.status(400).json({ error: "Dati payment link non validi (title obbligatorio)" });
+    res.status(201).json({ paymentLink: link });
+  } catch (err) { next(err); }
+});
+
+router.get("/payment-links", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.query || {};
+    const links = await listPaymentLinks(siteId, { status: b.status, limit: b.limit, offset: b.offset });
+    res.json({ paymentLinks: links, total: links.length });
+  } catch (err) { next(err); }
+});
+
+router.get("/payment-links/:id", async (req, res, next) => {
+  try {
+    const link = await getPaymentLink(req.tenant.siteId, req.params.id);
+    if (!link) return res.status(404).json({ error: "Payment link non trovato" });
+    res.json({ paymentLink: link });
+  } catch (err) { next(err); }
+});
+
+router.put("/payment-links/:id", async (req, res, next) => {
+  try {
+    const link = await updatePaymentLink(req.tenant.siteId, req.params.id, req.body || {});
+    if (!link) return res.status(404).json({ error: "Payment link non trovato" });
+    res.json({ paymentLink: link });
+  } catch (err) { next(err); }
+});
+
+router.delete("/payment-links/:id", async (req, res, next) => {
+  try {
+    const deleted = await deletePaymentLink(req.tenant.siteId, req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Payment link non trovato" });
+    res.json({ deleted: true, id: parseInt(req.params.id, 10) });
   } catch (err) { next(err); }
 });
 
