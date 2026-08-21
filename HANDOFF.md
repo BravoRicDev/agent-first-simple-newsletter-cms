@@ -49,6 +49,24 @@ riparte esattamente da qui.
 - Working tree pulita, repo libero, nessun segreto, nessun nome CRM-specifico.
 - Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
 
+## MONITORAGGIO (POLISH cron, 21/08/2026 run attuale)
+- Repo LIBERO all'inizio run (nessun processo dev, nessun index.lock, working tree pulita).
+- RIESEGUITI i test a gruppi isolati via `./scripts/test.sh <file>` — esito per file:
+  - `v1-activities.test.js` + `v1-activities-http.test.js`: 7/7 pass
+  - `v1-email-stats.test.js` + `v1-email-stats-http.test.js`: 8/8 pass
+  - `v1-reports.test.js` + `v1-reports-http.test.js`: 17/17 pass
+  - `f0-foundations` + `onda1-contacts` + `onda1-opportunities-v1` + `onda1-opportunity-custom-fields`: 26/26 pass
+  - `v1-dashboard-funnel` + `v1-openapi` + `f0-location-mapping`: 21/21 pass
+  - `onda1-webhook-out`: 1/1 pass
+  - `newsletter-bounce` + `newsletter-engagement`: 25/25 pass
+  - Totale rieseguito in questo run: 105 test, 0 fail, 0 skip.
+- `node --check` su tutti i file: SRC SINTASSI OK. `node --check` file test ok.
+- `.env.example` allineato (DATABASE_URL, JWT_SECRET, vars richieste presenti).
+- Nessun fix strutturale necessario (solo verifica, nessun errore banale riscontrato).
+- Nessun segreto versionato, nessun nome CRM-specifico.
+- Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
+- Nessun commit/push eseguito (working tree rimasta pulita).
+
 ## PUNTI DI VERIFICA (questo run)
 - ✅ **32 nuovi test Analitica & Reporting** (17 service + 15 HTTP), tutti passano
 - ✅ **Nessuna regressione**: F0 9/9, Onda 1 contatti 8/8, opportunità 8/8,
