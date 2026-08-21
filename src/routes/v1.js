@@ -20,7 +20,7 @@ import {
   addContactNote, listContactNotes, deleteContactNote,
   listContactTags, addContactTags, removeContactTag,
 } from "../services/contacts-v1.js";
-import { listTasks, createTask, updateTask } from "../services/tasks.js";
+import { listTasks, createTask, updateTask, getFunnel } from "../services/tasks.js";
 import {
   listBookings, getBooking, createBooking,
   updateBooking, cancelBooking,
@@ -30,6 +30,7 @@ import {
   listPaymentLinks, getPaymentLink, createPaymentLink,
   updatePaymentLink, deletePaymentLink, markPaid,
 } from "../services/payments.js";
+import { getKpis } from "../services/dashboard.js";
 import {
   listConversations, getConversation, listConversationMessages,
   addConversationMessage, setConversationStatus, deleteConversation,
@@ -1000,6 +1001,24 @@ router.delete("/conversations/:id", async (req, res, next) => {
     const n = await deleteConversation(req.tenant.siteId, req.params.id);
     if (!n) return res.status(404).json({ error: "Conversazione non trovata" });
     res.json({ deleted: true, id: parseInt(req.params.id, 10) });
+  } catch (err) { next(err); }
+});
+
+// ── ONDA 3 — Dashboard / KPI ───────────────────────────────────────
+router.get("/dashboard", async (req, res, next) => {
+  try {
+    const { range } = req.query;
+    const kpis = await getKpis(req.tenant.siteId, { range });
+    res.json(kpis);
+  } catch (err) { next(err); }
+});
+
+// ── ONDA 3 — Funnel / conversioni ──────────────────────────────────
+router.get("/funnel", async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    const funnel = await getFunnel(req.tenant.siteId, { from, to });
+    res.json({ funnel });
   } catch (err) { next(err); }
 });
 

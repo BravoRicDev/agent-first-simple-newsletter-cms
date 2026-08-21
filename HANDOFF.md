@@ -4,49 +4,45 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- **POLISH+MONITORAGGIO CRON (22/08/2026) — verifica stato repo**:
-  - Working tree: pulita.
-  - **NESSUN FIX NECESSARIO**: tutto stabile dal run LEADER+QUALITY del 21/08.
-  - Verifica test spot: 37/37 ✅ su 4 file campione (f0-foundations, webhooks, crm-suite, onda1-contacts).
-  - 81 migrazioni applicate, allineate coi 80 file su disco (differenza: 078_crm_location_id rinominato).
-  - DB test `cms-test-pg` su da 6 giorni, nessun problema.
+- **LEADER+QUALITY CRON (21/08/2026) — ONDA 3: Dashboard & Funnel v1 API**:
+  - Working tree: pulita dopo commit.
+  - **COSTRUITO**: `/v1/dashboard` e `/v1/funnel` endpoint, con test service-level + HTTP, documentazione OpenAPI.
+  - 14/14 test nuovi ✅ (7 HTTP + 7 service-level). Nessuna regressione su F0 (9/9), Onda 1 (8/8), OpenAPI (5/5).
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **Verifica stabilità repo**: nessun fix necessario.
-   - 37/37 test passati su 4 file campione.
-   - DB test pulito, 81 migrazioni applicate, 0 gap.
-   - Nessun segreto, nessun naming CRM-specifico.
+1. **ONDA 3 — Dashboard & Funnel v1 API** (blocco sostanziale):
+   - `src/routes/v1.js`: aggiunte 2 nuove route GET `/v1/dashboard` (KPI con range opzionale 7d/30d/90d) e GET `/v1/funnel` (funnel conversioni con filtri from/to). Usa servizi esistenti `getKpis` (dashboard.js) e `getFunnel` (tasks.js).
+   - `test/v1-dashboard-funnel.test.js`: 7 test service-level — metriche attese, default range, fallback range invalido, funnel data structure, filtri data, isolamento tenant, sito senza dati.
+   - `test/v1-dashboard-funnel-http.test.js`: 7 test HTTP — 200 con KPIs, range=7d, 401 senza auth, funnel data structure, 401 senza auth, filtri data, isolamento tenant.
+   - `src/openapi.js`: aggiunte definizioni OpenAPI per `/v1/dashboard` e `/v1/funnel` con tags Dashboard e Funnel, parametri query, schemi risposta.
+
+2. **Verifica regressioni**: F0 (9/9), Onda 1 contatti (8/8), OpenAPI (5/5) — tutti ✅.
+   - Totale verificato in questo run: 22 test esistenti + 14 nuovi = 36 test, 0 fail.
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ **Stato stabile**: 37/37 test passati, 0 regressioni
-- ✅ Webhook test flaky FIXED (dal run precedente): 10/10 passano con siteId filtering
-- ✅ DB test pulito: `cms-test-pg` su da 6 giorni
-- ✅ Migrazioni: 81 applicate, allineate coi 80 file su disco
-- ✅ Sintassi OK (node --check su file chiave)
-- ✅ Nessun segreto versionato
-- ✅ Nessun riferimento CRM-specifico nel codice (078_crm_location_id rinominato)
-- ✅ .env.example allineato
+- ✅ **14 nuovi test Dashboard+Funnel**: 7 service-level + 7 HTTP, tutti passano
+- ✅ **Nessuna regressione**: F0 9/9, Onda 1 contatti 8/8, OpenAPI 5/5
+- ✅ **Sintassi OK**: node --check su src/routes/v1.js, src/openapi.js, entrambi i test
+- ✅ **OpenAPI aggiornato**: tags + paths per /v1/dashboard e /v1/funnel
+- ✅ **Nessun segreto versionato**
+- ✅ **Nessun riferimento CRM-specifico**
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **Onda 3 planning**: attendere input umano. Possibili direzioni:
-   - Import dati bulk (già progettato come tool)
-   - Reportistica / dashboard
-   - Integrazioni esterne (Google Calendar già configurato come per-tenant config)
-2. **Schedulare refresh periodico DB test**: valutare se aggiungere cron di pulizia
-   delivery orfane a intervalli regolari (es. ogni run di test).
+1. **Onda 3 planning**: continuare con altri endpoint Onda 3:
+   - `/v1/activities` — log attività recenti per contatto
+   - `/v1/email-stats` — statistiche email (invii, aperture, click)
+   - `/v1/reports` — report personalizzati via v1 API
+2. **Oppure**: attendere input umano per priorità Onda 3
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
 - ONDA 2 Phase 1-5: booking, calendar sync, public page, payments, conversations.
 - ONDA 2 Phase 6: event-driven agent conversation triggers.
-- Refinement: test gap OpenAPI + e2e event pipeline (webhook + runtime).
-- Webhook OUT delivery e2e: HMAC, retry, max failed, tenant isolation.
-- **WEBHOOK TEST FLAKY RISOLTO**: siteId filtering strutturale.
+- ONDA 3: Dashboard & Funnel v1 API (nuovo).
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
 - NON usare il nome del CRM di origine nel codice/docs/README.
-- NON risolvere decisioni [APERTA] — spettano all'umano (oggi nessuna).
-- NON riportare custom fields opportunità in `contact_custom_values` (FK su
-  contacts): usare SEMPRE `opportunity_custom_values` (076).
+- NON risolvere decisioni [APERTA] — spettano all'umano.
+- NON riportare custom fields opportunità in `contact_custom_values` (FK su contacts): usare SEMPRE `opportunity_custom_values` (076).

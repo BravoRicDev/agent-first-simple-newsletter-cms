@@ -66,6 +66,8 @@ const SPEC = {
     { name: "Payment Links", description: "ONDA 2 — link di pagamento Stripe (payment_links)" },
     { name: "Conversazioni", description: "ONDA 2 — conversazioni outbound (thread email/whatsapp per contatto)" },
     { name: "Booking Public", description: "ONDA 2 — route pubbliche di prenotazione (nessun auth richiesto)" },
+    { name: "Dashboard", description: "ONDA 3 — metriche KPI del CRM" },
+    { name: "Funnel", description: "ONDA 3 — dati funnel di conversione per canale" },
   ],
   paths: buildPaths(),
   components: {
@@ -1016,6 +1018,41 @@ function buildPaths() {
       parameters: [pathId()], security: tenantSec(),
       requestBody: jsonBody({ type: "object", required: ["status"], properties: { status: { type: "string", enum: ["open", "pending", "closed"] } } }),
       responses: jsonResource("conversation", "Conversation"),
+    },
+  };
+
+  // ── ONDA 3: Dashboard KPI ──────────────────────────────────────────
+  base["/v1/dashboard"] = {
+    get: {
+      tags: ["Dashboard"],
+      summary: "Metriche KPI del CRM",
+      description: "Restituisce KPI: lead, pipeline, win rate, task, conversazioni, attività recente. Parametro range opzionale (7d, 30d, 90d).",
+      security: tenantSec(),
+      parameters: [
+        { name: "range", in: "query", schema: { type: "string", enum: ["7d", "30d", "90d"] }, description: "Intervallo temporale (default: 30d)" },
+      ],
+      responses: {
+        "200": { description: "Oggetto KPI con metriche", content: { "application/json": { schema: { type: "object" } } } },
+        "401": { description: "Non autenticato" },
+      },
+    },
+  };
+
+  // ── ONDA 3: Funnel ────────────────────────────────────────────────
+  base["/v1/funnel"] = {
+    get: {
+      tags: ["Funnel"],
+      summary: "Dati funnel di conversione per canale",
+      description: "Restituisce dati funnel (visite, lead, chiamate, vittorie, revenue) raggruppati per giorno e canale. Filtrabile per intervallo date.",
+      security: tenantSec(),
+      parameters: [
+        { name: "from", in: "query", schema: { type: "string", format: "date" }, description: "Data iniziale (AAAA-MM-GG)" },
+        { name: "to", in: "query", schema: { type: "string", format: "date" }, description: "Data finale (AAAA-MM-GG)" },
+      ],
+      responses: {
+        "200": { description: "Array funnel", content: { "application/json": { schema: { type: "object", properties: { funnel: { type: "array" } } } } } },
+        "401": { description: "Non autenticato" },
+      },
     },
   };
 
