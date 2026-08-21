@@ -4,60 +4,56 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- **POLISH CRON (21/08/2026) — monitoraggio + test isolati**:
+- **LEADER+QUALITY CRON (21/08/2026) — fix strutturale webhook test flaky**:
   - Working tree: pulita.
-  - Webhook test `test/webhooks.test.js` **ANCORA FLAKY** — il fix dichiarato
-    "definitivo" nel run precedente non risolve la causa radice.
+  - **FIX APPLICATO**: `test/webhooks.test.js` — tutti i 10 test ora passano ✅
+  - **Root cause**: 192 righe pending orfane da run precedenti. `waitForPendingDelivery`
+    e `deliverWithRetry` NON filtravano per `siteId`, raccogliendo righe di siti altrui
+    e tentando spedizioni verso server morti.
+  - **Fix strutturale**: tutti i test helper ora accettano `siteId` e lo usano sia nella
+    query DB che nelle chiamate a `deliverPending({ siteId })`.
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **Diagnostica flaky webhook test** — confermata la causa radice: **136 righe
-   pending orfane** da run precedenti nel DB di test, con marker `deliv-*` e
-   `next_attempt_at` nel passato. `deliverPending()` (senza filtro `siteId`)
-   le raccoglie tutte, tenta spedizioni verso server di test morti, e inquina
-   gli assert sui marker.
+1. **Pulizia DB**: 192 righe pending orfane + 15 sent vecchie rimosse da `webhook_deliveries`.
 
-2. **Test isolati eseguiti**:
-   - Gruppo 1 (F0 foundations + location-mapping): **18/18 ✅**
-   - Gruppo 2 (onda1-contacts + opportunities-v1 + custom-fields): **17/17 ✅**
-   - Gruppo 3 (webhook-out + rate-limit): **14/14 ✅**
-   - Gruppo 4 (webhook-n8n-e2e + onda1-webhook-out): **5/5 ✅**
-   - Gruppo 5 (crm-suite + crm-opportunities): **21/21 ✅**
-   - **webhooks.test.js**: **7/10 ❌** (3 falliti per contaminazione DB)
-   - **Totale**: 75 test codice produzione OK, 3 falliti solo per DB sporco.
+2. **Fix strutturale `test/webhooks.test.js`**:
+   - `waitForPendingDelivery(siteId, markerOrEvent, value, limit, opts)` → aggiunto `siteId`
+     come primo parametro. Filtra DB query con `AND site_id = $1`, passa `{ siteId }` a
+     `deliverPending`.
+   - `deliverWithRetry(siteId, limit, opts, maxRetries)` → aggiunto `siteId` come primo
+     parametro. Passa `{ siteId }` a `deliverPending`.
+   - `deliverPending` diretto (linea 282): `{ siteId: site.id, allowPrivate: true }`.
+   - Query di asserzione marker (linea 261): filtro `AND site_id = $1`.
+   - Cleanup nel `before` hook: `DELETE FROM webhook_deliveries WHERE site_id = $1 AND status = 'pending'`
+     all'inizio del test.
 
-3. **Nessun fix applicato** — ruolo conservativo, la contaminazione DB richiede
-   intervento strutturale del dev.
+3. **Regressione completa verificata**:
+   - webhooks.test.js: **10/10 ✅** (ex 3 falliti)
+   - f0-foundations + location-mapping + ondat1-contacts + opp + custom: **35/35 ✅**
+   - onda1-webhook-out + webhook-n8n-e2e + rate-limit + booking + booking-calendar: **32/32 ✅**
+   - onda2-booking-public + webhook-e2e + conversations + runtime-events + event-flow: **39/39 ✅**
+   - v1-openapi + import-crm + crm-suite + crm-opportunities + board: **36/36 ✅**
+   - api-tokens + pipeline + workflows + segments + privacy + oauth: **39/39 ✅**
+   - **TOTALE**: ~191 test → **0 fail, 0 skip** (solo i file webhook e gruppi affini)
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ Codice produzione: 75 test in regressione → 0 fail, 0 flaky
+- ✅ **Webhook test flaky FIXED**: 10/10 test passano con siteId filtering
+- ✅ DB test pulito: 0 righe pending orfane residue
+- ✅ Codice produzione: 0 regressioni
 - ✅ `.env.example` allineato (nessuna modifica necessaria)
-- ✅ Sintassi OK (tutti i file `.js` checkati)
+- ✅ Sintassi OK (`node --check` su file toccato)
+- ✅ Nessun segreto versionato (solo dummy test data)
 - ✅ Nessun riferimento CRM-specifico nel codice
-- ✅ Nessun segreto versionato
-- ✅ DB test `cms-test-pg` up (6 giorni)
-- ❌ **webhooks.test.js ANCORA FLAKY** — 3/10 test falliscono per DB sporco
-
-## PROBLEMA APERTO: webhook test flaky (non risolto)
-**Root cause**: 136 righe pending orfane accumulate nel DB di test da run
-precedenti. `deliverPending()` chiamato senza `{ siteId }` dal test helper
-`waitForPendingDelivery` raccoglie righe di siti altrui, tenta spedizioni verso
-server di test morti → fallimenti sporadici.
-
-**Fix suggerito**: aggiungere `siteId: site.id` alle chiamate
-`waitForPendingDelivery` e `deliverPending` nel test. Oppure pulire le righe
-orfane dal DB con un setup hook che cancella delivery con `site_id` non
-esistente, o con `next_attempt_at` molto vecchio.
-
-**Nota**: il precedente fix `waitForPendingDelivery` (polling DB prima di
-deliverPending) non risolve questo problema perché non filtra per site_id.
+- ✅ DB test `cms-test-pg` up e funzionante
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **Fix test**: aggiungere `siteId` filter a `waitForPendingDelivery` e
-   `deliverWithRetry` in `test/webhooks.test.js`.
-2. **Pulizia DB**: valutare se aggiungere cleanup periodico delle delivery
-   orfane nel DB di test.
-3. **ONDA 3 planning**: attendere input umano.
+1. **Onda 3 planning**: attendere input umano. Possibili direzioni:
+   - Import dati bulk (già progettato come tool)
+   - Reportistica / dashboard
+   - Integrazioni esterne (Google Calendar già configurato come per-tenant config)
+2. **Schedulare refresh periodico DB test**: valutare se aggiungere cron di pulizia
+   delivery orfane a intervalli regolari (es. ogni run di test).
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
@@ -65,7 +61,7 @@ deliverPending) non risolve questo problema perché non filtra per site_id.
 - ONDA 2 Phase 6: event-driven agent conversation triggers.
 - Refinement: test gap OpenAPI + e2e event pipeline (webhook + runtime).
 - Webhook OUT delivery e2e: HMAC, retry, max failed, tenant isolation.
-- OpenAPI booking-public: tutti i 4 endpoint pubblici documentati.
+- **WEBHOOK TEST FLAKY RISOLTO**: siteId filtering strutturale.
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.
@@ -73,5 +69,3 @@ deliverPending) non risolve questo problema perché non filtra per site_id.
 - NON risolvere decisioni [APERTA] — spettano all'umano (oggi nessuna).
 - NON riportare custom fields opportunità in `contact_custom_values` (FK su
   contacts): usare SEMPRE `opportunity_custom_values` (076).
-- NON modificare la logica dei test webhook senza filtro `siteId` — segnalato
-  come problema strutturale.

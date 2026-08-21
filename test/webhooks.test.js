@@ -91,6 +91,9 @@ describe("feature 35: webhook in/out", () => {
     await new Promise((resolve) => {
       server = app.listen(0, () => { baseUrl = `http://localhost:${server.address().port}`; resolve(); });
     });
+
+    // Pulizia: rimuove delivery pending orfane di questo sito da run precedenti.
+    await query("DELETE FROM webhook_deliveries WHERE site_id = $1 AND status = 'pending'", [site.id]);
   });
 
   after(async () => {
@@ -104,36 +107,36 @@ describe("feature 35: webhook in/out", () => {
   });
 
   // Helper: attende che una riga pending sia visibile nel DB, poi
-  // chiama deliverPending. Risolve la race tra commit DB e query di
+  // chiama deliverPending con siteId. Risolve la race tra commit DB e query di
   // deliverPending che era la causa del flaky (~1/15 fallimenti).
   // markerOrEvent = nome del campo in payload->> (es. 'marker' o 'event_type').
-  async function waitForPendingDelivery(markerOrEvent, value, limit = 50, opts = {}) {
+  async function waitForPendingDelivery(siteId, markerOrEvent, value, limit = 50, opts = {}) {
     let rowFound = false;
     for (let i = 0; i < 15; i++) {
       const rows = (await query(
         `SELECT COUNT(*)::int AS n FROM webhook_deliveries
-         WHERE status = 'pending' AND payload->>'${markerOrEvent}' = $1`,
-        [value]
+         WHERE status = 'pending' AND site_id = $1 AND payload->>'${markerOrEvent}' = $2`,
+        [siteId, value]
       )).rows;
       if (rows[0].n >= 1) { rowFound = true; break; }
       await new Promise(r => setTimeout(r, 80 * (i + 1)));
     }
     if (!rowFound) {
       // Fallback: forza deliverPending anche senza DB confirm.
-      return await deliverPending(limit, { allowPrivate: true, ...opts });
+      return await deliverPending(limit, { siteId, allowPrivate: true, ...opts });
     }
-    return await deliverPending(limit, { allowPrivate: true, ...opts });
+    return await deliverPending(limit, { siteId, allowPrivate: true, ...opts });
   }
 
   // Helper per deliverPending con retry (mantenuto per retrocompatibilità,
   // ma waitForPendingDelivery è il metodo robusto).
-  async function deliverWithRetry(limit = 50, opts = {}, maxRetries = 5) {
+  async function deliverWithRetry(siteId, limit = 50, opts = {}, maxRetries = 5) {
     for (let i = 0; i < maxRetries; i++) {
-      const result = await deliverPending(limit, { allowPrivate: true, ...opts });
+      const result = await deliverPending(limit, { siteId, allowPrivate: true, ...opts });
       if (result.delivered >= 1) return result;
       if (i < maxRetries - 1) await new Promise(r => setTimeout(r, 250 * (i + 1)));
     }
-    return await deliverPending(limit, { allowPrivate: true, ...opts });
+    return await deliverPending(limit, { siteId, allowPrivate: true, ...opts });
   }
 
   // ── (a) CRUD webhook in/out ────────────────────────────────────────────
@@ -242,7 +245,7 @@ describe("feature 35: webhook in/out", () => {
   // causava il flaky (~1/15 fallimenti col vecchio deliverWithRetry a 3 tentativi).
 
   test("deliverPending spedisce con X-Webhook-Event e firma HMAC verificabile", async () => {
-    const result = await waitForPendingDelivery("marker", "deliv-b", 50);
+    const result = await waitForPendingDelivery(site.id, "marker", "deliv-b", 50);
     assert.ok(result.delivered >= 1, `delivered=${result.delivered} (dopo attesa pending)`);
 
     const captured = received.find((req) => req.body.includes("deliv-b"));
@@ -258,7 +261,8 @@ describe("feature 35: webhook in/out", () => {
     assert.equal(captured.headers["x-webhook-signature"], expected);
 
     const rows = (await query(
-      "SELECT status FROM webhook_deliveries WHERE event_type = 'form_submitted' AND payload->>'marker' = 'deliv-b'"
+      "SELECT status FROM webhook_deliveries WHERE event_type = 'form_submitted' AND site_id = $1 AND payload->>'marker' = 'deliv-b'",
+      [site.id]
     )).rows;
     assert.ok(rows.length >= 1, `almeno una delivery consegnata (trovate ${rows.length})`);
     assert.ok(rows.every((r) => r.status === "sent"), "tutte le delivery con marker deliv-b sono sent");
@@ -279,7 +283,7 @@ describe("feature 35: webhook in/out", () => {
     await enqueueForEvent(site.id, "quote_signed", { marker: "deliv-e" });
 
     // Retry/backoff verificato con chiamata diretta allowPrivate (server locale).
-    const outcome = await deliverPending(50, { allowPrivate: true });
+    const outcome = await deliverPending(50, { siteId: site.id, allowPrivate: true });
     assert.ok(outcome.failed >= 1, JSON.stringify(outcome));
 
     const rows = (await query(
@@ -475,7 +479,7 @@ describe("feature 35: webhook in/out", () => {
     assert.ok(rows.length >= 1, `l'evento ha accodato almeno una delivery pending (trovate ${rows.length})`);
 
     // Usa waitForPendingDelivery per mitigare la race tra commit DB e fetch.
-    const result = await waitForPendingDelivery("marker", "deliv-l", 50);
+    const result = await waitForPendingDelivery(site.id, "marker", "deliv-l", 50);
     assert.ok(result.delivered >= 1);
     // Più webhook out possono matchare lo stesso evento: cerca la delivery
     // firmata con la secret 'e2e' del webhook end2end, non la prima in ordine.
