@@ -20,6 +20,15 @@ riparte esattamente da qui.
 2. **Verifica regressioni**: F0 (9/9), Onda 1 contatti (8/8), OpenAPI (5/5) — tutti ✅.
    - Totale verificato in questo run: 22 test esistenti + 14 nuovi = 36 test, 0 fail.
 
+## MONITORAGGIO (POLISH cron, 21/08/2026)
+- Working tree: pulita, repo libero (nessun altro processo attivo, nessun lock git).
+- RIESEGUITA l'intera suite a gruppi isolati via `./scripts/test.sh <file>`: tutti i
+  ~70 file passano, 0 fail. Unica eccezione: newsletter (parte di engagement) con 6
+  skip pre-esistenti (attesi).
+- Nessun fix necessario (sintassi OK, import/dipendenze a posto, .env.example allineato,
+  nessun segreto versionato, nessun nome CRM-specifico). Nessuna [APERTA] in
+  DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
+
 ## PUNTI DI VERIFICA (questo run)
 - ✅ **14 nuovi test Dashboard+Funnel**: 7 service-level + 7 HTTP, tutti passano
 - ✅ **Nessuna regressione**: F0 9/9, Onda 1 contatti 8/8, OpenAPI 5/5
