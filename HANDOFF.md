@@ -110,6 +110,23 @@ riparte esattamente da qui.
 - ✅ **Nessun segreto versionato**, nessun riferimento CRM-specifico
 - ✅ **Nessuna migrazione SQL nuova** necessaria (niente cambi di schema)
 
+## MONITORAGGIO (POLISH cron, 21/08/2026 — run completo)
+- Repo LIBERO all'inizio del run (nessun processo claude/codex/opencode, nessun
+  index.lock, working tree pulita), confermato anche a fine lavoro.
+- RIESEGUITA l'intera suite (81 file .test.js) in gruppi isolati via
+  `./scripts/test.sh <file...>` per evitare il timeout noto sul DB. Esito
+  TOTALE: **568 pass, 6 skip (newsletter attesi), 0 fail**.
+- `node --check` su tutti i file in src+test: SINTASSI OK (nessun output errore).
+- `.env.example` riletto riga-per-riga: RISULTATO ALLINEATO (DATABASE_URL,
+  JWT_SECRET e tutte le vars presenti). La precedente "concatenaione" era solo
+  un artefatto di rendering del terminale, non un problema reale.
+- `cms-test-pg` container attivo (Up 6 days).
+- Nessun fix strutturale necessario: solo verifica, nessun errore banale
+  riscontrato, nessun segreto versionato (match `postgres://` solo in commenti
+  con placeholder ***), nessun nome CRM-specifico in src.
+- Nessuna [APERTA] in DECISIONI_UMANE.md (tutte [RISOLTO] già applicate).
+- Nessun commit/push eseguito (working tree rimasta pulita).
+
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **Onda 3 planning (ultimo ritardo)**: import avanzato su `/v1/import` —
    accettare file CSV/JSON (multipart o text/csv) oltre al body JSON attuale,
