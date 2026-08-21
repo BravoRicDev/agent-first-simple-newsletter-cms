@@ -144,7 +144,11 @@ export async function updateOpportunity(siteId, id, fields = {}) {
 }
 
 export async function deleteOpportunity(siteId, id) {
-  return (await query("DELETE FROM opportunities WHERE id = $1 AND site_id = $2", [parseInt(id, 10), siteId])).rowCount;
+  const row = await getOpportunity(siteId, id);
+  if (!row) return 0;
+  await query("DELETE FROM opportunities WHERE id = $1 AND site_id = $2", [parseInt(id, 10), siteId]);
+  emit(siteId, row.contact_email, "opportunity_deleted", { opportunity_id: parseInt(id, 10), title: row.title });
+  return 1;
 }
 
 // ── Kanban board ─────────────────────────────────────────────────────────

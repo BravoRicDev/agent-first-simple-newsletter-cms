@@ -210,13 +210,15 @@ export async function updateContact(siteId, id, data = {}) {
 
 export async function deleteContact(siteId, id) {
   const row = (await query(
-    "SELECT id FROM contacts WHERE site_id = $1 AND id = $2",
+    "SELECT email FROM contacts WHERE site_id = $1 AND id = $2",
     [siteId, parseInt(id, 10)]
   )).rows[0];
   if (!row) return null;
-  await clearCustomValues(siteId, row.id);
-  await query("DELETE FROM contacts WHERE id = $1 AND site_id = $2", [row.id, siteId]);
-  return row.id;
+  const email = row.email;
+  await clearCustomValues(siteId, id);
+  await query("DELETE FROM contacts WHERE id = $1 AND site_id = $2", [parseInt(id, 10), siteId]);
+  emit(siteId, email, "contact_deleted", { contact_id: parseInt(id, 10), email });
+  return parseInt(id, 10);
 }
 
 // Upsert per email. Ritorna { contact, created }.
