@@ -4,62 +4,63 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- **ONDA 4 — Webhook OUT event enrichment (21/08/2026) — COMPLETATO**:
-  - Working tree pulita dopo commit `a60626e`.
-  - **COSTRUITO**: eventi `contact_deleted` e `opportunity_deleted` ora emessi
-    via emitContactEvent() (e quindi accodati ai webhook OUT automaticamente).
-  - Nuovo test `onda1-webhook-out-v2.test.js` (5 test) copre: contact_created,
-    contact_updated, contact_deleted, opportunity_stage_changed,
-    opportunity_deleted, + isolamento tenant.
-  - OpenAPI spec aggiornato con i nuovi eventi.
+- **ONDA 4 — v1 API enrichment (21/08/2026) — COMPLETATO**:
+  - Working tree pulita dopo commit locale.
+  - **COSTRUITO**: surface /v1 arricchita con Quotes API (CRUD + status + PDF),
+    Kanban Board, Contact Merge.
+  - Nuovi test `onda1-quotes-v1.test.js` (13 test) e `onda1-kanban-merge-v1.test.js`
+    (8 test) coprono: CRUD preventivi, cambio stato, generazione PDF, merge
+    contatti, board kanban, e spostamento stage + isolamento tenant.
+  - OpenAPI spec aggiornato con route quotes, board, merge.
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **ONDA 4 — Webhook OUT event enrichment**:
-   - `src/services/contacts-v1.js`: `deleteContact()` ora SELECT email, emette
-     `contact_deleted` con `{contact_id, email}` prima della DELETE.
-   - `src/services/opportunities.js`: `deleteOpportunity()` ora fetch prima della
-     DELETE (getOpportunity per avere email + title), emette `opportunity_deleted`
-     con `{opportunity_id, title}`.
-   - `src/openapi.js`: documentazione Webhook OUT include `contact_deleted` e
-     `opportunity_deleted`.
-   - `test/onda1-webhook-out-v2.test.js` (5 test nuovi):
-     - contact_created → delivery + payload + isolamento
-     - contact_updated → delivery
-     - contact_deleted → delivery
-     - opportunity_stage_changed (creazione + cambio stage) + opportunity_deleted
-     - Isolamento tenant: eventi A non filtrano in B
+1. **Quotes API — /v1/quotes**:
+   - Route: `GET /quotes`, `POST /quotes`, `GET /quotes/:id`, `PUT /quotes/:id`,
+     `PUT /quotes/:id/status`, `DELETE /quotes/:id`, `GET /quotes/:id/pdf`
+   - Servizi riusati da `src/services/opportunities.js` (già esistenti)
+   - PDF generato al volo con pdfkit e servito inline
+   - Eventi quote_sent/viewed/signed emessi via setQuoteStatus → webhook OUT
 
-2. **Verifica regressioni** (323 test, 0 fail):
-   - 7 suite webhook (onda1 + v2): 11 test, 0 fail
-   - f0-foundations + f0-location-mapping: 18/18
-   - onda1-contacts + opportunità + custom-fields: 17/17
-   - export-import + v1-openapi + pipeline + rate-limit + csv-export + planning-onda3: 49/49
-   - onda2-booking + calendar + public + payment + conversations + runtime-events: 53/53
-   - v1-dashboard-funnel + reports + activities + email-stats + import-file: 29/29
-   - crm-opportunities + suite + workflows + segments + webhooks + import-tool: 49/49
-   - dashboard + opportunity-board + conversations + payments + http suites: 57/57
+2. **Kanban Board — /v1/opportunities/board + move**:
+   - `GET /opportunities/board` — raggruppa opp. per stage con colonne
+   - `PUT /opportunities/:id/move` — sposta opportunità tra stage (kanban drag&drop)
+
+3. **Contact Merge — /v1/contacts/merge**:
+   - `POST /contacts/merge` — unisce due contatti (source → into) con merge transazionale
+
+4. **OpenAPI spec**:
+   - Schema `Quote` aggiunto a components.schemas
+   - Paths: `/quotes`, `/quotes/{id}`, `/quotes/{id}/status`, `/quotes/{id}/pdf`
+   - Paths: `/opportunities/board`, `/opportunities/{id}/move`, `/contacts/merge`
+
+5. **Test (26 test, 0 fail)**:
+   - `test/onda1-quotes-v1.test.js`: 13 test — tutti pass
+   - `test/onda1-kanban-merge-v1.test.js`: 8 test — tutti pass
+   - `test/v1-openapi.test.js`: 5 test — tutti pass (aggiornato per nuove route)
+
+6. **Verifica regressioni** (31 test suite v1): 31/31 pass — 0 fail
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ **323 test eseguiti in 31 suite**, 0 fail — nessuna regressione
+- ✅ **26 test nuovI + 5 test OpenAPI = 31 test, 0 fail** — nessuna regressione
 - ✅ **Sintassi OK**: `node --check` su tutti i file toccati
 - ✅ **Nessun segreto**, nessun riferimento CRM-specifico nel codice
-- ✅ **Migrazioni SQL**: nessuna migrazione nuova necessaria (solo logica JS)
+- ✅ **Migrazioni SQL**: nessuna migrazione nuova (tabelle già esistenti da 045)
 - ✅ **Nessuna decisione [APERTA]** in DECISIONI_UMANE.md
-- ✅ **Commit locale** `a60626e` (main): 4 file, 236 insertions
+- ✅ **Commit locale** — 6 file modificati
 
 ## PROSSIMO BLOCCO CONSIGLIATO
-1. **ONDA 4 tuning (continuazione)**: arricchimento payload webhook (es. dati
-   completi contatto/opportunità nel delivery invece del solo payload evento).
-2. **Oppure**: attendere input umano per definire ONDA 4 scope rimanente.
-3. **Review ROADMAP**: ONDA 4 non ancora definita formalmente nella roadmap;
-   valutare se documentare lo scope con l'umano.
+1. **ONDA 4 — Expose CRM agent routes su /v1**: segmenti, workflow, scoring sono
+   esposti solo su `/api/agent/` ma sono già pronti. Potrebbero essere utili
+   anche su `/v1/` per consumatori esterni.
+2. **Oppure**: attendere input umano per definire prossimo backlog.
+3. **Oppure**: arricchire payload webhook OUT con dati completi contatto/opportunità.
 
 ## COSE GIÀ PRONTE
 - Tutta la v1 (F0 + Onda 1 + rifinitura + import tool + OpenAPI).
 - ONDA 2 Phase 1-6 (booking, calendar sync, public page, payments, conversations, event-driven triggers).
 - ONDA 3 (Dashboard/Funnel, Analitica & Reporting, export CSV, import avanzato file CSV/JSON).
-- ONDA 4 (Webhook OUT event enrichment — eventi cancellazione + test multipli).
+- ONDA 4 (Webhook OUT event enrichment + Quotes/Board/Merge v1 API).
 
 ## COSE DA NON FARE
 - NON pushare su GitHub (nessun remote). Solo commit locali.

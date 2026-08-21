@@ -345,6 +345,28 @@ const SPEC = {
           meta: { type: "object" },
         },
       },
+      Quote: {
+        type: "object",
+        description: "Preventivo. status ∈ draft|sent|viewed|signed. items JSONB [{description, qty, price}].",
+        properties: {
+          id: { type: "integer" },
+          site_id: { type: "integer" },
+          opportunity_id: { type: "integer", nullable: true },
+          contact_email: { type: "string" },
+          quote_number: { type: "string" },
+          title: { type: "string" },
+          items: { type: "array" },
+          notes: { type: "string" },
+          status: { type: "string", enum: ["draft", "sent", "viewed", "signed"] },
+          token: { type: "string" },
+          total: { type: "number" },
+          sent_at: { type: "string", nullable: true },
+          viewed_at: { type: "string", nullable: true },
+          signed_at: { type: "string", nullable: true },
+          created_at: { type: "string" },
+          updated_at: { type: "string" },
+        },
+      },
     },
   },
 };
@@ -541,6 +563,31 @@ function buildPaths() {
       security: tenantSec(), responses: jsonList("pipelines", "Pipeline"),
     },
   };
+  base["/opportunities/board"] = {
+    get: {
+      tags: ["Opportunità"], summary: "Kanban board opportunità",
+      description: "Raggruppa opportunità per stage della pipeline (default o specificata via ?pipelineId=).",
+      parameters: [{ name: "pipelineId", in: "query", schema: { type: "integer" } }],
+      security: tenantSec(),
+      responses: jsonResponse(200, {
+        pipelines: { type: "array", items: { $ref: "#/components/schemas/Pipeline" } },
+        currentPipeline: { type: "object", nullable: true },
+        board: { type: "array" },
+        stages: { type: "array" },
+      }),
+    },
+  };
+  base["/opportunities/{id}/move"] = {
+    put: {
+      tags: ["Opportunità"], summary: "Sposta opportunità in un altro stage (kanban drag&drop)",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({
+        type: "object", required: ["stage"],
+        properties: { stage: { type: "string" }, pipelineId: { type: "integer" } },
+      }),
+      responses: jsonResource("opportunity", "Opportunity"),
+    },
+  };
   base["/opportunities/{id}"] = {
     get: {
       tags: ["Opportunità"], summary: "Dettaglio opportunità",
@@ -577,6 +624,70 @@ function buildPaths() {
     },
   };
 
+  // ── Quotes (Preventivi) ─────────────────────────────────────────────
+  base["/quotes"] = {
+    get: {
+      tags: ["Opportunità"], summary: "Lista preventivi",
+      description: "Filtri: status, contactEmail, opportunityId.",
+      parameters: [
+        { name: "status", in: "query", schema: { type: "string" } },
+        { name: "contactEmail", in: "query", schema: { type: "string" } },
+        { name: "opportunityId", in: "query", schema: { type: "integer" } },
+      ],
+      security: tenantSec(), responses: listWithTotal("quotes", "Quote"),
+    },
+    post: {
+      tags: ["Opportunità"], summary: "Crea preventivo",
+      requestBody: jsonBody({
+        type: "object", required: ["contactEmail"],
+        properties: {
+          opportunityId: { type: "integer" },
+          contactEmail: { type: "string" },
+          title: { type: "string" },
+          items: { type: "array", items: { type: "object", properties: { description: { type: "string" }, qty: { type: "number" }, price: { type: "number" } } } },
+          notes: { type: "string" },
+        },
+      }),
+      security: tenantSec(), responses: jsonCreated("quote", "Quote"),
+    },
+  };
+  base["/quotes/{id}"] = {
+    get: {
+      tags: ["Opportunità"], summary: "Dettaglio preventivo",
+      parameters: [pathId()], security: tenantSec(), responses: jsonResource("quote", "Quote"),
+    },
+    put: {
+      tags: ["Opportunità"], summary: "Aggiorna preventivo",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", properties: { title: { type: "string" }, items: { type: "array" }, notes: { type: "string" }, status: { type: "string" } } }),
+      responses: jsonResource("quote", "Quote"),
+    },
+    delete: {
+      tags: ["Opportunità"], summary: "Elimina preventivo",
+      parameters: [pathId()], security: tenantSec(), responses: jsonDeleted(),
+    },
+  };
+  base["/quotes/{id}/status"] = {
+    put: {
+      tags: ["Opportunità"], summary: "Cambia stato preventivo",
+      description: "Emette eventi quote_sent, quote_viewed, quote_signed per webhook OUT.",
+      parameters: [pathId()], security: tenantSec(),
+      requestBody: jsonBody({ type: "object", required: ["status"], properties: { status: { type: "string", enum: ["draft", "sent", "viewed", "signed"] } } }),
+      responses: jsonResource("quote", "Quote"),
+    },
+  };
+  base["/quotes/{id}/pdf"] = {
+    get: {
+      tags: ["Opportunità"], summary: "Scarica PDF preventivo",
+      description: "Genera PDF al volo con pdfkit (nessun file su disco).",
+      parameters: [pathId()], security: tenantSec(),
+      responses: {
+        200: { description: "PDF del preventivo", content: { "application/pdf": {} } },
+        404: jsonError("Preventivo non trovato"),
+      },
+    },
+  };
+
   // ── Contatti ─────────────────────────────────────────────────────────
   base["/contacts"] = {
     get: {
@@ -600,6 +711,20 @@ function buildPaths() {
         409: jsonError("Contatto già esistente"),
         400: jsonError("Dati non validi (email obbligatoria)"),
       },
+    },
+  };
+  base["/contacts/merge"] = {
+    post: {
+      tags: ["Contatti"], summary: "Merge contatti duplicati",
+      description: "Unisce sourceEmail in intoEmail. Transazionale: tags union, score max, notes concat, status avanzato.",
+      requestBody: jsonBody({
+        type: "object", required: ["sourceEmail", "intoEmail"],
+        properties: { sourceEmail: { type: "string" }, intoEmail: { type: "string" } },
+      }),
+      security: tenantSec(),
+      responses: jsonResponse(200, {
+        ok: { type: "boolean" }, merged: { type: "integer" }, into_email: { type: "string" },
+      }),
     },
   };
   base["/contacts/search"] = {

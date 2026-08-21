@@ -53,10 +53,13 @@ describe("v1 — documentazione OpenAPI", () => {
       "/config", "/location",
       // opportunità
       "/opportunities", "/opportunities/search", "/opportunities/upsert",
-      "/opportunities/lost-reason", "/opportunities/pipelines", "/opportunities/{id}",
+      "/opportunities/lost-reason", "/opportunities/pipelines",
+      "/opportunities/board", "/opportunities/{id}/move",
+      "/opportunities/{id}",
       "/opportunities/{id}/status", "/opportunities/{id}/followers",
       // contatti
       "/contacts", "/contacts/search", "/contacts/upsert", "/contacts/search/duplicate",
+      "/contacts/merge",
       "/contacts/{id}", "/contacts/{id}/notes", "/contacts/{id}/notes/{noteId}",
       "/contacts/{id}/tags", "/contacts/{id}/tags/{tag}", "/contacts/{id}/tasks",
       "/contacts/{id}/tasks/{taskId}", "/contacts/{id}/followers", "/contacts/{id}/campaigns",
@@ -67,6 +70,8 @@ describe("v1 — documentazione OpenAPI", () => {
       "/booking-public/{siteId}/slots", "/booking-public/{siteId}", "/booking-public/{siteId}/confirmed",
       // booking (ONDA 2)
       "/bookings", "/bookings/{id}",
+      // quotes (preventivi)
+      "/quotes", "/quotes/{id}", "/quotes/{id}/status", "/quotes/{id}/pdf",
       // booking calendar config (ONDA 2)
       "/booking-calendar-config",
       // payment links (ONDA 2)

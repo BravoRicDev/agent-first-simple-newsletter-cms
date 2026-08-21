@@ -12,7 +12,7 @@ se la risposta è già in ROADMAP.md / DECISIONI_UMANE.md / HANDOFF.md.
   progetto, file da creare/modificare, schema SQL, vincoli, istruzioni multiple
   in una sola invocazione. NON frammentare in microtask.
 - Modello più economico: `claude -p '<task ampio>' --model haiku
-  --dangerously-skip-permissions --max-turns 60`
+  --dangerously-skip-permissions --max-turns 300`
 - Se claude non ce la fa (errore/limite), fallback sul solito stack
   (deepseek-v4-flash) via i tool dell'agente.
 - L'agente del cron verifica UNA volta a fine lavoro (test + anti-leak), come da

@@ -11,11 +11,16 @@ import {
   updateCustomField, deleteCustomField, listByObjectKey,
 } from "../services/custom-fields.js";
 import { listCapabilities } from "../services/capabilities.js";
-import { getBoardPipelines } from "../services/opportunities.js";
+import {
+  getBoardPipelines, getBoard, moveOpportunityStage,
+  listQuotes, getQuote, createQuote, updateQuote,
+  setQuoteStatus, deleteQuote, buildQuotePdf,
+} from "../services/opportunities.js";
 import {
   listOpportunities, getOpportunity, createOpportunity,
   updateOpportunity, deleteOpportunity, upsertOpportunity,
 } from "../services/opportunities-v1.js";
+import { mergeContacts } from "../services/merge.js";
 import {
   createContact, getContact, updateContact, deleteContact,
   listContacts, searchContacts, upsertContactByEmail, findDuplicateContacts,
@@ -491,6 +496,17 @@ router.post("/contacts/search/duplicate", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Contatti: merge ────────────────────────────────────────────────────────
+router.post("/contacts/merge", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.body || {};
+    const result = await mergeContacts(siteId, b.sourceEmail || b.source_email, b.intoEmail || b.into_email);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 router.get("/contacts/:id", async (req, res, next) => {
   try {
     const contact = await getContact(req.tenant.siteId, req.params.id);
@@ -758,6 +774,16 @@ router.post("/opportunities/upsert", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Kanban board — PRIMA delle route parametriche ──────────────────────
+router.get("/opportunities/board", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const { pipelineId } = req.query;
+    const result = await getBoard(siteId, { pipelineId });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 router.get("/opportunities/:id", async (req, res, next) => {
   try {
     const opp = await getOpportunity(req.tenant.siteId, req.params.id);
@@ -813,6 +839,100 @@ router.get("/opportunities/:id/followers", async (req, res, next) => {
     const opp = await getOpportunity(req.tenant.siteId, req.params.id);
     if (!opp) return res.status(404).json({ error: "Opportunità non trovata" });
     res.json({ followers: [] });
+  } catch (err) { next(err); }
+});
+
+// ── Opportunità: sposta stage (kanban drag&drop) ────────────────────────
+router.put("/opportunities/:id/move", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.body || {};
+    const opp = await moveOpportunityStage(siteId, req.params.id, {
+      stage: b.stage, pipeline_id: b.pipelineId || b.pipeline_id,
+    });
+    if (!opp) return res.status(404).json({ error: "Opportunità non trovata" });
+    res.json({ opportunity: opp });
+  } catch (err) { next(err); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Quote / Preventivi (PDF generato al volo con pdfkit)
+// ─────────────────────────────────────────────────────────────────────────
+
+router.get("/quotes", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const { status, contactEmail, opportunityId } = req.query;
+    const quotes = await listQuotes(siteId, { status, email: contactEmail, opportunity_id: opportunityId });
+    res.json({ quotes, total: quotes.length });
+  } catch (err) { next(err); }
+});
+
+router.post("/quotes", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const b = req.body || {};
+    const quote = await createQuote(siteId, {
+      opportunity_id: b.opportunityId || b.opportunity_id || null,
+      contact_email: b.contactEmail || b.contact_email,
+      title: b.title,
+      items: b.items,
+      notes: b.notes,
+    });
+    if (!quote) return res.status(400).json({ error: "Dati preventivo non validi (contactEmail obbligatorio)" });
+    res.status(201).json({ quote });
+  } catch (err) { next(err); }
+});
+
+router.get("/quotes/:id", async (req, res, next) => {
+  try {
+    const quote = await getQuote(req.tenant.siteId, req.params.id);
+    if (!quote) return res.status(404).json({ error: "Preventivo non trovato" });
+    res.json({ quote });
+  } catch (err) { next(err); }
+});
+
+router.put("/quotes/:id", async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const quote = await updateQuote(req.tenant.siteId, req.params.id, {
+      title: b.title, items: b.items, notes: b.notes, status: b.status,
+    });
+    if (!quote) return res.status(404).json({ error: "Preventivo non trovato" });
+    res.json({ quote });
+  } catch (err) { next(err); }
+});
+
+router.put("/quotes/:id/status", async (req, res, next) => {
+  try {
+    const { status } = req.body || {};
+    if (!["draft", "sent", "viewed", "signed"].includes(status)) {
+      return res.status(400).json({ error: "status deve essere draft|sent|viewed|signed" });
+    }
+    const quote = await setQuoteStatus(req.tenant.siteId, req.params.id, status);
+    if (!quote) return res.status(404).json({ error: "Preventivo non trovato" });
+    res.json({ quote });
+  } catch (err) { next(err); }
+});
+
+router.delete("/quotes/:id", async (req, res, next) => {
+  try {
+    const n = await deleteQuote(req.tenant.siteId, req.params.id);
+    if (!n) return res.status(404).json({ error: "Preventivo non trovato" });
+    res.json({ deleted: true, id: parseInt(req.params.id, 10) });
+  } catch (err) { next(err); }
+});
+
+router.get("/quotes/:id/pdf", async (req, res, next) => {
+  try {
+    const { siteId } = req.tenant;
+    const quote = await getQuote(siteId, req.params.id);
+    if (!quote) return res.status(404).json({ error: "Preventivo non trovato" });
+    const siteRow = (await query("SELECT name FROM sites WHERE id = $1", [siteId])).rows[0];
+    const doc = buildQuotePdf(quote, siteRow?.name || "");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="preventivo-${quote.quote_number}.pdf"`);
+    doc.pipe(res);
   } catch (err) { next(err); }
 });
 
