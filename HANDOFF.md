@@ -10,51 +10,51 @@ riparte esattamente da qui.
   conversations — tutte **COMPLETE**.
 - **ONDA 2 Phase 6 — Event-driven agent conversation triggers**: **COMPLETO**.
 - **REFINEMENT — Test gap + e2e event pipeline**: **COMPLETO**.
-- **WEBHOOK OUT delivery e2e (n8n simulator)**: **COMPLETO** (questo run).
+- **WEBHOOK OUT delivery e2e (n8n simulator)**: **COMPLETO** (run precedente).
+- **POLISH CRON — Verifica sintassi, DECISIONI_UMANE, test**: **COMPLETO** (questo run).
 
-## COSTRUITO IN QUESTO RUN (nuovo commit)
+## COSTRUITO IN QUESTO RUN (nessun commit)
 
-### test/webhook-n8n-e2e.test.js — Webhook OUT delivery e2e (4 test)
-Test end-to-end del flusso webhook OUT con consegna HTTP reale a un server
-simulato (n8n simulator), coprendo:
+Nessuna modifica al codice. Solo verifica di regressione su un campione
+rappresentativo di test (~23 file, ~200 test). Risultato: 0 fail.
 
-1. **HMAC signature (1 test)**: crea webhook con secret, trigger evento
-   contact_created, enqueueForEvent + deliverPending con allowPrivate=true →
-   verifica che l'n8n simulator riceva la richiesta con header
-   X-Webhook-Signature corretto (HMAC-SHA256 calcolato col secret del webhook).
-   Verifica anche X-Webhook-Event e payload body.
+### Test verificati (per file, tutti pass)
 
-2. **Retry con backoff (1 test)**: n8n risponde 503 al primo tentativo →
-   delivery rimane "pending" con attempts=1 e next_attempt_at in futuro
-   (backoff esponenziale 2^1=2 min). Forzando next_attempt_at al passato, il
-   secondo tentativo consegna con successo (200). Verifica almeno 2 richieste
-   HTTP ricevute dal simulatore.
+| File | Test | Esito |
+|------|------|-------|
+| test/f0-foundations.test.js | 9 | ✅ |
+| test/f0-location-mapping.test.js | 9 | ✅ |
+| test/v1-rate-limit.test.js | 13 | ✅ |
+| test/v1-openapi.test.js | 5 | ✅ |
+| test/onda1-contacts.test.js | 8 | ✅ |
+| test/onda1-opportunities-v1.test.js | 4 | ✅ |
+| test/onda1-opportunity-custom-fields.test.js | 5 | ✅ |
+| test/onda1-webhook-out.test.js | 1 | ✅ |
+| test/onda2-booking.test.js | 6 | ✅ |
+| test/onda2-booking-calendar.test.js | 8 | ✅ |
+| test/onda2-booking-public.test.js | 9 | ✅ |
+| test/onda2-booking-webhook-e2e.test.js | 3 | ✅ |
+| test/onda2-conversations-v1.test.js | 14 | ✅ |
+| test/onda2-runtime-events.test.js | 7 | ✅ |
+| test/onda2-runtime-event-flow.test.js | 6 | ✅ |
+| test/webhook-n8n-e2e.test.js | 4 | ✅ |
+| test/webhooks.test.js | 10 | ✅ |
+| test/payments.test.js | 7 | ✅ |
+| test/v1-payments.test.js | 9 | ✅ |
+| test/crm-suite.test.js | 10 | ✅ |
+| test/auth-rate-limit.test.js + api-tokens + rbac | 29 | ✅ |
+| test/crm-conversations.test.js + crm-opportunities | 23 | ✅ |
+| test/import-crm-tool.test.js + export-import + pipeline | 15 | ✅ |
+| test/crm-segments.test.js + crm-workflows.test.js | 14 | ✅ |
 
-3. **Max tentativi → failed (1 test)**: webhook verso endpoint che risponde
-   sempre 503 → dopo MAX_ATTEMPTS (5) delivery va in status "failed".
-   Forza next_attempt_at prima di ogni tentativo.
-
-4. **Isolamento tenant (1 test)**: pulisce webhook di Tenant A, crea webhook
-   solo su Tenant B per contact_created. Evento su Tenant A → deliverPending
-   su A non consegna nulla (0 delivered). Evento su Tenant B → consegna
-   correttamente (1 delivered).
-
-### Verifica regressione
-- v1-OpenAPI (5 test): ✅ 5/5
-- F0 foundations + location + rate-limit (31 test): ✅ 31/31
-- ONDA 1 contacts + opportunities + custom-fields + webhook (18 test): ✅ 18/18
-- ONDA 2 booking + booking-calendar (23 test): ✅ 23/23
-- ONDA 2 booking webhook e2e (3 test): ✅ 3/3
-- **Nuovo webhook n8n e2e (4 test)**: ✅ 4/4
-- **Totale verificato: ~84 test, 0 fail**
+**Totale verificato: ~230 test, 0 fail**
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ `node --check` su test/webhook-n8n-e2e.test.js: OK
-- ✅ Nuovo test: webhook n8n e2e (4 test) — tutti pass (HMAC, retry, max-failed, isolation)
-- ✅ Regressione zero (0 fail su ~84 test verificati)
-- ✅ Nessun segreto nel codice (tutti i secret generati con crypto.randomBytes)
+- ✅ `node --check` su tutti i file `src/*.js`: nessun errore sintattico
+- ✅ DECISIONI_UMANE: tutti [RISOLTO] già applicati, nessun [APERTA]
+- ✅ Nessun segreto nel codice
+- ✅ Nessun `.env` versionato
 - ✅ Nessun `git reset --hard` / force
-- ✅ DECISIONI_UMANE: nessun [APERTA] — tutti [RISOLTO] già applicati
 
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **Performance/security test**: verificare che rate limiting per-tenant funzioni
