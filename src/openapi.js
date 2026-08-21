@@ -1073,16 +1073,20 @@ function buildPaths() {
     get: {
       tags: ["Attività"],
       summary: "Log attività recenti del tenant",
-      description: "Restituisce gli eventi di attività (contact_events) del tenant, ordinati dal più recente. Filtrabile per email, eventType (anche CSV) con paginazione limit/offset.",
+      description: "Restituisce gli eventi di attività (contact_events) del tenant, ordinati dal più recente. Filtrabile per email, eventType (anche CSV), range temporale from/to, con paginazione limit/offset oppure a cursore (keyset su id, più efficiente). Con ?format=csv restituisce il documento CSV.",
       security: tenantSec(),
       parameters: [
         { name: "email", in: "query", schema: { type: "string" }, description: "Filtro per email (alias: contactEmail)" },
         { name: "eventType", in: "query", schema: { type: "string" }, description: "Filtro per tipo evento (singolo o CSV)" },
+        { name: "from", in: "query", schema: { type: "string" }, description: "Data minima (ISO, created_at >= from). Alias: startDate" },
+        { name: "to", in: "query", schema: { type: "string" }, description: "Data massima (ISO, created_at <= to). Alias: endDate" },
         { name: "limit", in: "query", schema: { type: "integer" }, description: "Max righe (default 50, max 200)" },
         { name: "offset", in: "query", schema: { type: "integer" }, description: "Offset per paginazione" },
+        { name: "cursor", in: "query", schema: { type: "integer" }, description: "Paginazione a cursore: id dell'ultima riga ricevuta (restituisce le successive)" },
+        { name: "format", in: "query", schema: { type: "string", enum: ["csv"] }, description: "Se 'csv' restituisce il documento CSV (text/csv)" },
       ],
       responses: {
-        "200": { description: "Lista attività", content: { "application/json": { schema: { type: "object", properties: { activities: { type: "array" }, total: { type: "integer" } } } } } },
+        "200": { description: "Lista attività (JSON) o CSV", content: { "application/json": { schema: { type: "object", properties: { activities: { type: "array" }, total: { type: "integer" }, nextCursor: { type: "integer", nullable: true } } } } } },
         401: jsonError("Non autenticato"),
       },
     },
@@ -1121,10 +1125,13 @@ function buildPaths() {
     get: {
       tags: ["Email Stats"],
       summary: "Elenco campagne con statistiche",
-      description: "Lista delle campagne del tenant con per-campagna: inviati, aperture, click e tassi.",
+      description: "Lista delle campagne del tenant con per-campagna: inviati, aperture, click e tassi. Con ?format=csv restituisce il documento CSV.",
       security: tenantSec(),
+      parameters: [
+        { name: "format", in: "query", schema: { type: "string", enum: ["csv"] }, description: "Se 'csv' restituisce il documento CSV (text/csv)" },
+      ],
       responses: {
-        "200": { description: "Campagne con statistiche", content: { "application/json": { schema: { type: "object", properties: { campaigns: { type: "array" } } } } } },
+        "200": { description: "Campagne con statistiche (JSON) o CSV", content: { "application/json": { schema: { type: "object", properties: { campaigns: { type: "array" } } } } } },
         401: jsonError("Non autenticato"),
       },
     },
@@ -1149,10 +1156,13 @@ function buildPaths() {
     get: {
       tags: ["Email Stats"],
       summary: "Elenco sequenze con statistiche",
-      description: "Lista delle sequenze email del tenant con per-sequenza: passi attivi, invii, aperture, click e tassi.",
+      description: "Lista delle sequenze email del tenant con per-sequenza: passi attivi, invii, aperture, click e tassi. Con ?format=csv restituisce il documento CSV.",
       security: tenantSec(),
+      parameters: [
+        { name: "format", in: "query", schema: { type: "string", enum: ["csv"] }, description: "Se 'csv' restituisce il documento CSV (text/csv)" },
+      ],
       responses: {
-        "200": { description: "Sequenze con statistiche", content: { "application/json": { schema: { type: "object", properties: { sequences: { type: "array" } } } } } },
+        "200": { description: "Sequenze con statistiche (JSON) o CSV", content: { "application/json": { schema: { type: "object", properties: { sequences: { type: "array" } } } } } },
         401: jsonError("Non autenticato"),
       },
     },

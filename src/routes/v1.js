@@ -47,6 +47,24 @@ import {
 } from "../services/reports.js";
 
 // ─────────────────────────────────────────────────────────────────────────
+// Helper CSV (export ONDA 3). Genera un documento CSV testuale con header,
+// valori escapati (quote raddoppiate) e separatore `,`. Le righe arrivano
+// come array di oggetti; `columns` definisce l'ordine/la selezione
+// ([{ key, label }]). Usato da /v1/activities e /v1/email-stats/*?format=csv.
+// ─────────────────────────────────────────────────────────────────────────
+function csvEscape(value) {
+  const s = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export function toCsv(rows = [], columns = []) {
+  if (!columns.length) return "";
+  const header = columns.map((c) => csvEscape(c.label)).join(",");
+  const body = rows.map((r) => columns.map((c) => csvEscape(r[c.key])).join(","));
+  return [header, ...body].join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Surface API compatibile ("API compatibili con CRM diffusi"), montata su
 // /v1. Tutte le route passano da requireTenant(): header Location-Id + Bearer
 // API key del sito. Header `Version:` ignorato (vedi middleware/tenant-api.js).
@@ -1059,7 +1077,7 @@ router.get("/funnel", async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────
 
 // Helper comune per leggere attività da contact_events.
-async function fetchActivities(siteId, { email = null, eventType = null, limit = 50, offset = 0 } = {}) {
+async function fetchActivities(siteId, { email = null, eventType = null, from = null, to = null, limit = 50, offset = 0, cursor = null } = {}) {
   const params = [siteId];
   let where = "WHERE site_id = $1";
   if (email) { params.push(email); where += ` AND email = $${params.length}`; }
@@ -1070,6 +1088,19 @@ async function fetchActivities(siteId, { email = null, eventType = null, limit =
       where += ` AND event_type = ANY($${params.length + 1}::varchar[])`;
       params.push(types);
     }
+  }
+  if (from) {
+    params.push(from);
+    where += ` AND created_at >= $${params.length}`;
+  }
+  if (to) {
+    params.push(to);
+    where += ` AND created_at <= $${params.length}`;
+  }
+  if (cursor !== null && cursor !== undefined && cursor !== "") {
+    // Paginazione a cursore (keyset su id DESC, più efficiente dell'offset).
+    params.push(parseInt(cursor, 10) || 0);
+    where += ` AND id < $${params.length}`;
   }
   const tIdx = params.length + 1;
   const offIdx = params.length + 2;
@@ -1084,7 +1115,8 @@ async function fetchActivities(siteId, { email = null, eventType = null, limit =
     params
   )).rows[0].total;
 
-  return { activities: rows, total };
+  const nextCursor = rows.length === limit ? (rows[rows.length - 1].id) : null;
+  return { activities: rows, total, nextCursor };
 }
 
 router.get("/activities", async (req, res, next) => {
@@ -1094,10 +1126,24 @@ router.get("/activities", async (req, res, next) => {
     const lim = Math.min(parseInt(q.limit, 10) || 50, 200);
     const off = parseInt(q.offset, 10) || 0;
     const email = q.email || q.contactEmail || null;
-    const { activities, total } = await fetchActivities(siteId, {
-      email, eventType: q.eventType, limit: lim, offset: off,
+    const { activities, total, nextCursor } = await fetchActivities(siteId, {
+      email, eventType: q.eventType, from: q.from || q.startDate || null,
+      to: q.to || q.endDate || null, limit: lim, offset: off, cursor: q.cursor,
     });
-    res.json({ activities, total });
+    // Export CSV (?format=csv) → text/csv con download header.
+    if (String(q.format || "").toLowerCase() === "csv") {
+      const csv = toCsv(activities, [
+        { key: "id", label: "id" },
+        { key: "email", label: "email" },
+        { key: "event_type", label: "event_type" },
+        { key: "payload", label: "payload" },
+        { key: "created_at", label: "created_at" },
+      ]);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", "attachment; filename=activities.csv");
+      return res.send(csv);
+    }
+    res.json({ activities, total, nextCursor });
   } catch (err) { next(err); }
 });
 
@@ -1124,6 +1170,25 @@ router.get("/email-stats", async (req, res, next) => {
 router.get("/email-stats/campaigns", async (req, res, next) => {
   try {
     const campaigns = await listEmailStatsCampaigns(req.tenant.siteId);
+    if (String((req.query || {}).format || "").toLowerCase() === "csv") {
+      const csv = toCsv(campaigns, [
+        { key: "id", label: "id" },
+        { key: "subject", label: "subject" },
+        { key: "status", label: "status" },
+        { key: "created_at", label: "created_at" },
+        { key: "sent_at", label: "sent_at" },
+        { key: "total", label: "sent" },
+        { key: "opened", label: "opened" },
+        { key: "clickers", label: "clickers" },
+        { key: "clicks", label: "clicks" },
+        { key: "open_rate", label: "open_rate" },
+        { key: "click_rate", label: "click_rate" },
+        { key: "ctor", label: "ctor" },
+      ]);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", "attachment; filename=email-stats-campaigns.csv");
+      return res.send(csv);
+    }
     res.json({ campaigns });
   } catch (err) { next(err); }
 });
@@ -1139,6 +1204,23 @@ router.get("/email-stats/campaigns/:id", async (req, res, next) => {
 router.get("/email-stats/sequences", async (req, res, next) => {
   try {
     const sequences = await listEmailStatsSequences(req.tenant.siteId);
+    if (String((req.query || {}).format || "").toLowerCase() === "csv") {
+      const csv = toCsv(sequences, [
+        { key: "id", label: "id" },
+        { key: "name", label: "name" },
+        { key: "active", label: "active" },
+        { key: "steps", label: "steps" },
+        { key: "total", label: "sent" },
+        { key: "opened", label: "opened" },
+        { key: "clickers", label: "clickers" },
+        { key: "open_rate", label: "open_rate" },
+        { key: "click_rate", label: "click_rate" },
+        { key: "ctor", label: "ctor" },
+      ]);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", "attachment; filename=email-stats-sequences.csv");
+      return res.send(csv);
+    }
     res.json({ sequences });
   } catch (err) { next(err); }
 });
