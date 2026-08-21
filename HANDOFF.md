@@ -4,12 +4,18 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
+- **POLISH CRON (21/08/2026) — monitoraggio + spot-check**:
+  - Repo libero, working tree pulita, nessun lock git.
+  - 156 file `src/*.js` verificati: 0 errori sintattici.
+  - Nessun segreto nel codice, nessun `.env` versionato.
+  - DB test `cms-test-pg` up da 5 giorni.
+  - Spot-check 3 gruppi: sandbox (7 ✅), foundations+route-order (11 ✅), contacts+opportunities (12 ✅).
+  - **Flaky test noto** confermato: `test/webhooks.test.js` subtest 3 fallisce in isolamento
+    per race su porta effimera (delivered=0 → timeout). Da fixare.
+  - Nessuna regressione strutturale rilevata.
 - **BULK REGRESSION TEST — 71/71 test file, 572 test, 0 fail, 6 skip**:
   Suite completa eseguita in 14 gruppi isolati (migrazione fresca per gruppo).
   Tutti i test custom ONDA/F0 + CMS native passano. Nessuna regressione.
-- **1 flaky test** (`test/webhooks.test.js` subtest "deliverPending spedisce con
-  X-Webhook-Event e firma HMAC") fallisce sporadicamente in gruppo per race
-  su porta effimera — passa SEMPRE in isolamento. Da tenere monitorato.
 
 ## COSTRUITO IN QUESTO RUN (3 commit: 8560e46 + 2 successivi)
 
