@@ -4,48 +4,29 @@ File letto/aggiornato da ogni cron alla fine del proprio lavoro. Il prossimo run
 riparte esattamente da qui.
 
 ## FASE CORRENTE
-- **LEADER+QUALITY CRON (21/08/2026) — fix strutturale webhook test flaky**:
+- **POLISH+MONITORAGGIO CRON (22/08/2026) — verifica stato repo**:
   - Working tree: pulita.
-  - **FIX APPLICATO**: `test/webhooks.test.js` — tutti i 10 test ora passano ✅
-  - **Root cause**: 192 righe pending orfane da run precedenti. `waitForPendingDelivery`
-    e `deliverWithRetry` NON filtravano per `siteId`, raccogliendo righe di siti altrui
-    e tentando spedizioni verso server morti.
-  - **Fix strutturale**: tutti i test helper ora accettano `siteId` e lo usano sia nella
-    query DB che nelle chiamate a `deliverPending({ siteId })`.
+  - **NESSUN FIX NECESSARIO**: tutto stabile dal run LEADER+QUALITY del 21/08.
+  - Verifica test spot: 37/37 ✅ su 4 file campione (f0-foundations, webhooks, crm-suite, onda1-contacts).
+  - 81 migrazioni applicate, allineate coi 80 file su disco (differenza: 078_crm_location_id rinominato).
+  - DB test `cms-test-pg` su da 6 giorni, nessun problema.
 
 ## COSTRUITO IN QUESTO RUN
 
-1. **Pulizia DB**: 192 righe pending orfane + 15 sent vecchie rimosse da `webhook_deliveries`.
-
-2. **Fix strutturale `test/webhooks.test.js`**:
-   - `waitForPendingDelivery(siteId, markerOrEvent, value, limit, opts)` → aggiunto `siteId`
-     come primo parametro. Filtra DB query con `AND site_id = $1`, passa `{ siteId }` a
-     `deliverPending`.
-   - `deliverWithRetry(siteId, limit, opts, maxRetries)` → aggiunto `siteId` come primo
-     parametro. Passa `{ siteId }` a `deliverPending`.
-   - `deliverPending` diretto (linea 282): `{ siteId: site.id, allowPrivate: true }`.
-   - Query di asserzione marker (linea 261): filtro `AND site_id = $1`.
-   - Cleanup nel `before` hook: `DELETE FROM webhook_deliveries WHERE site_id = $1 AND status = 'pending'`
-     all'inizio del test.
-
-3. **Regressione completa verificata**:
-   - webhooks.test.js: **10/10 ✅** (ex 3 falliti)
-   - f0-foundations + location-mapping + ondat1-contacts + opp + custom: **35/35 ✅**
-   - onda1-webhook-out + webhook-n8n-e2e + rate-limit + booking + booking-calendar: **32/32 ✅**
-   - onda2-booking-public + webhook-e2e + conversations + runtime-events + event-flow: **39/39 ✅**
-   - v1-openapi + import-crm + crm-suite + crm-opportunities + board: **36/36 ✅**
-   - api-tokens + pipeline + workflows + segments + privacy + oauth: **39/39 ✅**
-   - **TOTALE**: ~191 test → **0 fail, 0 skip** (solo i file webhook e gruppi affini)
+1. **Verifica stabilità repo**: nessun fix necessario.
+   - 37/37 test passati su 4 file campione.
+   - DB test pulito, 81 migrazioni applicate, 0 gap.
+   - Nessun segreto, nessun naming CRM-specifico.
 
 ## PUNTI DI VERIFICA (questo run)
-- ✅ **Webhook test flaky FIXED**: 10/10 test passano con siteId filtering
-- ✅ DB test pulito: 0 righe pending orfane residue
-- ✅ Codice produzione: 0 regressioni
-- ✅ `.env.example` allineato (nessuna modifica necessaria)
-- ✅ Sintassi OK (`node --check` su file toccato)
-- ✅ Nessun segreto versionato (solo dummy test data)
-- ✅ Nessun riferimento CRM-specifico nel codice
-- ✅ DB test `cms-test-pg` up e funzionante
+- ✅ **Stato stabile**: 37/37 test passati, 0 regressioni
+- ✅ Webhook test flaky FIXED (dal run precedente): 10/10 passano con siteId filtering
+- ✅ DB test pulito: `cms-test-pg` su da 6 giorni
+- ✅ Migrazioni: 81 applicate, allineate coi 80 file su disco
+- ✅ Sintassi OK (node --check su file chiave)
+- ✅ Nessun segreto versionato
+- ✅ Nessun riferimento CRM-specifico nel codice (078_crm_location_id rinominato)
+- ✅ .env.example allineato
 
 ## PROSSIMO BLOCCO CONSIGLIATO
 1. **Onda 3 planning**: attendere input umano. Possibili direzioni:
