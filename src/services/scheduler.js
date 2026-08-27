@@ -191,6 +191,16 @@ async function schedulerTick() {
     } catch (err) {
       logger.error(`Report tick fallito: ${err.message}`);
     }
+
+    // Source Sync (import dal CRM sorgente): siti con intervallo scaduto.
+    // Fire-and-forget: il run può durare minuti, non deve bloccare il tick.
+    try {
+      const { runSourceSyncDue } = await import("./source-sync/index.js");
+      const ss = await runSourceSyncDue();
+      if (ss.started > 0) logger.info(`Source sync: avviati ${ss.started} run`);
+    } catch (err) {
+      logger.error(`Source sync tick fallito: ${err.message}`);
+    }
   } finally {
     if (lockClient) {
       try {

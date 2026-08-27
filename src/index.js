@@ -23,6 +23,8 @@ import snippetsRoutes from "./routes/snippets.js";
 import serveRoutes, { publicCatchAllRouter } from "./routes/serve.js";
 import settingsRoutes from "./routes/settings.js";
 import agentRoutes from "./routes/agent.js";
+import adminImportRoutes from "./routes/admin-import.js";
+import { checkEncryptionKey } from "./services/crypto.js";
 // API dati in sola lettura per i moduli satellite (collego-sales).
 import salesApiRoutes from "./routes/sales-api.js";
 import mediaRoutes from "./routes/media.js";
@@ -268,6 +270,7 @@ async function start() {
   app.use(adminClientServicesRoutes);
   app.use(adminAgentBuilderRouter);
   app.use(adminDashboardRoutes);
+  app.use(adminImportRoutes);
   app.use(publicWebhookRouter);
   app.use(publicOauthRouter);
   app.use(publicPaymentsRouter);
@@ -331,6 +334,12 @@ async function start() {
 
   app.listen(config.port, () => {
     logger.info(`${config.appName} service running on port ${config.port}`);
+    const encKey = checkEncryptionKey();
+    if (!encKey.present) {
+      logger.warn("ENCRYPTION_KEY assente: satelliti e source-sync non potranno cifrare/decifrare token finché non è impostata.");
+    } else if (!encKey.valid) {
+      logger.warn("ENCRYPTION_KEY presente ma di lunghezza/formato non valido (attesi 32 byte hex a 64 caratteri o base64): satelliti e source-sync non potranno decifrare i token esistenti.");
+    }
     startScheduler();
   });
 }

@@ -1,0 +1,124 @@
+<h1>Import / Sync dal CRM sorgente</h1>
+
+<p style="font-size:13px;color:#666;max-width:700px;">
+  Sincronizzazione fedele dei dati dal CRM sorgente verso questo CMS: l'engine
+  pagina le liste del sorgente e, per ogni record, "caccia" i dati collegati
+  (note, task, opportunità, conversazioni, appuntamenti) — le submission dei
+  form/survey che referenziano contatti sconosciuti fanno ripartire la caccia.
+  Le date di creazione/aggiornamento vengono FORZATE ai valori del sorgente
+  per rifletterne fedelmente lo stato. Record con data aggiornamento identica
+  vengono saltati. Vedi <code>docs/SOURCE_SYNC_PLAN.md</code>.
+</p>
+
+<% if (error) { %>
+<div style="background:#fee2e2;border:1px solid #ef4444;border-radius:6px;padding:12px;margin:16px 0;max-width:700px;"><strong><%= error %></strong></div>
+<% } %>
+<% if (saved) { %>
+<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:6px;padding:12px;margin:16px 0;max-width:700px;">Configurazione salvata.</div>
+<% } %>
+
+<% if (!siteId) { %>
+<p>Nessun sito associato all'utente (i superadmin possono passare <code>?site_id=</code>).</p>
+<% } else { %>
+
+<h2 style="margin-top:28px;">Stato</h2>
+<table style="border-collapse:collapse;font-size:13px;">
+  <tr>
+    <td style="padding:4px 12px 4px 0;"><strong>Sito</strong></td><td>#<%= siteId %></td>
+    <td style="padding:4px 12px;"><strong>In corso</strong></td>
+    <td><%= running ? "SÌ" : "no" %></td>
+    <% if (budget) { %>
+      <td style="padding:4px 12px;"><strong>Budget API oggi</strong></td>
+      <td><%= budget.callsToday %> / <%= budget.max %></td>
+    <% } %>
+  </tr>
+</table>
+
+<h2 style="margin-top:28px;">Configurazione</h2>
+<form method="POST" action="/admin/import/config" style="max-width:640px;border:1px solid #e5e7eb;border-radius:6px;padding:16px;">
+  <div class="form-group">
+    <label><input type="checkbox" name="enabled" <%= config?.enabled ? "checked" : "" %>> Sync abilitato (cron ogni <%= config?.min_interval_minutes || 15 %> min)</label>
+  </div>
+  <div class="form-group">
+    <label>Base URL del servizio sorgente</label>
+    <input type="text" name="base_url" value="<%= config?.base_url || '' %>" placeholder="https://…" style="width:100%;">
+  </div>
+  <div class="form-group">
+    <label>Location ID</label>
+    <input type="text" name="location_id" value="<%= config?.location_id || '' %>" style="width:100%;">
+  </div>
+  <div class="form-group">
+    <label>Company ID (agencyId CRM sorgente — richiesto per sincronizzare gli utenti)</label>
+    <input type="text" name="company_id" value="<%= config?.company_id || '' %>" style="width:100%;">
+  </div>
+  <div class="form-group">
+    <label>Token pieno (write-only: lascia vuoto per mantenere quello salvato<%= config?.token_enc ? " — attualmente impostato" : "" %>)</label>
+    <input type="password" name="token" value="" autocomplete="off" style="width:100%;">
+  </div>
+  <div class="form-group">
+    <label><input type="checkbox" name="match_by_email" <%= !config || config.match_by_email ? "checked" : "" %>> Adotta contatti locali con stessa email (S1)</label>
+  </div>
+  <div class="form-group" style="display:flex;gap:24px;flex-wrap:wrap;">
+    <div>
+      <label>Throttle (req/s)</label>
+      <input type="number" name="throttle_rps" min="1" value="<%= config?.throttle_rps ?? 8 %>" style="width:90px;">
+    </div>
+    <div>
+      <label>Quota giornaliera sorgente</label>
+      <input type="number" name="daily_quota" min="1000" value="<%= config?.daily_quota ?? 250000 %>" style="width:130px;">
+    </div>
+    <div>
+      <label>Budget %</label>
+      <input type="number" name="budget_percent" min="1" max="100" value="<%= config?.budget_percent ?? 30 %>" style="width:70px;">
+    </div>
+    <div>
+      <label>Intervallo cron (min)</label>
+      <input type="number" name="min_interval_minutes" min="1" value="<%= config?.min_interval_minutes ?? 15 %>" style="width:80px;">
+    </div>
+  </div>
+  <button type="submit">Salva configurazione</button>
+</form>
+
+<h2 style="margin-top:28px;">Esegui ora</h2>
+<form method="POST" action="/admin/import/run" style="max-width:640px;display:flex;gap:16px;align-items:center;">
+  <button type="submit" <%= running ? "disabled" : "" %>>Sync completo</button>
+  <label><input type="checkbox" name="dry_run"> Dry-run (nessuna scrittura)</label>
+</form>
+
+<h2 style="margin-top:28px;">Ultimi run</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px;width:100%;">
+  <tr style="background:#f9fafb;text-align:left;">
+    <th>ID</th><th>Modalità</th><th>Status</th><th>Inizio</th><th>Fine</th><th>Stats per risorsa</th><th>Errori</th>
+  </tr>
+  <% for (const r of runs) { %>
+  <tr>
+    <td><%= r.id %></td>
+    <td><%= r.mode %></td>
+    <td><%= r.status %></td>
+    <td><%= new Date(r.started_at).toLocaleString("it-IT") %></td>
+    <td><%= r.finished_at ? new Date(r.finished_at).toLocaleString("it-IT") : "—" %></td>
+    <td>
+      <% for (const [res, s] of Object.entries(r.stats || {})) { %>
+        <code><%= res %></code>: <%= s.fetched %> fetch · <%= s.upserted %> ins · <%= s.updated %> upd · <%= s.skipped %> skip · <%= s.errors %> err<br>
+      <% } %>
+    </td>
+    <td><%= (r.errors && r.errors.length) ? JSON.stringify(r.errors).slice(0,120) : "—" %></td>
+  </tr>
+  <% } %>
+  <% if (!runs.length) { %><tr><td colspan="7">Nessun run ancora.</td></tr><% } %>
+</table>
+
+<h2 style="margin-top:28px;">Watermark per risorsa</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
+  <tr style="background:#f9fafb;text-align:left;"><th>Risorsa</th><th>Ultimo run</th><th>Counts</th></tr>
+  <% for (const s of state) { %>
+  <tr>
+    <td><%= s.resource_type %></td>
+    <td><%= s.last_run_at ? new Date(s.last_run_at).toLocaleString("it-IT") : "—" %></td>
+    <td><code><%= JSON.stringify(s.last_counts) %></code></td>
+  </tr>
+  <% } %>
+  <% if (!state.length) { %><tr><td colspan="3">—</td></tr><% } %>
+</table>
+
+<% } %>
