@@ -30,12 +30,19 @@
       'ad_user_data': marketing ? 'granted' : 'denied',
       'ad_personalization': marketing ? 'granted' : 'denied'
     });
-    // Carica il Meta Pixel SOLO a consenso marketing concesso (vedi loadMetaPixel)
-    if (marketing && typeof loadMetaPixel === 'function') {
-      loadMetaPixel();
-      if (window.fbq) fbq('consent', 'grant');
-      if (window.fbq) fbq('track', 'PageView');
-    } else if (window.fbq) {
+    // Meta Pixel: il base code è già nell'head (init + consent revoke di
+    // default). Qui, a consenso marketing concesso, sblocchiamo il pixel e
+    // inviamo PageView + un segnale globale (cms:marketing-granted) a cui gli
+    // script di conversione nella pagina (Lead, CompleteRegistration, ...)
+    // sono in ascolto per partire solo DOPO il consenso.
+    if (marketing) {
+      window.__cmsMarketingGranted = true;
+      if (window.fbq && typeof window.fbq === 'function') {
+        fbq('consent', 'grant');
+        fbq('track', 'PageView');
+      }
+      try { window.dispatchEvent(new Event('cms:marketing-granted')); } catch (e) {}
+    } else if (window.fbq && typeof window.fbq === 'function') {
       fbq('consent', 'revoke');
     }
     <% if (typeof clarityId !== 'undefined' && clarityId) { %>
