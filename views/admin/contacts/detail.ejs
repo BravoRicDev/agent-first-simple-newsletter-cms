@@ -1,0 +1,161 @@
+<h1>Contatto — <%= email %></h1>
+
+<div class="actions">
+  <a href="/admin/contacts?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Torna ai contatti</a>
+  <a href="/admin/contacts/<%= encodeURIComponent(email) %>/export?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">📄 Esporta dati (GDPR)</a>
+  <form method="POST" action="/admin/contacts/<%= encodeURIComponent(email) %>/delete" style="display:inline;" class="contact-delete-form" data-contact-email="<%= email %>">
+    <input type="hidden" name="site_id" value="<%= siteId %>">
+    <button type="submit" class="btn btn-danger">🗑️ Cancella tutti i dati (GDPR)</button>
+  </form>
+</div>
+<p style="font-size:12px;color:#666;max-width:600px;">
+  "Esporta" scarica un JSON con tutto ciò che sappiamo su questa email (invii form, chiamate, iscrizione newsletter, tag/note) — utile per rispondere a una richiesta di accesso ai dati.
+  "Cancella" li elimina in modo permanente da tutte le tabelle — non annullabile.
+</p>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin:15px 0;color:#065f46;font-size:14px;">
+  ✅ Salvato.
+</div>
+<% } %>
+
+<form method="POST" action="/admin/contacts/<%= encodeURIComponent(email) %>" style="max-width:600px;margin-top:15px;border:1px solid #e5e7eb;border-radius:6px;padding:16px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group">
+    <label>Tag (separati da virgola)</label>
+    <input type="text" name="tags" value="<%= (contact.tags || []).join(', ') %>" placeholder="es. lead caldo, cliente">
+  </div>
+  <% if (typeof enabledModules !== 'undefined' && enabledModules.includes('sales_pipeline')) { %>
+  <div class="form-group">
+    <label>Stadio pipeline</label>
+    <select name="status">
+      <option value="">— nessuno stadio —</option>
+      <% pipelineStages.forEach(s => { %>
+        <option value="<%= s.key %>" <%= contact.status === s.key ? 'selected' : '' %>><%= s.label %></option>
+      <% }) %>
+      <% if (contact.status && !pipelineStages.some(s => s.key === contact.status)) { %>
+        <option value="<%= contact.status %>" selected><%= contact.status %> (personalizzato)</option>
+      <% } %>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Valore stimato (€)</label>
+    <input type="number" step="0.01" min="0" name="value_estimate" value="<%= (contact.value_estimate ?? '') %>">
+  </div>
+  <% } else { %>
+  <div class="form-group">
+    <label>Stato</label>
+    <input type="text" name="status" value="<%= contact.status || '' %>" placeholder="es. nuovo, contattato, cliente, perso">
+  </div>
+  <% } %>
+  <div class="form-group">
+    <label>Note</label>
+    <textarea name="notes" style="min-height:100px;"><%= contact.notes || '' %></textarea>
+  </div>
+  <button type="submit" class="btn">Salva</button>
+</form>
+
+<h2 style="font-size:15px;margin-top:24px;" id="note">Note lead</h2>
+<form method="POST" action="/admin/contacts/<%= encodeURIComponent(email) %>/notes" style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;max-width:600px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;flex:1;">
+    <label>Aggiungi nota (autore: <%= (typeof user !== 'undefined' && user.name) ? user.name : 'tu' %>)</label>
+    <textarea name="body" rows="2" required placeholder="Es. chiamato oggi, interessato al pacchetto base…"></textarea>
+  </div>
+  <button type="submit" class="btn">Aggiungi</button>
+</form>
+<% if (!notes || notes.length === 0) { %>
+  <p style="color:#999;font-size:13px;">Nessuna nota. Il campo "Note" qui sopra resta per appunti veloci; le note qui sotto formano la timeline con autore e data.</p>
+<% } else { %>
+<div style="display:flex;flex-direction:column;gap:8px;max-width:600px;">
+  <% notes.forEach(n => { %>
+  <div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;display:flex;justify-content:space-between;gap:10px;">
+    <div>
+      <div style="font-size:12px;color:#666;margin-bottom:3px;">
+        <span class="badge <%= n.author_type === 'agent' ? 'badge-active' : 'badge-disabled' %>"><%= n.author_type === 'agent' ? '🤖 agente' : n.author_type === 'system' ? '⚙️ sistema' : '👤 umano' %></span>
+        <% if (n.author_name) { %> <strong><%= n.author_name %></strong><% } %>
+        · <%= new Date(n.created_at).toLocaleString('it-IT') %>
+      </div>
+      <div style="white-space:pre-wrap;"><%= n.body %></div>
+    </div>
+    <form method="POST" action="/admin/contacts/<%= encodeURIComponent(email) %>/notes/<%= n.id %>/delete" style="flex-shrink:0;" onsubmit="return confirm('Eliminare la nota?');">
+      <input type="hidden" name="site_id" value="<%= siteId %>">
+      <button class="btn btn-sm btn-danger">🗑️</button>
+    </form>
+  </div>
+  <% }) %>
+</div>
+<% } %>
+
+<h2 style="font-size:15px;margin-top:24px;">Conversazioni</h2>
+<p style="font-size:12px;color:#666;max-width:600px;">
+  Thread email/WhatsApp di questo contatto. Le email inviate da campagne/sequenze vengono registrate qui automaticamente; i messaggi WhatsApp si registrano dal bot o via API agente/MCP. Vista completa: <a href="/admin/conversations?site_id=<%= siteId %>&email=<%= encodeURIComponent(email) %>">Conversazioni</a>.
+</p>
+<% if (!conversations || conversations.length === 0) { %>
+  <p style="color:#999;font-size:13px;">Nessuna conversazione per questo contatto.</p>
+<% } else { %>
+<div style="display:flex;flex-direction:column;gap:8px;max-width:600px;">
+  <% conversations.forEach(c => { %>
+  <a href="/admin/conversations?site_id=<%= siteId %>&thread=<%= c.id %>&email=<%= encodeURIComponent(email) %>" style="display:flex;justify-content:space-between;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;text-decoration:none;color:inherit;">
+    <span><%= c.channel === 'whatsapp' ? '💬 WhatsApp' : '✉️ Email' %> — <%= c.last_subject || c.subject || '(nessun oggetto)' %></span>
+    <span class="badge <%= c.status === 'closed' ? 'badge-disabled' : 'badge-active' %>"><%= c.status %></span>
+  </a>
+  <% }) %>
+</div>
+<% } %>
+
+<% if (calls) { %>
+<h2 style="font-size:15px;margin-top:24px;">Chiamate</h2>
+<form method="POST" action="/admin/calls/new" style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;max-width:500px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <input type="hidden" name="email" value="<%= email %>">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Programma una chiamata</label>
+    <input type="datetime-local" name="scheduled_at" required>
+  </div>
+  <button type="submit" class="btn btn-sm">Aggiungi</button>
+</form>
+<% if (calls.length === 0) { %>
+  <p style="color:#999;font-size:13px;">Nessuna chiamata per questo contatto.</p>
+<% } else { %>
+<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+  <% calls.forEach(c => { %>
+  <div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;display:flex;justify-content:space-between;">
+    <span><%= new Date(c.scheduled_at).toLocaleString('it-IT') %> (<%= c.duration_minutes %> min)</span>
+    <span class="badge <%= c.status === 'annullata' ? 'badge-disabled' : 'badge-active' %>"><%= c.status %></span>
+  </div>
+  <% }) %>
+</div>
+<% } %>
+<% } %>
+
+<p style="font-size:12px;color:#666;margin-top:20px;"><%= timeline.length %> invio/i su <%= new Set(timeline.map(t => t.form_slug)).size %> form diverso/i.</p>
+
+<div style="display:flex;flex-direction:column;gap:14px;margin-top:10px;">
+  <% timeline.forEach(t => { %>
+  <div style="border:1px solid #e5e7eb;border-radius:6px;padding:14px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+      <strong><code><%= t.form_slug %></code></strong>
+      <span style="font-size:12px;color:#999;"><%= new Date(t.created_at).toLocaleString('it-IT') %></span>
+    </div>
+    <% Object.entries(t.data).forEach(([k, v]) => { %>
+      <div style="font-size:13px;margin-bottom:3px;"><strong><%= k %>:</strong> <%= v %></div>
+    <% }) %>
+  </div>
+  <% }) %>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.contact-delete-form').forEach(form => {
+    form.addEventListener('submit', function(event) {
+      const email = form.dataset.contactEmail;
+      const confirmed = confirm(
+        'Cancellare TUTTI i dati di "' + email + '"?\n\n' +
+        'Invii form, chiamate, iscrizione newsletter, tag e note verranno eliminati in modo permanente. Non è annullabile.'
+      );
+      if (!confirmed) event.preventDefault();
+    });
+  });
+});
+</script>

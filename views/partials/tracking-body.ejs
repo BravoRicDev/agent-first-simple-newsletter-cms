@@ -1,0 +1,74 @@
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking) { %>
+<div id="cms-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1f2937;color:#f3f4f6;padding:16px 20px;padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px));font-size:13px;z-index:9999;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+  <span style="flex:1;min-width:200px;">
+    <%= consentBannerText %>
+    <% if (typeof consentPrivacyUrl !== 'undefined' && consentPrivacyUrl) { %>
+    <a href="<%= consentPrivacyUrl %>" style="color:#93c5fd;text-decoration:underline;">Scopri di più</a>
+    <% } %>
+  </span>
+  <span style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button type="button" id="cms-consent-reject" style="background:transparent;color:#f3f4f6;border:1px solid #6b7280;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;"><%= consentRejectLabel %></button>
+    <button type="button" id="cms-consent-accept" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;"><%= consentAcceptLabel %></button>
+  </span>
+</div>
+<script>
+(function () {
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookie(name, value, days) {
+    var expires = new Date(Date.now() + days * 86400000).toUTCString();
+    // Secure solo su HTTPS: il consenso non deve viaggiare in chiaro su HTTP
+    var secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/; SameSite=Lax' + secure;
+  }
+  function applyConsent(analytics, marketing) {
+    gtag('consent', 'update', {
+      'analytics_storage': analytics ? 'granted' : 'denied',
+      'ad_storage': marketing ? 'granted' : 'denied',
+      'ad_user_data': marketing ? 'granted' : 'denied',
+      'ad_personalization': marketing ? 'granted' : 'denied'
+    });
+    // Carica il Meta Pixel SOLO a consenso marketing concesso (vedi loadMetaPixel)
+    if (marketing && typeof loadMetaPixel === 'function') {
+      loadMetaPixel();
+      if (window.fbq) fbq('consent', 'grant');
+      if (window.fbq) fbq('track', 'PageView');
+    } else if (window.fbq) {
+      fbq('consent', 'revoke');
+    }
+    <% if (typeof clarityId !== 'undefined' && clarityId) { %>
+    if (analytics && !window.clarity) {
+      (function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+      t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+      y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","<%= clarityId %>");
+    }
+    <% } %>
+  }
+
+  var banner = document.getElementById('cms-consent-banner');
+  var storedAnalytics = getCookie('consent_analytics');
+  var storedMarketing = getCookie('consent_marketing');
+
+  if (storedAnalytics !== null) {
+    applyConsent(storedAnalytics === '1', storedMarketing === '1');
+  } else {
+    banner.style.display = 'flex';
+  }
+
+  document.getElementById('cms-consent-accept').addEventListener('click', function () {
+    setCookie('consent_analytics', '1', 365);
+    setCookie('consent_marketing', '1', 365);
+    applyConsent(true, true);
+    banner.style.display = 'none';
+  });
+  document.getElementById('cms-consent-reject').addEventListener('click', function () {
+    setCookie('consent_analytics', '0', 365);
+    setCookie('consent_marketing', '0', 365);
+    applyConsent(false, false);
+    banner.style.display = 'none';
+  });
+})();
+</script>
+<% } %>

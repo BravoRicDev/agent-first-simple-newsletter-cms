@@ -1,0 +1,38 @@
+<h1>Media non referenziati<%= site ? ' — ' + site.name : '' %></h1>
+
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  File presenti su disco ma non trovati in nessuna pagina del sito. Verifica prima di eliminare:
+  potrebbero essere referenziati altrove (email, snippet, template) e non rilevati da questa scansione.
+</p>
+
+<div style="margin-bottom:20px;">
+  <a href="/admin/media?site_id=<%= selectedSiteId %>" class="btn" style="background:#6b7280;">← Torna a Media</a>
+</div>
+
+<% if (unused.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun file non referenziato trovato.</p>
+<% } else { %>
+<form method="POST" action="/admin/media/cleanup?site_id=<%= selectedSiteId %>" onsubmit="return confirm('Eliminare tutti i <%= unused.length %> file non referenziati? Operazione irreversibile.')" style="margin-bottom:15px;">
+  <input type="hidden" name="all_unused" value="true">
+  <button type="submit" class="btn btn-danger">Elimina tutti (<%= unused.length %>)</button>
+</form>
+
+<table>
+  <thead><tr><th>File</th><th>Dimensione</th><th>Ultima modifica</th><th></th></tr></thead>
+  <tbody>
+    <% unused.forEach(f => { %>
+    <tr>
+      <td><a href="/media/<%= selectedSiteId %>/<%= f.filename %>" target="_blank" rel="noopener"><%= f.filename %></a></td>
+      <td><%= f.size_formatted %></td>
+      <td><%= new Date(f.mtime).toLocaleString('it-IT') %></td>
+      <td>
+        <form method="POST" action="/admin/media/cleanup?site_id=<%= selectedSiteId %>" onsubmit="return confirm('Eliminare questo file?')" style="display:inline;">
+          <input type="hidden" name="filename" value="<%= f.filename %>">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

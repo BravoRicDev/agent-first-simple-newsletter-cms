@@ -1,0 +1,79 @@
+<h1>Disponibilità chiamate</h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/calls?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Chiamate</a>
+</div>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin:15px 0;color:#065f46;font-size:14px;">✅ Salvato.</div>
+<% } %>
+
+<form method="GET" style="margin-bottom:15px;max-width:600px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;display:flex;gap:10px;align-items:flex-end;">
+    <div style="flex:1;">
+      <label>Disponibilità per</label>
+      <select name="calendar_id" onchange="this.form.submit()">
+        <option value="">Generale (tutte le prenotazioni senza calendario)</option>
+        <% calendars.forEach(c => { %>
+          <option value="<%= c.id %>" <%= calendarId == c.id ? 'selected' : '' %>><%= c.name %><%= c.enabled ? '' : ' (disattivato)' %></option>
+        <% }) %>
+      </select>
+    </div>
+    <% if (calendarId) { %>
+      <a href="/admin/calls/availability?site_id=<%= siteId %>" class="btn" style="background:#6b7280;white-space:nowrap;">← Generale</a>
+    <% } %>
+  </div>
+</form>
+
+<p style="font-size:13px;color:#666;max-width:600px;">
+  <% if (calendarId) { %>
+    Fascia oraria settimanale ricorrente del calendario selezionato. Se un giorno resta vuoto, il calendario usa la disponibilità "Generale" per quel giorno.
+  <% } else { %>
+    Fascia oraria settimanale ricorrente generale (usata dalla
+    <a href="/book/<%= siteId %>" target="_blank">pagina pubblica di prenotazione</a> e da ogni calendario che non ha le proprie regole).
+  <% } %>
+  Lascia vuoto un giorno per non renderlo prenotabile. Orari nel fuso orario del server.
+</p>
+
+<form method="POST" action="/admin/calls/availability" style="max-width:600px;margin-top:15px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <input type="hidden" name="calendar_id" value="<%= calendarId || '' %>">
+  <table>
+    <thead>
+      <tr><th>Giorno</th><th>Dalle</th><th>Alle</th><th>Durata slot</th></tr>
+    </thead>
+    <tbody>
+      <% weekdays.forEach(w => { %>
+      <% const rule = rulesByWeekday.get(w.value); %>
+      <tr>
+        <td><%= w.label %></td>
+        <td><input type="time" name="start_<%= w.value %>" value="<%= rule ? rule.start_time.slice(0,5) : '' %>"></td>
+        <td><input type="time" name="end_<%= w.value %>" value="<%= rule ? rule.end_time.slice(0,5) : '' %>"></td>
+        <td>
+          <select name="slot_<%= w.value %>">
+            <option value="15" <%= rule && rule.slot_minutes === 15 ? 'selected' : '' %>>15 min</option>
+            <option value="30" <%= !rule || rule.slot_minutes === 30 ? 'selected' : '' %>>30 min</option>
+            <option value="45" <%= rule && rule.slot_minutes === 45 ? 'selected' : '' %>>45 min</option>
+            <option value="60" <%= rule && rule.slot_minutes === 60 ? 'selected' : '' %>>60 min</option>
+          </select>
+        </td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+  <button type="submit" class="btn" style="margin-top:15px;">Salva disponibilità</button>
+</form>

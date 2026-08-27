@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prenota appuntamento — <%= site.name %></title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; margin: 0; padding: 24px 16px; }
+    .box { background: #fff; border-radius: 8px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p.sub { font-size: 14px; color: #666; margin: 0 0 20px; }
+    .day { margin-bottom: 18px; }
+    .day h3 { font-size: 13px; color: #666; text-transform: capitalize; margin: 0 0 8px; }
+    .slots { display: flex; flex-wrap: wrap; gap: 8px; }
+    .slot-btn { background: #f3f4f6; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+    .slot-btn:hover { background: #e5e7eb; }
+    .slot-btn.selected { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .form-group { margin: 14px 0; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .form-group input { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .btn { width: 100%; padding: 12px; background: #4f46e5; color: #fff; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; margin-top: 8px; }
+    .btn:disabled { background: #c7c7c7; cursor: not-allowed; }
+    .error { background: #fee2e2; color: #991b1b; border-radius: 6px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px; }
+    .empty { color: #999; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Prenota appuntamento</h1>
+    <p class="sub"><%= site.name %></p>
+
+    <% if (typeof error !== 'undefined' && error) { %>
+      <div class="error"><%= error %></div>
+    <% } %>
+
+    <% if (groups.length === 0) { %>
+      <p class="empty">Nessuno slot disponibile al momento.</p>
+    <% } else { %>
+    <form method="POST" action="/booking-public/<%= site.id %>" id="bookForm">
+      <input type="text" name="_honeypot" style="position:absolute;left:-9999px;" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <input type="text" name="website" style="position:absolute;left:-9999px;" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <input type="hidden" name="slot" id="slotInput" required>
+
+      <% groups.forEach(g => { %>
+      <div class="day">
+        <h3><%= new Date(g.day + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }) %></h3>
+        <div class="slots">
+          <% g.slots.forEach(s => { %>
+          <button type="button" class="slot-btn" data-iso="<%= s.start.toISOString() %>" data-duration="<%= s.duration_minutes %>">
+            <%= s.start.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) %>
+          </button>
+          <% }) %>
+        </div>
+      </div>
+      <% }) %>
+
+      <div class="form-group">
+        <label>Nome</label>
+        <input type="text" name="name" required>
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" name="email" required>
+      </div>
+      <button type="submit" class="btn" id="submitBtn" disabled>Scegli un orario</button>
+    </form>
+    <% } %>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const buttons = document.querySelectorAll('.slot-btn');
+      const slotInput = document.getElementById('slotInput');
+      const submitBtn = document.getElementById('submitBtn');
+      buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          buttons.forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          slotInput.value = btn.dataset.iso;
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Prenota';
+        });
+      });
+    });
+  </script>
+</body>
+</html>

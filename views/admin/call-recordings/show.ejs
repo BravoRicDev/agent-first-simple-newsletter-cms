@@ -1,0 +1,115 @@
+<% const verdict = rec.verdict && typeof rec.verdict === 'object' ? rec.verdict : {}; %>
+<% const crit = verdict.criteri && typeof verdict.criteri === 'object' ? verdict.criteri : {}; %>
+<h1>Registrazione #<%= rec.id %></h1>
+<a href="/admin/call-recordings?site_id=<%= siteId %>">← Torna all'elenco</a>
+
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+<% if (saved === '1') { %><div class="alert alert-success">Verdetto aggiornato.</div><% } %>
+
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin:16px 0;">
+  <div style="flex:1;min-width:300px;background:#fff;border:1px solid #eef0f4;border-radius:10px;padding:16px;">
+    <table>
+      <tr><td style="color:#6b7280;padding:4px 12px 4px 0;">Settr.</td><td><%= rec.setter_name || '—' %></td></tr>
+      <tr><td style="color:#6b7280;padding:4px 12px 4px 0;">Contatto</td><td><%= rec.contact_name || rec.contact_email || '—' %></td></tr>
+      <tr><td style="color:#6b7280;padding:4px 12px 4px 0;">Opportunità</td><td>
+        <% if (rec.opportunity_id) { %><a href="/admin/opportunities/<%= rec.opportunity_id %>?site_id=<%= siteId %>"><%= rec.opportunity_id %></a><% } else { %>—<% } %>
+      </td></tr>
+      <tr><td style="color:#6b7280;padding:4px 12px 4px 0;">Data</td><td><%= new Date(rec.created_at).toLocaleString('it-IT') %></td></tr>
+      <tr><td style="color:#6b7280;padding:4px 12px 4px 0;">Stato</td><td><%= rec.status %></td></tr>
+      <tr><td style="color:#6b7280;padding:4px 12px 4px 0;">Audio</td><td>
+        <% if (rec.audio_path) { %>
+          <a href="/media-protected/<%= rec.audio_path %>" target="_blank">▶ Ascolta / scarica</a>
+        <% } else { %>—<% } %>
+      </td></tr>
+    </table>
+  </div>
+
+  <div style="flex:1;min-width:300px;background:#fff;border:1px solid #eef0f4;border-radius:10px;padding:16px;">
+    <h3 style="margin:0 0 12px;">Verdetto validità</h3>
+    <% if (!verdict || !verdict.valida) { %>
+      <p style="color:#9ca3af;">Non ancora valutato.</p>
+    <% } else { %>
+      <div style="font-size:26px;font-weight:800;margin-bottom:8px;
+        <%= verdict.valida === 'si' ? 'color:#065f46;' : verdict.valida === 'no' ? 'color:#991b1b;' : 'color:#92400e;' %>">
+        <%= verdict.valida.toUpperCase() %>
+      </div>
+      <% if (verdict.motivo_cap_classico) { %>
+        <div style="font-size:13px;color:#6b7280;margin-bottom:8px;">Motivo: <code><%= verdict.motivo_cap_classico %></code></div>
+      <% } %>
+      <% if (verdict.punteggio != null) { %>
+        <div style="margin-bottom:10px;">
+          <span style="font-size:13px;color:#6b7280;">Punteggio: <%= (verdict.punteggio * 100).toFixed(0) %>%</span>
+          <div style="height:6px;background:#eef0f4;border-radius:3px;margin-top:4px;">
+            <div style="height:6px;background:#4f46e5;border-radius:3px;width:<%= Math.min(100, verdict.punteggio * 100) %>%"></div>
+          </div>
+        </div>
+      <% } %>
+      <% if (Object.keys(crit).length) { %>
+        <table style="font-size:13px;">
+          <tr><td style="color:#6b7280;padding:3px 10px 3px 0;">Apertura lead</td><td><%= crit.apertura_lead || '—' %></td></tr>
+          <tr><td style="color:#6b7280;padding:3px 10px 3px 0;">Info raccolte</td><td><%= (crit.info_raccolte || []).join(', ') || '—' %></td></tr>
+          <tr><td style="color:#6b7280;padding:3px 10px 3px 0;">Decisore</td><td><%= crit.parlato_con_decisore || '—' %></td></tr>
+          <tr><td style="color:#6b7280;padding:3px 10px 3px 0;">Esito</td><td><%= crit.esito_conversazione || '—' %></td></tr>
+        </table>
+      <% } %>
+      <% if (verdict.motivazione) { %>
+        <p style="margin-top:10px;font-size:13px;color:#374151;background:#f9fafb;padding:10px;border-radius:8px;"><%= verdict.motivazione %></p>
+      <% } %>
+      <% if (Array.isArray(verdict.fatti_osservati) && verdict.fatti_osservati.length) { %>
+        <div style="font-size:12px;color:#6b7280;margin-top:8px;">
+          <strong>Fatti osservati:</strong>
+          <ul style="margin:6px 0 0 18px;padding:0;">
+            <% verdict.fatti_osservati.forEach(f => { %><li><%= f %></li><% }) %>
+          </ul>
+        </div>
+      <% } %>
+      <% if (verdict.reviewed_by_human) { %>
+        <div style="margin-top:10px;font-size:12px;color:#065f46;">✓ Verdetto confermato da revisore umano<%= verdict.reviewed_by ? (' — ' + verdict.reviewed_by) : '' %></div>
+      <% } %>
+      <% if (verdict.eval_error) { %>
+        <div style="margin-top:10px;font-size:12px;color:#b45309;background:#fef3c7;padding:8px;border-radius:8px;">
+          ⚠️ <strong>Errore tecnico di valutazione</strong> (il "dubbia" è dovuto a un guasto, non a un dubbio del modello):<br><code><%= verdict.eval_error %></code>
+        </div>
+      <% } %>
+    <% } %>
+
+    <% if (rec.status === 'valutato') { %>
+      <h4 style="margin:16px 0 8px;">Revisione umana</h4>
+      <form method="POST" action="/admin/call-recordings/<%= rec.id %>/review?site_id=<%= siteId %>" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select name="valida" style="padding:8px;">
+          <option value="si" <%= verdict.valida === 'si' ? 'selected' : '' %>>SI — valida (si paga)</option>
+          <option value="no" <%= verdict.valida === 'no' ? 'selected' : '' %>>NO — non valida</option>
+          <option value="dubbia" <%= verdict.valida === 'dubbia' ? 'selected' : '' %>>DUBBIA — revisione</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Conferma verdetto</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<div style="background:#fff;border:1px solid #eef0f4;border-radius:10px;padding:16px;">
+  <h3 style="margin-top:0;">Trascrizione diarizzata</h3>
+  <% if (rec.status === 'valutato') { %>
+    <div style="white-space:pre-wrap;font-size:14px;line-height:1.6;font-family:ui-monospace,monospace;"><%= rec.transcript || 'Nessuna trascrizione.' %></div>
+  <% } else { %>
+    <div style="color:#6b7280;">
+      <% if (rec.status === 'caricato') { %>
+        <p>Audio caricato ma non ancora elaborato.</p>
+        <form method="POST" action="/admin/call-recordings/<%= rec.id %>/process?site_id=<%= siteId %>">
+          <button type="submit" class="btn btn-primary">▶ Trascrivi + Diarizza + Valuta</button>
+        </form>
+      <% } else if (rec.status === 'errore') { %>
+        <p>Elaborazione fallita. Riprova.</p>
+        <form method="POST" action="/admin/call-recordings/<%= rec.id %>/process?site_id=<%= siteId %>">
+          <button type="submit" class="btn btn-primary">▶ Riprova</button>
+        </form>
+      <% } else { %>
+        <p>Elaborazione in corso... (status: <%= rec.status %>)</p>
+      <% } %>
+    </div>
+  <% } %>
+</div>
+
+<form method="POST" action="/admin/call-recordings/<%= rec.id %>/delete?site_id=<%= siteId %>" onsubmit="return confirm('Eliminare questa registrazione e il suo file audio?');" style="margin-top:16px;">
+  <button type="submit" class="btn" style="background:#fee2e2;color:#991b1b;">Elimina registrazione</button>
+</form>

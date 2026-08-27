@@ -1,0 +1,60 @@
+<h1><%= subscriber.email %></h1>
+
+<div class="actions">
+  <a href="/admin/newsletter/subscribers?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Iscritti</a>
+</div>
+
+<div style="background:#fff;border-radius:8px;padding:16px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin:15px 0;display:flex;gap:24px;flex-wrap:wrap;font-size:14px;">
+  <div>
+    <strong>Stato:</strong>
+    <span class="badge <%= subscriber.status === 'confirmed' ? 'badge-active' : (subscriber.status === 'unsubscribed' ? 'badge-disabled' : 'badge-wrapped') %>">
+      <%= subscriber.status %>
+    </span>
+  </div>
+  <div><strong>Iscritto il:</strong> <%= new Date(subscriber.subscribed_at).toLocaleString('it-IT') %></div>
+  <div><strong>Confermato il:</strong> <%= subscriber.confirmed_at ? new Date(subscriber.confirmed_at).toLocaleString('it-IT') : '—' %></div>
+  <% if (subscriber.unsubscribed_at) { %>
+    <div><strong>Disiscritto il:</strong> <%= new Date(subscriber.unsubscribed_at).toLocaleString('it-IT') %></div>
+  <% } %>
+</div>
+
+<h2 style="font-size:16px;margin:20px 0 10px;">Email inviate (<%= sends.length %>)</h2>
+<p style="font-size:12px;color:#999;margin-bottom:10px;">
+  Il contenuto mostrato è quello sorgente (eventuali <code>{{snippet:...}}</code>/<code>{{var:...}}</code> non sono espansi qui) — l'HTML finale viene composto solo al momento dell'invio e non viene conservato.
+</p>
+
+<% if (sends.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessuna email inviata a questo iscritto finora.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Tipo</th><th>Oggetto</th><th>Inviata il</th><th>Aperta</th><th>Contenuto</th></tr>
+  </thead>
+  <tbody>
+    <% sends.forEach(s => { %>
+    <tr>
+      <td><span class="badge <%= s.kind === 'broadcast' ? 'badge-wrapped' : 'badge-standalone' %>"><%= s.kind === 'broadcast' ? 'Broadcast' : 'Sequenza' %></span></td>
+      <td><%= s.subject %></td>
+      <td style="white-space:nowrap;"><%= new Date(s.sent_at).toLocaleString('it-IT') %></td>
+      <td>
+        <% if (s.opened_at) { %>
+          ✅ <%= new Date(s.opened_at).toLocaleString('it-IT') %> (<%= s.open_count %>×)
+        <% } else { %>
+          <span style="color:#999;">non aperta</span>
+        <% } %>
+      </td>
+      <td>
+        <details>
+          <summary style="cursor:pointer;color:#4f46e5;font-size:13px;">Vedi</summary>
+          <div style="max-width:500px;max-height:300px;overflow:auto;border:1px solid #eee;border-radius:6px;padding:10px;margin-top:8px;font-size:13px;">
+            <!-- Stored XSS: html_content non sanitizzato → iframe sandbox
+                 (senza allow-scripts) invece di <%- grezzo. -->
+            <iframe sandbox style="width:100%;min-height:150px;border:0;" srcdoc="<%= escapeAttr(s.html_content) %>"></iframe>
+          </div>
+        </details>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

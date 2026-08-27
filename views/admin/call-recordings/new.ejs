@@ -1,0 +1,52 @@
+<h1>Nuova registrazione chiamata</h1>
+
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+
+<form method="POST" action="/admin/call-recordings?site_id=<%= siteId %>" enctype="multipart/form-data">
+  <div class="form-group">
+    <label>File audio (mp3, wav, m4a, ogg, ...)</label>
+    <input type="file" name="audio" accept="audio/*,.mp3,.wav,.m4a,.ogg,.mp4,.wma,.aac,.flac,.opus,.webm" required>
+  </div>
+
+  <div class="form-group">
+    <label>Opportunità associata</label>
+    <select name="opportunity_id" id="oppSelect">
+      <option value="">— Nessuna —</option>
+      <% opportunities.forEach(o => { %>
+        <option value="<%= o.id %>" data-email="<%= o.contact_email %>"><%= o.title %> (<%= o.contact_email || 'no email' %>)</option>
+      <% }) %>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label>Nome setter (chi ha chiamato)</label>
+    <input type="text" name="setter_name" placeholder="es. Nikola">
+  </div>
+
+  <div class="form-group">
+    <label>Email contatto (lead)</label>
+    <input type="email" name="contact_email" id="contactEmail" placeholder="es. lead@email.it">
+  </div>
+
+  <div class="form-group">
+    <label>Nome contatto (lead, opzionale)</label>
+    <input type="text" name="contact_name" id="contactName" placeholder="es. Mario Rossi">
+  </div>
+
+  <div style="color:#6b7280;font-size:12px;margin-bottom:16px;">
+    💡 Se selezioni un'opportunità, email/nome contatto e funnel vengono compilati automaticamente (puoi comunque modificarli).
+    Il file audio viene salvato in area <strong>protetta</strong> (mai esposto pubblicamente).
+  </div>
+
+  <button type="submit" class="btn btn-primary">Carica e salva</button>
+  <a class="btn" href="/admin/call-recordings?site_id=<%= siteId %>">Annulla</a>
+</form>
+
+<script>
+  document.getElementById('oppSelect').addEventListener('change', function () {
+    const opt = this.options[this.selectedIndex];
+    if (opt && opt.value) {
+      document.getElementById('contactEmail').value = opt.dataset.email || '';
+    }
+  });
+</script>

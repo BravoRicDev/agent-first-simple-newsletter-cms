@@ -1,0 +1,274 @@
+<h1><%= form ? 'Modifica form' : 'Nuovo form' %><%= form ? ' — ' + form.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (error) { %>
+<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#991b1b;font-size:14px;">
+  ⚠️ <%= error %>
+</div>
+<% } %>
+
+<form method="POST" action="<%= form ? '/admin/forms/' + form.slug : '/admin/forms' %>" id="form-builder">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <input type="hidden" name="fields_json" id="fields_json" value="">
+
+  <div class="form-group">
+    <label>Nome del form</label>
+    <input type="text" name="name" required maxlength="255" value="<%= form ? form.name : '' %>" placeholder="Es. Contatti, Richiesta preventivo">
+  </div>
+
+  <% if (form) { %>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" value="<%= form.slug %>" disabled style="background:#f3f4f6;">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Non modificabile: è usato nel tag <code>{{form:<%= form.slug %>}}</code> già inserito nelle pagine.</div>
+  </div>
+  <% } else { %>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" name="slug" required maxlength="255" pattern="[a-z0-9-]+" placeholder="es. contatti">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Solo lettere minuscole, numeri e trattini. Non modificabile dopo la creazione.</div>
+  </div>
+  <% } %>
+
+  <div class="form-group">
+    <label>Testo del pulsante di invio</label>
+    <input type="text" name="submit_label" maxlength="100" value="<%= form ? form.submit_label : 'Invia' %>">
+  </div>
+
+  <div class="form-group">
+    <label>Messaggio di conferma (opzionale)</label>
+    <input type="text" name="success_message" maxlength="1000" value="<%= form ? form.success_message : '' %>" placeholder="Es. Grazie, ti risponderemo entro 24 ore.">
+  </div>
+
+  <div class="form-group">
+    <label>Pagina di ringraziamento / redirect (opzionale)</label>
+    <input type="text" name="redirect_url" maxlength="500" value="<%= form && form.redirect_url ? form.redirect_url : '' %>" placeholder="Es. /grazie">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Dopo l'invio il visitatore viene portato qui invece che alla pagina del form. Accetta percorsi del sito (es. <code>/grazie</code>) o URL dello stesso dominio. I client AJAX ricevono la destinazione nel campo <code>redirect</code> del JSON.
+    </div>
+  </div>
+
+  <h2 style="font-size:16px;margin-top:28px;">Domande</h2>
+  <div id="fields-list"></div>
+  <button type="button" id="add-field" class="btn" style="background:#6b7280;margin-top:8px;">+ Aggiungi domanda</button>
+
+  <div class="form-group" style="margin-top:24px;">
+    <label>Iscrizione newsletter automatica (opzionale)</label>
+    <select name="newsletter_optin_key" id="newsletter_optin_select">
+      <option value="">Nessuna</option>
+    </select>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Se scegli una domanda di tipo checkbox, chi la spunta viene iscritto alla newsletter del sito (con conferma via email, come l'iscrizione manuale) usando l'email individuata in questo invio. Aggiungi prima una domanda checkbox qui sotto per poterla selezionare.
+    </div>
+  </div>
+
+  <div class="form-group" style="margin-top:16px;">
+    <label style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" name="newsletter_auto_confirm" value="1" <%= form && form.newsletter_auto_confirm ? 'checked' : '' %>>
+      Iscrizione newsletter diretta (salta il doppio opt-in)
+    </label>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Se attivo, chi compila il form viene iscritto subito come confermato, senza ricevere una email di conferma. Le sequenze evergreen partono immediatamente.
+    </div>
+  </div>
+
+  <div class="form-group" style="margin-top:24px;">
+    <label>Tag contatto / sequenza (opzionale)</label>
+    <select name="newsletter_tag_key" id="newsletter_tag_select" style="margin-bottom:8px;">
+      <option value="">Nessuno</option>
+    </select>
+    <input type="text" name="newsletter_tag_value" id="newsletter_tag_value" maxlength="100" placeholder="Tag fisso (opzionale)" style="width:100%;" value="<%= form && form.newsletter_tag_value ? form.newsletter_tag_value : '' %>">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Assegna un tag al contatto (CRM) a ogni invio — le sequenze/campagne con <code>target_tag</code> corrispondente partono da sole. Scegli la domanda da cui ricavare il tag: se lasci vuoto "Tag fisso", il tag è il valore compilato/scelto nel campo (ideale per menu a tendina le cui opzioni sono i tag, es. <code>01-ferramenta</code>); se lo compili, quel tag viene assegnato quando il campo è valorizzato (ideale per checkbox "voglio ricevere info X").
+    </div>
+  </div>
+
+  <div class="actions" style="margin-top:28px;">
+    <button type="submit" class="btn"><%= form ? 'Salva modifiche' : 'Crea form' %></button>
+    <a href="/admin/forms?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Annulla</a>
+  </div>
+</form>
+
+<template id="field-row-template">
+  <div class="field-row" style="border:1px solid #e5e7eb;border-radius:6px;padding:14px;margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="flex:2;min-width:200px;">
+      <label style="font-size:12px;color:#666;">Domanda / etichetta</label>
+      <input type="text" class="field-label" placeholder="Es. Nome e cognome" style="width:100%;">
+    </div>
+    <div style="flex:1;min-width:140px;">
+      <label style="font-size:12px;color:#666;">Chiave campo</label>
+      <input type="text" class="field-key" placeholder="auto" style="width:100%;">
+    </div>
+    <div style="flex:1;min-width:150px;">
+      <label style="font-size:12px;color:#666;">Tipo</label>
+      <select class="field-type" style="width:100%;">
+        <option value="text">Testo breve</option>
+        <option value="email">Email</option>
+        <option value="tel">Telefono</option>
+        <option value="textarea">Testo lungo</option>
+        <option value="select">Menu a tendina</option>
+        <option value="radio">Scelta singola</option>
+        <option value="checkbox">Checkbox (sì/no)</option>
+      </select>
+    </div>
+    <div style="flex:0 0 auto;padding-top:20px;">
+      <label style="font-size:12px;"><input type="checkbox" class="field-required"> Obbligatorio</label>
+    </div>
+    <div style="flex:0 0 auto;padding-top:18px;">
+      <button type="button" class="btn btn-sm btn-danger field-remove">Rimuovi</button>
+    </div>
+    <div class="field-options-wrap" style="flex-basis:100%;display:none;">
+      <label style="font-size:12px;color:#666;">Opzioni (una per riga)</label>
+      <textarea class="field-options" style="width:100%;min-height:70px;" placeholder="Opzione 1&#10;Opzione 2&#10;Opzione 3"></textarea>
+    </div>
+  </div>
+</template>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  var list = document.getElementById('fields-list');
+  var template = document.getElementById('field-row-template');
+  var existingFields = <%- JSON.stringify(form && Array.isArray(form.fields) ? form.fields : []).replace(/</g, '\\u003c') %>;
+
+  var newsletterOptinSelect = document.getElementById('newsletter_optin_select');
+  var initialOptinKey = <%- JSON.stringify(form && form.newsletter_optin_key ? form.newsletter_optin_key : '').replace(/</g, '\\u003c') %>;
+  var newsletterTagSelect = document.getElementById('newsletter_tag_select');
+  var initialTagKey = <%- JSON.stringify(form && form.newsletter_tag_key ? form.newsletter_tag_key : '').replace(/</g, '\\u003c') %>;
+
+  function bindRow(row) {
+    row.querySelector('.field-remove').addEventListener('click', function() { row.remove(); refreshOptinOptions(); refreshTagOptions(); });
+    row.querySelector('.field-type').addEventListener('change', function() { toggleOptions(row); refreshOptinOptions(); refreshTagOptions(); });
+    row.querySelector('.field-label').addEventListener('input', refreshOptinOptions);
+    row.querySelector('.field-key').addEventListener('input', refreshOptinOptions);
+    row.querySelector('.field-label').addEventListener('input', refreshTagOptions);
+    row.querySelector('.field-key').addEventListener('input', refreshTagOptions);
+    toggleOptions(row);
+  }
+
+  function slugifyKey(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100);
+  }
+
+  // Stessa logica (slugify + deduplica) usata al submit: le chiavi mostrate
+  // qui devono coincidere esattamente con quelle poi salvate, altrimenti la
+  // select potrebbe puntare a una chiave diversa da quella reale.
+  function computeFields() {
+    var rows = list.querySelectorAll('.field-row');
+    var usedKeys = {};
+    var fields = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var label = row.querySelector('.field-label').value.trim();
+      if (!label) continue;
+      var type = row.querySelector('.field-type').value;
+      var required = row.querySelector('.field-required').checked;
+      var rawKey = row.querySelector('.field-key').value.trim();
+      var key = slugifyKey(rawKey || label) || ('campo_' + (i + 1));
+      var suffix = 2;
+      var baseKey = key;
+      while (usedKeys[key]) { key = baseKey + '_' + (suffix++); }
+      usedKeys[key] = true;
+
+      var field = { key: key, label: label, type: type, required: required };
+      if (type === 'select' || type === 'radio') {
+        field.options = row.querySelector('.field-options').value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+      }
+      fields.push(field);
+    }
+    return fields;
+  }
+
+  function refreshOptinOptions() {
+    var selected = newsletterOptinSelect.value || initialOptinKey;
+    var checkboxFields = computeFields().filter(function(f) { return f.type === 'checkbox'; });
+    newsletterOptinSelect.innerHTML = '';
+    var noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'Nessuna';
+    newsletterOptinSelect.appendChild(noneOpt);
+    checkboxFields.forEach(function(f) {
+      var opt = document.createElement('option');
+      opt.value = f.key;
+      opt.textContent = f.label;
+      newsletterOptinSelect.appendChild(opt);
+    });
+    var match = checkboxFields.some(function(f) { return f.key === selected; });
+    newsletterOptinSelect.value = match ? selected : '';
+    initialOptinKey = ''; // il preselect iniziale vale solo al primo giro
+  }
+
+  // La select del tag accetta TUTTI i tipi di campo (non solo checkbox):
+  // conta il valore del campo, non la spunta. Stessa logica di deduplica di
+  // computeFields, così le chiavi mostrate coincidono con quelle salvate.
+  function refreshTagOptions() {
+    var selected = newsletterTagSelect.value || initialTagKey;
+    var fields = computeFields();
+    newsletterTagSelect.innerHTML = '';
+    var noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'Nessuno';
+    newsletterTagSelect.appendChild(noneOpt);
+    fields.forEach(function(f) {
+      var opt = document.createElement('option');
+      opt.value = f.key;
+      opt.textContent = f.label + ' (' + f.key + ')';
+      newsletterTagSelect.appendChild(opt);
+    });
+    var match = fields.some(function(f) { return f.key === selected; });
+    newsletterTagSelect.value = match ? selected : '';
+    initialTagKey = ''; // il preselect iniziale vale solo al primo giro
+  }
+
+  function toggleOptions(row) {
+    var type = row.querySelector('.field-type').value;
+    row.querySelector('.field-options-wrap').style.display = (type === 'select' || type === 'radio') ? 'block' : 'none';
+  }
+
+  function addRow(data) {
+    var clone = template.content.cloneNode(true);
+    list.appendChild(clone);
+    var row = list.lastElementChild;
+    if (data) {
+      row.querySelector('.field-label').value = data.label || '';
+      row.querySelector('.field-key').value = data.key || '';
+      row.querySelector('.field-type').value = data.type || 'text';
+      row.querySelector('.field-required').checked = !!data.required;
+      row.querySelector('.field-options').value = (data.options || []).join('\n');
+    }
+    bindRow(row);
+  }
+
+  document.getElementById('add-field').addEventListener('click', function() { addRow(null); });
+
+  if (existingFields.length > 0) {
+    existingFields.forEach(function(f) { addRow(f); });
+  } else {
+    addRow(null);
+  }
+  refreshOptinOptions();
+  refreshTagOptions();
+
+  document.getElementById('form-builder').addEventListener('submit', function(event) {
+    var fields = computeFields();
+    if (fields.length === 0) {
+      event.preventDefault();
+      alert('Aggiungi almeno una domanda.');
+      return;
+    }
+    document.getElementById('fields_json').value = JSON.stringify(fields);
+  });
+});
+</script>

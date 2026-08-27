@@ -1,0 +1,111 @@
+<h1>Automazioni (workflow) — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">✅ Workflow salvato.</div>
+<% } %>
+
+<div style="display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap;">
+  <div style="flex:1;min-width:300px;">
+    <h2 style="font-size:16px;">Workflow esistenti</h2>
+    <% if (workflows.length === 0) { %>
+      <p style="color:#999;font-size:14px;">Nessuna automazione. Un workflow parte quando accade un evento (form, quiz, email, chiamata...) ed esegue azioni (tag, stadio, email, task, notifica).</p>
+    <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Trigger</th><th>Azioni</th><th>Stato</th><th></th></tr></thead>
+      <tbody>
+        <% workflows.forEach(w => { %>
+        <tr>
+          <td><%= w.name %></td>
+          <td><code><%= w.trigger_type %></code><br><span style="font-size:11px;color:#666;"><%= JSON.stringify(w.trigger_config) %></span></td>
+          <td><%= w.action_count %></td>
+          <td><% if (w.active) { %><span class="badge badge-active">Attivo</span><% } else { %><span class="badge badge-disabled">Off</span><% } %></td>
+          <td>
+            <form method="POST" action="/admin/workflows/<%= w.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare il workflow?');">
+              <input type="hidden" name="site_id" value="<%= siteId %>">
+              <button class="btn btn-sm btn-danger">Elimina</button>
+            </form>
+          </td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } %>
+  </div>
+
+  <div style="flex:1;min-width:340px;">
+    <h2 style="font-size:16px;">Nuovo workflow</h2>
+    <form method="POST" action="/admin/workflows">
+      <input type="hidden" name="site_id" value="<%= siteId %>">
+      <input type="hidden" name="trigger_config_json" id="trigger_config_json" value="{}">
+      <input type="hidden" name="actions_json" id="actions_json" value="[]">
+      <div class="form-group">
+        <label>Nome</label>
+        <input type="text" name="name" required placeholder="Es. Quiz alto → tag + task">
+      </div>
+      <div class="form-group">
+        <label>Trigger</label>
+        <select name="trigger_type" id="trigger_type">
+          <option value="form_submitted">Form inviato</option>
+          <option value="quiz_completed">Quiz completato</option>
+          <option value="email_opened">Email aperta</option>
+          <option value="email_clicked">Email cliccata</option>
+          <option value="call_booked">Chiamata prenotata</option>
+          <option value="call_status_changed">Stato chiamata cambiato</option>
+          <option value="stage_changed">Stadio pipeline cambiato</option>
+          <option value="tag_added">Tag aggiunto</option>
+          <option value="score_threshold">Punteggio soglia</option>
+          <option value="segment_entered">Entrato in segmento</option>
+          <option value="contact_created">Contatto creato</option>
+          <option value="manual">Manuale</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Config trigger (JSON, opzionale — es. {"quiz_slug":"qualifica-lead","min_score":8})</label>
+        <input type="text" id="trigger_config_text" style="font-family:monospace;font-size:12px;" placeholder='{"quiz_slug":"qualifica-lead","min_score":8}'>
+      </div>
+      <div class="form-group">
+        <label>Azioni (una per riga, formato: <code>tipo|chiave|valore</code>)</label>
+        <textarea id="actions_text" style="min-height:120px;font-family:monospace;font-size:12px;" placeholder="add_tag|tag|lead-caldo&#10;set_stage|stage|chiamata_fissata&#10;create_task|title|Chiama il lead&#10;create_task|due_in_days|1&#10;notify_email|to|vendi@dominio.it&#10;wait_days|days|2"></textarea>
+        <div style="font-size:11px;color:#999;margin-top:4px;">
+          Tipi: add_tag (tag), remove_tag (tag), set_stage (stage), create_task (title, due_in_days), notify_email (to, subject, body), wait_days (days), send_campaign (campaign_id), send_sequence (step_id)
+        </div>
+      </div>
+      <button class="btn">Salva workflow</button>
+    </form>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('form[action="/admin/workflows"]');
+  form.addEventListener('submit', () => {
+    const tc = document.getElementById('trigger_config_text').value.trim();
+    try { document.getElementById('trigger_config_json').value = tc ? JSON.stringify(JSON.parse(tc)) : '{}'; }
+    catch { document.getElementById('trigger_config_json').value = '{}'; }
+
+    const actions = document.getElementById('actions_text').value.split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+      const parts = line.split('|').map(s => s.trim());
+      const type = parts[0];
+      const cfg = {};
+      for (let i = 1; i < parts.length; i += 2) {
+        if (parts[i] && parts[i + 1] !== undefined) cfg[parts[i]] = parts[i + 1];
+      }
+      return { action_type: type, action_config: cfg };
+    });
+    document.getElementById('actions_json').value = JSON.stringify(actions);
+  });
+});
+</script>

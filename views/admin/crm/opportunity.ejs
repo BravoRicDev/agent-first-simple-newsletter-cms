@@ -1,0 +1,100 @@
+<h1>Opportunità — <%= opportunity.title %></h1>
+
+<div class="actions">
+  <a href="/admin/opportunities?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Torna alle opportunità</a>
+</div>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin:15px 0;color:#065f46;font-size:14px;">✅ Salvato.</div>
+<% } %>
+
+<div style="display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap;">
+  <div style="flex:1;min-width:320px;">
+    <h2 style="font-size:15px;">Dettagli</h2>
+    <form method="POST" action="/admin/opportunities/<%= opportunity.id %>/update" style="border:1px solid #e5e7eb;border-radius:6px;padding:16px;max-width:560px;">
+      <input type="hidden" name="site_id" value="<%= siteId %>">
+      <div class="form-group"><label>Titolo</label><input type="text" name="title" value="<%= opportunity.title %>"></div>
+      <div class="form-group"><label>Email contatto</label><input type="email" name="email" value="<%= opportunity.contact_email %>" disabled></div>
+      <div class="form-group">
+        <label>Pipeline</label>
+        <select name="pipeline_id">
+          <option value="">— nessuna —</option>
+          <% pipelines.forEach(p => { %><option value="<%= p.id %>" <%= opportunity.pipeline_id == p.id ? 'selected' : '' %>><%= p.name %></option><% }) %>
+        </select>
+      </div>
+      <div class="form-group"><label>Stadio</label><input type="text" name="stage" value="<%= opportunity.stage || '' %>" placeholder="es. proposta_inviata"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1;"><label>Importo (€)</label><input type="number" step="0.01" min="0" name="amount" value="<%= opportunity.amount ?? 0 %>"></div>
+        <div class="form-group" style="flex:1;"><label>Probabilità (%)</label><input type="number" min="0" max="100" name="probability" value="<%= opportunity.probability ?? 0 %>"></div>
+      </div>
+      <div class="form-group">
+        <label>Stato</label>
+        <select name="status">
+          <option value="open" <%= opportunity.status === 'open' ? 'selected' : '' %>>Aperta</option>
+          <option value="won" <%= opportunity.status === 'won' ? 'selected' : '' %>>Vinta</option>
+          <option value="lost" <%= opportunity.status === 'lost' ? 'selected' : '' %>>Persa</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Chiusura prevista</label><input type="date" name="expected_close_at" value="<%= opportunity.expected_close_at ? String(opportunity.expected_close_at).slice(0,10) : '' %>"></div>
+      <div class="form-group"><label>Note</label><textarea name="notes" rows="3"><%= opportunity.notes || '' %></textarea></div>
+      <button class="btn">Salva</button>
+    </form>
+  </div>
+
+  <div style="flex:1;min-width:320px;">
+    <h2 style="font-size:15px;">Preventivi</h2>
+
+    <h3 style="font-size:13px;color:#666;">Nuovo preventivo</h3>
+    <form method="POST" action="/admin/opportunities/<%= opportunity.id %>/quotes" style="border:1px solid #e5e7eb;border-radius:6px;padding:16px;margin-bottom:16px;">
+      <input type="hidden" name="site_id" value="<%= siteId %>">
+      <div class="form-group"><label>Titolo</label><input type="text" name="title" placeholder="es. Preventivo sito vetrina"></div>
+      <div class="form-group">
+        <label>Righe (una per riga: descrizione | quantità | prezzo)</label>
+        <textarea name="items" rows="4" placeholder="Sito vetrina 5 pagine | 1 | 1500&#10;Ottimizzazione SEO base | 1 | 300"></textarea>
+      </div>
+      <div class="form-group"><label>Note</label><textarea name="notes" rows="2"></textarea></div>
+      <button class="btn">Crea preventivo</button>
+    </form>
+
+    <% if (quotes.length === 0) { %>
+      <p style="color:#999;font-size:13px;">Nessun preventivo.</p>
+    <% } else { %>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <% quotes.forEach(q => { %>
+      <div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+          <div>
+            <strong><%= q.quote_number %></strong> — <%= q.title || '(senza titolo)' %>
+            <div style="font-size:12px;color:#666;"><%= new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(q.total || 0) %></div>
+          </div>
+          <span class="badge <%= q.status === 'signed' ? 'badge-active' : q.status === 'draft' ? 'badge-disabled' : '' %>">
+            <%= q.status === 'draft' ? 'bozza' : q.status === 'sent' ? 'inviato' : q.status === 'viewed' ? 'visto' : 'firmato' %>
+          </span>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+          <a class="btn btn-sm" href="/quote/<%= q.token %>" target="_blank">🔗 Link cliente</a>
+          <a class="btn btn-sm" href="/quote/<%= q.token %>/pdf" target="_blank">📄 PDF</a>
+          <% if (q.status === 'draft') { %>
+          <form method="POST" action="/admin/quotes/<%= q.id %>/status" style="display:inline;">
+            <input type="hidden" name="site_id" value="<%= siteId %>">
+            <input type="hidden" name="status" value="sent">
+            <input type="hidden" name="back" value="/admin/opportunities/<%= opportunity.id %>?site_id=<%= siteId %>">
+            <button class="btn btn-sm" style="background:#059669;">✉️ Segna inviato</button>
+          </form>
+          <% } %>
+          <form method="POST" action="/admin/quotes/<%= q.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare il preventivo?');">
+            <input type="hidden" name="site_id" value="<%= siteId %>">
+            <input type="hidden" name="back" value="/admin/opportunities/<%= opportunity.id %>?site_id=<%= siteId %>">
+            <button class="btn btn-sm btn-danger">🗑️</button>
+          </form>
+        </div>
+        <% if (q.sent_at) { %><div style="font-size:11px;color:#999;margin-top:6px;">Inviato: <%= new Date(q.sent_at).toLocaleString('it-IT') %><% } %>
+        <% if (q.viewed_at) { %> · Visto: <%= new Date(q.viewed_at).toLocaleString('it-IT') %><% } %>
+        <% if (q.signed_at) { %> · Firmato: <%= new Date(q.signed_at).toLocaleString('it-IT') %><% } %>
+        <% if (q.sent_at) { %></div><% } %>
+      </div>
+      <% }) %>
+    </div>
+    <% } %>
+  </div>
+</div>

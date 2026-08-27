@@ -1,0 +1,63 @@
+<h1>Campagne newsletter<%= site ? ' — ' + site.name : '' %></h1>
+
+<div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+  <a href="/admin/newsletter?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Newsletter</a>
+  <a href="/admin/newsletter/campaigns/new?site_id=<%= siteId %>" class="btn">+ Nuova campagna</a>
+</div>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin:20px 0;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (campaigns.length === 0) { %>
+  <p style="color:#999;font-size:14px;margin-top:15px;">Nessuna campagna.</p>
+<% } else { %>
+<table style="margin-top:15px;">
+  <thead>
+    <tr><th>Oggetto</th><th>Stato</th><th>Inviate</th><th>Aperture</th><th>Creata il</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% campaigns.forEach(c => { %>
+    <tr>
+      <td><%= c.subject %></td>
+      <td>
+        <span class="badge <%= c.status === 'sent' ? 'badge-active' : (c.status === 'sending' ? 'badge-wrapped' : (c.status === 'paused' ? 'badge-disabled' : 'badge-standalone')) %>">
+          <%= c.status %>
+        </span>
+        <% if (c.last_error) { %>
+          <div style="color:#b91c1c;font-size:11px;margin-top:4px;" title="<%= c.last_error %>">
+            ⚠ invio fallito <%= new Date(c.last_error_at).toLocaleString('it-IT') %>
+          </div>
+        <% } %>
+      </td>
+      <td><%= c.sent_count %></td>
+      <td><%= c.opened_count %></td>
+      <td><%= new Date(c.created_at).toLocaleString('it-IT') %></td>
+      <td style="display:flex;gap:6px;">
+        <a href="/admin/newsletter/campaigns/<%= c.id %>/edit?site_id=<%= siteId %>" class="btn btn-sm"><%= c.status === 'draft' ? 'Modifica' : 'Dettagli' %></a>
+        <% if (c.status === 'sending') { %>
+          <form method="POST" action="/admin/newsletter/campaigns/<%= c.id %>/pause" style="display:inline;">
+            <input type="hidden" name="site_id" value="<%= siteId %>">
+            <button type="submit" class="btn btn-sm" style="background:#d97706;">Pausa</button>
+          </form>
+        <% } else if (c.status === 'paused') { %>
+          <form method="POST" action="/admin/newsletter/campaigns/<%= c.id %>/resume" style="display:inline;">
+            <input type="hidden" name="site_id" value="<%= siteId %>">
+            <button type="submit" class="btn btn-sm" style="background:#059669;">Riprendi</button>
+          </form>
+        <% } %>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

@@ -1,0 +1,38 @@
+<h1>Versioni — <code><%= page.url_path %></code></h1>
+<div class="actions">
+  <a href="/admin/pages/<%= page.id %>/edit" class="btn" style="background:#6b7280;">← Torna alla modifica</a>
+  <a href="/admin/pages?site_id=<%= page.site_id %>" class="btn" style="background:#6b7280;">Torna alle pagine</a>
+</div>
+
+<% if (versions.length === 0) { %>
+  <p style="font-size:14px;color:#999;">Nessuna versione salvata.</p>
+<% } else { %>
+  <table>
+    <thead>
+      <tr>
+        <th>Data</th>
+        <th>Autore</th>
+        <th>Titolo</th>
+        <th>URL</th>
+        <th>Pubb.</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% versions.forEach(v => { %>
+        <tr>
+          <td><%= new Date(v.created_at).toLocaleString('it-IT') %></td>
+          <td><%= v.user_name || '—' %></td>
+          <td><%= v.title %></td>
+          <td><code><%= v.url_path %></code></td>
+          <td><%= v.published ? '✅' : '❌' %></td>
+          <td>
+            <form method="POST" action="/admin/pages/<%= page.id %>/versions/<%= v.id %>/restore" style="display:inline;" onsubmit="return confirm('Ripristinare questa versione? Le modifiche correnti verranno salvate come versione.')">
+              <button type="submit" class="btn btn-sm">Ripristina</button>
+            </form>
+          </td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+<% } %>

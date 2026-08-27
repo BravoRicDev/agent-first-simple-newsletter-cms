@@ -1,0 +1,86 @@
+<h1>Impostazioni Newsletter<%= site ? ' — ' + site.name : '' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<p style="font-size:13px;color:#666;margin-bottom:20px;">
+  SMTP dedicato per l'invio della newsletter di questo sito — separato dallo SMTP di sistema usato per i codici di accesso.
+</p>
+
+<form method="POST" action="/admin/newsletter/settings" style="max-width:500px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group">
+    <label>Host SMTP</label>
+    <input type="text" name="smtp_host" value="<%= settings ? settings.smtp_host : '' %>" placeholder="smtp.esempio.it" required>
+  </div>
+  <div class="form-group">
+    <label>Porta</label>
+    <input type="number" name="smtp_port" value="<%= settings ? settings.smtp_port : 465 %>" required>
+  </div>
+  <div class="form-group">
+    <label>Utente</label>
+    <input type="text" name="smtp_user" value="<%= settings ? settings.smtp_user : '' %>">
+  </div>
+  <div class="form-group">
+    <label>Password</label>
+    <input type="password" name="smtp_pass" value="" placeholder="<%= smtpPassSet ? '•••••••• (password salvata — lascia vuoto per mantenerla)' : 'Inserisci la password SMTP' %>" autocomplete="new-password">
+    <% if (smtpPassSet) { %>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-weight:400;">
+      <input type="checkbox" name="remove_smtp_pass" value="1"> Rimuovi la password SMTP salvata
+    </label>
+    <% } %>
+  </div>
+  <div class="form-group">
+    <label>Indirizzo mittente</label>
+    <input type="email" name="from_email" value="<%= settings ? settings.from_email : '' %>" placeholder="newsletter@esempio.it" required>
+  </div>
+  <div class="form-group">
+    <label>Email/ora massime</label>
+    <input type="number" name="rate_per_hour" value="<%= settings ? settings.rate_per_hour : 100 %>" min="1" required>
+  </div>
+  <div class="form-group">
+    <label>Firma</label>
+    <textarea name="signature_html" style="min-height:120px;"><%= settings ? settings.signature_html : '' %></textarea>
+    <p style="font-size:12px;color:#999;margin-top:4px;">HTML aggiunto automaticamente in fondo a ogni campagna ed email di sequenza, prima del link di disiscrizione. Configurala una volta sola qui.</p>
+  </div>
+  <button type="submit" class="btn">Salva</button>
+  <button type="button" class="btn" id="testSmtpBtn" style="margin-left:8px;">Testa connessione</button>
+  <span id="testSmtpResult" style="margin-left:10px;font-size:13px;"></span>
+</form>
+
+<p style="margin-top:16px;">
+  <a href="/admin/newsletter/email-templates?site_id=<%= siteId %>" style="color:#4f46e5;font-weight:600;">✉️ Personalizza i testi delle email automatiche (oggetto + corpo per sito)</a>
+</p>
+
+<script>
+document.getElementById('testSmtpBtn').addEventListener('click', async () => {
+  const result = document.getElementById('testSmtpResult');
+  result.textContent = 'Verifica in corso...';
+  result.style.color = '#666';
+  const form = document.querySelector('form[action="/admin/newsletter/settings"]');
+  const body = new URLSearchParams(new FormData(form));
+  try {
+    const res = await fetch('/admin/newsletter/settings/test-smtp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    const data = await res.json();
+    if (res.ok) { result.textContent = '✅ ' + (data.message || 'Connessione riuscita'); result.style.color = '#15803d'; }
+    else { result.textContent = '❌ ' + (data.error || 'Connessione fallita'); result.style.color = '#b91c1c'; }
+  } catch (err) {
+    result.textContent = '❌ Errore di rete';
+    result.style.color = '#b91c1c';
+  }
+});
+</script>

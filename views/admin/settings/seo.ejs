@@ -1,0 +1,54 @@
+<h1>SEO — <%= site ? site.name : '' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;">Cambia</button>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/settings?site_id=<%= selectedSiteId %>" class="btn" style="background:#6b7280;">← Impostazioni</a>
+</div>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin:15px 0;color:#065f46;font-size:14px;">
+  ✅ Salvato. Le pagine pubbliche verranno rigenerate a breve con le nuove impostazioni.
+</div>
+<% } %>
+
+<% const canUpdateSeo = user && (user.role === "superadmin" || user.role === "admin"); %>
+
+<% if (canUpdateSeo) { %>
+<form method="POST" action="/admin/settings/seo" style="max-width:600px;">
+  <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+
+  <div class="form-group">
+    <label>Immagine social predefinita (Open Graph / Twitter)</label>
+    <input type="text" name="default_og_image" value="<%= seoConfig.defaultOgImage %>" placeholder="https://... oppure /media/..." style="width:100%;">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Usata quando una pagina non ha un'immagine social propria. Consigliata almeno 1200×630px.</div>
+  </div>
+  <div class="form-group">
+    <label>Handle Twitter/X del sito</label>
+    <input type="text" name="twitter_handle" value="<%= seoConfig.twitterHandle %>" placeholder="@nomeutente">
+  </div>
+  <div class="form-group">
+    <label>Regole extra per robots.txt <span style="font-weight:normal;color:#999;">(una direttiva per riga)</span></label>
+    <textarea name="robots_extra" rows="5" style="width:100%;font-family:monospace;font-size:13px;" placeholder="User-agent: GPTBot&#10;Disallow: /"><%= seoConfig.robotsExtra %></textarea>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Direttive ammesse: <code>User-agent</code>, <code>Disallow</code>, <code>Allow</code>, <code>Crawl-delay</code>, <code>Sitemap</code> (e righe di commento con <code>#</code>). Righe non valide vengono scartate automaticamente. Non serve aggiungere <code>Disallow</code> per pagine con noindex: usa il campo "noindex" nella singola pagina, non il robots.txt (un Disallow qui impedirebbe ai motori di leggere anche il tag noindex).
+    </div>
+  </div>
+
+  <button type="submit" class="btn" style="margin-top:10px;">Salva</button>
+</form>
+<% } else { %>
+<p style="color:#999;font-size:14px;margin-top:10px;">La SEO è configurata dal superadmin o da un admin. Non hai i permessi per modificarla.</p>
+<% } %>

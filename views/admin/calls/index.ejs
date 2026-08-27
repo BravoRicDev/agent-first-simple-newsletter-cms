@@ -1,0 +1,128 @@
+<h1>Chiamate</h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/calls/availability?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Disponibilità</a>
+  <a href="/admin/calls/calendars/new?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">+ Nuovo calendario</a>
+  <a href="/book/<%= siteId %>" target="_blank" class="btn" style="background:#6b7280;">🔗 Pagina di prenotazione pubblica</a>
+</div>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin:15px 0;color:#065f46;font-size:14px;">✅ Salvato.</div>
+<% } %>
+
+<h2 style="font-size:15px;margin-top:24px;">Calendari</h2>
+<% if (calendars.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun calendario ancora. Crealo per avere una disponibilità dedicata e integrarlo nelle pagine con <code>{{calendar:slug}}</code>. Finché non ne crei, la <a href="/book/<%= siteId %>">pagina pubblica</a> usa la disponibilità "generale" qui sotto.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Slug / embed</th><th>Proprietario</th><th>Stato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% calendars.forEach(c => { %>
+    <tr>
+      <td><a href="/admin/calls/calendars/<%= c.id %>/edit?site_id=<%= siteId %>"><%= c.name %></a></td>
+      <td>
+        <code>{{calendar:<%= c.slug %>}}</code>
+        <div style="font-size:11px;color:#999;margin-top:2px;">
+          <a href="/book/<%= siteId %>/<%= c.slug %>" target="_blank">pagina pubblica</a> ·
+          <a href="/admin/calls/availability?site_id=<%= siteId %>&calendar_id=<%= c.id %>">disponibilità</a>
+        </div>
+      </td>
+      <td style="font-size:13px;"><%= c.owner_email || '—' %></td>
+      <td>
+        <span class="badge <%= c.enabled ? 'badge-active' : 'badge-disabled' %>"><%= c.enabled ? 'attivo' : 'disattivato' %></span>
+      </td>
+      <td>
+        <form method="POST" action="/admin/calls/calendars/<%= c.id %>/delete" onsubmit="return confirm('Eliminare il calendario \"<%= c.name %>\"? Le regole di disponibilità saranno eliminate, lo storico chiamate resterà.');" style="display:inline;">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
+
+<h2 style="font-size:15px;margin-top:28px;">Programma una chiamata</h2>
+<form method="POST" action="/admin/calls/new" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;max-width:800px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Email</label>
+    <input type="email" name="email" required placeholder="nome@esempio.it">
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Nome</label>
+    <input type="text" name="name" placeholder="opzionale">
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Calendario</label>
+    <select name="calendar_id">
+      <option value="">Generale</option>
+      <% calendars.forEach(c => { %>
+        <option value="<%= c.id %>" <%= !c.enabled ? 'disabled' : '' %>><%= c.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Data e ora</label>
+    <input type="datetime-local" name="scheduled_at" required>
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Durata (min)</label>
+    <input type="number" name="duration_minutes" value="30" style="width:80px;">
+  </div>
+  <button type="submit" class="btn">Programma</button>
+</form>
+
+<h2 style="font-size:15px;margin-top:28px;">Chiamate</h2>
+<% if (calls.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessuna chiamata ancora.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Quando</th><th>Contatto</th><th>Calendario</th><th>Durata</th><th>Stato</th><th>Promemoria</th><th>Esito / note</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% calls.forEach(c => { %>
+    <tr>
+      <td style="white-space:nowrap;"><%= new Date(c.scheduled_at).toLocaleString('it-IT') %></td>
+      <td><a href="/admin/contacts/<%= encodeURIComponent(c.email) %>?site_id=<%= siteId %>"><%= c.name ? c.name + ' — ' : '' %><%= c.email %></a></td>
+      <td style="font-size:13px;"><%= c.calendar_name || 'Generale' %></td>
+      <td><%= c.duration_minutes %> min</td>
+      <td>
+        <span class="badge <%= c.status === 'programmata' ? 'badge-active' : (c.status === 'completata' ? 'badge-active' : 'badge-disabled') %>"><%= c.status %></span>
+      </td>
+      <td style="font-size:12px;color:#999;"><%= c.reminder_sent_at ? '✅ inviato' : '—' %></td>
+      <td>
+        <form method="POST" action="/admin/calls/<%= c.id %>/outcome" style="display:flex;gap:6px;align-items:center;">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <select name="status" style="font-size:12px;">
+            <option value="programmata" <%= c.status === 'programmata' ? 'selected' : '' %>>Programmata</option>
+            <option value="completata" <%= c.status === 'completata' ? 'selected' : '' %>>Completata</option>
+            <option value="no_show" <%= c.status === 'no_show' ? 'selected' : '' %>>Non presentato</option>
+            <option value="annullata" <%= c.status === 'annullata' ? 'selected' : '' %>>Annullata</option>
+          </select>
+          <input type="text" name="outcome_notes" value="<%= c.outcome_notes || '' %>" placeholder="note esito" style="font-size:12px;width:160px;">
+          <button type="submit" class="btn btn-sm">Salva</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

@@ -1,0 +1,174 @@
+<% function isSecretSettingKey(k) { return /key|secret|password|token|pass/i.test(k || ""); } %>
+<% const canUpdateSettings = user && (user.role === "superadmin" || user.role === "admin"); %>
+<% const canDeleteSettings = user && user.role === "superadmin"; %>
+<h1>Impostazioni<%= site ? ' — ' + site.name : ' globali' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id">
+      <option value="">Globali</option>
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;">Cambia</button>
+</form>
+<% } %>
+
+<% if (site) { %>
+<div class="actions">
+  <a href="/admin/settings/tracking?site_id=<%= site.id %>" class="btn" style="background:#6b7280;">📊 Tracking & Analytics</a>
+  <a href="/admin/settings/seo?site_id=<%= site.id %>" class="btn" style="background:#6b7280;">🔍 SEO</a>
+</div>
+<% } %>
+
+<h3 style="font-size:15px;margin-bottom:10px;"><%= site ? 'Impostazioni sito' : 'Impostazioni globali' %></h3>
+<% const activeSettings = site ? siteSettings : globalSettings; %>
+<% if (activeSettings.length === 0) { %>
+  <p style="color:#999;font-size:14px;margin-bottom:20px;">Nessuna impostazione configurata.</p>
+<% } else { %>
+<table style="max-width:700px;margin-bottom:20px;">
+  <thead><tr><th>Chiave</th><th>Valore</th><th></th></tr></thead>
+  <tbody>
+    <% activeSettings.forEach(s => { %>
+    <tr>
+      <td><code><%= s.key %></code></td>
+      <td>
+        <% if (isSecretSettingKey(s.key)) { %>
+          <span class="secret-value">••••••••</span>
+          <button type="button" class="btn btn-sm" style="background:#6b7280;" onclick="toggleSecret(this, '<%= s.key %>')">Mostra</button>
+        <% } else { %>
+          <%= s.value %>
+        <% } %>
+      </td>
+      <td>
+        <% if (canDeleteSettings) { %>
+        <form method="POST" action="/admin/settings/<%= encodeURIComponent(s.key) %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare questa impostazione?')">
+          <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+        <% } %>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
+
+<% if (canUpdateSettings) { %>
+<h3 style="font-size:15px;margin-bottom:10px;">Aggiungi / aggiorna impostazione</h3>
+<form method="POST" action="/admin/settings" style="max-width:500px;">
+  <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+  <div class="form-group">
+    <label>Chiave</label>
+    <input type="text" name="key" required placeholder="es. contact_email">
+  </div>
+  <div class="form-group">
+    <label>Valore</label>
+    <input type="text" name="value" placeholder="es. info@esempio.com">
+  </div>
+  <button type="submit" class="btn">Salva</button>
+</form>
+<% } %>
+
+<hr style="margin:30px 0;">
+<h2 style="font-size:18px;margin-bottom:5px;">Variabili di sito</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  Usabili nei template con <code>{{var:chiave}}</code>. Modifiche istantanee su tutte le pagine che le usano.
+</p>
+
+<% if (typeof variables !== 'undefined' && variables.length > 0) { %>
+<table style="max-width:700px;margin-bottom:20px;">
+  <thead><tr><th>Chiave</th><th>Valore</th><th>Descrizione</th><th></th></tr></thead>
+  <tbody>
+    <% variables.forEach(v => { %>
+    <tr>
+      <td><code><%= v.key %></code></td>
+      <td><%= v.value %></td>
+      <td style="color:#999;font-size:12px;"><%= v.description || '—' %></td>
+      <td>
+        <% if (canDeleteSettings) { %>
+        <form method="POST" action="/admin/settings/variables/<%= encodeURIComponent(v.key) %>/delete" style="display:inline;"
+          onsubmit="return confirm('Eliminare la variabile <%= v.key %>?')">
+          <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+        <% } %>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } else { %>
+<p style="font-size:14px;color:#999;margin-bottom:20px;">Nessuna variabile configurata.</p>
+<% } %>
+
+<% if (canUpdateSettings) { %>
+<h3 style="font-size:15px;margin-bottom:10px;">Aggiungi / aggiorna variabile</h3>
+<form method="POST" action="/admin/settings/variables" style="max-width:600px;">
+  <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+  <div class="form-group">
+    <label>Chiave <span style="font-weight:normal;color:#999;">(solo lettere, numeri, _ e -)</span></label>
+    <input type="text" name="key" required placeholder="es. contact_phone" pattern="[a-zA-Z0-9_\-]+">
+  </div>
+  <div class="form-group">
+    <label>Valore</label>
+    <input type="text" name="value" required placeholder="es. +39 02 1234567">
+  </div>
+  <div class="form-group">
+    <label>Descrizione <span style="font-weight:normal;color:#999;">(opzionale)</span></label>
+    <input type="text" name="description" placeholder="es. Numero di telefono principale">
+  </div>
+  <button type="submit" class="btn">Salva variabile</button>
+</form>
+<% } %>
+
+<% if (site && canUpdateSettings) { %>
+<hr style="margin:30px 0;">
+<h2 style="font-size:18px;margin-bottom:5px;">🤖 Trasparenza contenuti IA (AI Act)</h2>
+<p style="font-size:13px;color:#666;max-width:650px;margin-bottom:5px;">
+  Dal 2 agosto 2026 l'AI Act (art. 50) impone di segnalare contenuti testuali generati/modificati da IA
+  <strong>pubblicati per informare il pubblico su temi di interesse pubblico</strong> (es. articoli,
+  approfondimenti). <strong>Non serve</strong> se un umano rivede/modifica il testo prima di pubblicarlo e
+  ne ha la responsabilità editoriale — il flusso normale di questo pannello (scrivi/genera con l'IA,
+  poi salvi tu). Attivala solo se pubblichi contenuti IA con revisione minima o nulla.
+</p>
+<p style="font-size:13px;color:#666;max-width:650px;margin-bottom:15px;">
+  Se attivata, il testo compare in fondo a ogni pagina pubblica del sito (footer). Nessun formato
+  imposto dalla norma: basta un testo comprensibile.
+</p>
+<% const aiVar = (typeof variables !== 'undefined' ? variables : []).find(v => v.key === 'ai_disclosure_text'); %>
+<form method="POST" action="/admin/settings/variables" style="max-width:600px;">
+  <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+  <input type="hidden" name="key" value="ai_disclosure_text">
+  <input type="hidden" name="description" value="Dicitura trasparenza contenuti IA (AI Act art. 50), mostrata in footer se non vuota">
+  <div class="form-group">
+    <label>Testo (vuoto = nessuna dicitura mostrata)</label>
+    <textarea name="value" style="min-height:70px;" placeholder="Es. Alcuni contenuti di questo sito sono generati o assistiti da intelligenza artificiale."><%= aiVar ? aiVar.value : '' %></textarea>
+  </div>
+  <button type="submit" class="btn">Salva</button>
+</form>
+<% } %>
+
+<script>
+// "Mostra" per i valori secret: il valore NON è nel DOM (prima era in
+// data-value, leggibile da qualunque XSS residuo). Fetch al server, che
+// valida chiave secret + permessi, e lo mostra solo al click.
+async function toggleSecret(btn, key) {
+  const el = btn.previousElementSibling;
+  if (el.textContent !== '••••••••') { el.textContent = '••••••••'; return; }
+  try {
+    const siteParam = new URLSearchParams(window.location.search).get('site_id');
+    const qs = siteParam ? '?site_id=' + encodeURIComponent(siteParam) : '';
+    const res = await fetch('/admin/settings/' + encodeURIComponent(key) + '/value' + qs);
+    if (!res.ok) { el.textContent = 'Errore'; return; }
+    const data = await res.json();
+    el.textContent = data.value || '';
+  } catch {
+    el.textContent = 'Errore';
+  }
+}
+</script>

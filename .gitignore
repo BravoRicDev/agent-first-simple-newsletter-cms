@@ -1,0 +1,52 @@
+# Segreti
+.env
+
+# Dipendenze
+node_modules/
+
+# Contenuti runtime montati come volumi Docker (dati clienti, non da pubblicare)
+/media/
+/static/
+/*.it/
+
+# Media PROTETTI (registrazioni, backup, export GDPR): serviti solo via
+# route Express con autorizzazione. MAI versionare i contenuti.
+/media-protected/
+
+# Backup DB locali (dati reali, mai da versionare)
+/backups/
+
+# Script cliente in root (dati/logica specifica cliente)
+check_*.py
+fix_*.py
+update_*.py
+plain_codebase.sh
+plain_codebase.txt
+
+# Script interni non generalizzabili
+scripts/*.py
+scripts/*.txt
+
+# Piani/note di lavoro interni (non parte del prodotto)
+piano_*.md
+
+# Bytecode Python
+__pycache__/
+*.pyc
+
+# Config locale Claude
+.claude/settings.local.json
+
+# Log/OS
+*.log
+.DS_Store
+
+# Documenti interni di lavoro (non per il repo pubblico)
+ROADMAP-crm.md
+UPGRADE-INSTRUCTIONS.md
+
+# Spec di sviluppo per agente (non parte della documentazione pubblica)
+docs/F0_SPEC.md
+docs/ONDA1_SPEC.md
+docs/ONDA2_SPEC.md
+docs/IMPORT_READINESS.md
