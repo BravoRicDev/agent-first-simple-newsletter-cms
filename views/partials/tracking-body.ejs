@@ -17,11 +17,25 @@
     var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
     return m ? decodeURIComponent(m[1]) : null;
   }
+  function cookieDomain() {
+    var h = location.hostname;
+    // localhost / IP: cookie host-only (Domain non valido né necessario)
+    if (!h || h === 'localhost' || /^[\d.]+$/.test(h)) return null;
+    var parts = h.split('.');
+    // Copre TUTTI i sottodomini del registrable domain (ultime 2 label).
+    if (parts.length >= 2) return '.' + parts.slice(-2).join('.');
+    return null;
+  }
   function setCookie(name, value, days) {
     var expires = new Date(Date.now() + days * 86400000).toUTCString();
     // Secure solo su HTTPS: il consenso non deve viaggiare in chiaro su HTTP
     var secure = location.protocol === 'https:' ? '; Secure' : '';
-    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/; SameSite=Lax' + secure;
+    var domain = cookieDomain();
+    // Senza Domain il cookie è host-only: su funnel serviti su host/sottodomini
+    // diversi il consenso impostato su una pagina non era leggibile dalle
+    // altre (cookie marketing mai fired oltre la pagina di accettazione).
+    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/; SameSite=Lax'
+                      + (domain ? '; Domain=' + domain : '') + secure;
   }
   function applyConsent(analytics, marketing) {
     gtag('consent', 'update', {
