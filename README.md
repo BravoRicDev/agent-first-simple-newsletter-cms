@@ -19,6 +19,8 @@ Multi-tenant CMS for managing multiple websites from a single admin panel, desig
 - **RBAC**: `superadmin` / `admin` / `collaboratore` roles with granular per-resource permissions (`src/constants/permissions.js`).
 - **CRM-lite**: contacts derived from form submissions (tags, status, notes), cross-form search, optional per-site modules — fixed-stage sales pipeline and call management (log + public self-booking).
 - **Long-lived API tokens** (`/admin/api-tokens`) for non-interactive integrations (n8n, other automations), alongside interactive OTP login.
+- **API surface for external integrations** (`/v1`): multi-tenant REST API speaking the common CRM dialect. Tenant resolved from the `Location-Id` header (numeric site ID, site domain, or external location identifier), per-site Bearer API keys (stored hashed), endpoints for custom fields, pipelines, contacts, opportunities, quotes, segments, workflows, bookings, payment links, conversations, reports, activities, email stats and import. Interactive OpenAPI docs at `/v1/docs` (spec at `/v1/openapi.json`).
+- **External apps via SSO**: satellite applications authenticate with a verified CMS token (`POST /api/agent/verify-token`) and consume the CRM data they need through a read-only API (opportunities, pipeline, contacts, quotes, calendar, customers, call verdicts).
 - **Tracking & Analytics** (`/admin/settings/tracking`): Google Analytics 4, Google Tag Manager, Meta Pixel + server-side Conversions API, Microsoft Clarity, Search Console verification — with an auto-generated GDPR consent banner (Google Consent Mode v2) as soon as anything is configured.
 - **AI-generated content disclosure** (AI Act Article 50, optional): configurable footer notice for sites publishing AI content without human editorial review on matters of public interest.
 
@@ -75,6 +77,53 @@ Beyond site management, the CMS ships a **full CRM** that can be enabled per sit
 
 - **Newsletter** (`/admin/newsletter`): subscriber management (with export), campaigns, email templates, SMTP settings with **connection test**.
 - **Social poster** (`/admin/social`): **currently a stub** (only checks the token is present, does not actually publish).
+
+## External API & integrations
+
+The CMS exposes an API surface for external tools and integrations (n8n, agency dashboards, webhooks, CRM-compatible clients). It speaks the "common CRM dialect" without being tied to a specific vendor.
+
+### `Location-Id` tenancy
+
+Every request to `/v1` must identify the site (tenant):
+
+- **`Location-Id` header** — the numeric site ID, the site domain, or the site's *external location identifier* (see "Location mapping").
+- **`Authorization: Bearer <api-key>`** — each site has its own API keys, managed in `/admin/sites/:id` or via `/v1/api-keys`; keys are stored only as SHA-256 hashes.
+- The `Version:` header is accepted and ignored, for compatibility with clients that send it.
+
+### Location ↔ site mapping
+
+`GET /v1/location` reads the external identifier associated with the authenticated tenant; `PUT /v1/location` sets it and `DELETE /v1/location` clears it. The identifier used by the external system can then be passed in `Location-Id`.
+
+### Endpoints (main groups)
+
+- **Custom fields** — `/custom-fields`
+- **Pipelines & stages** — `/pipelines`
+- **Per-tenant config** — `/config`
+- **Contacts** — `/contacts` (search, upsert, merge, duplicate check, notes, tags, tasks, followers, campaigns, workflow)
+- **Opportunities** — `/opportunities` (search, upsert, board, status, move, followers)
+- **Quotes** — `/quotes` (CRUD + PDF)
+- **Segments & workflows** — `/segments`, `/workflows`
+- **Bookings & payment links** — `/bookings`, `/booking-calendar-config`, `/payment-links`
+- **Conversations & analytics** — `/conversations`, `/dashboard`, `/funnel`, `/activities`, `/email-stats` (CSV export)
+- **Reports** — `/reports`
+- **Import** — `/import` (CSV/JSON)
+- **API keys & capabilities** — `/api-keys`, `/capabilities`
+
+### Webhook OUT
+
+Outbound webhooks forward CMS events (contact created/updated/deleted, opportunity created/deleted, form submitted, booking created, ...) to external URLs. Payloads are **enriched** with the full contact/opportunity data and custom fields, signed with HMAC-SHA256 (`X-Webhook-Signature`), with timeout and retry with backoff. Manage them via the agent API; the webhook-IN public endpoint is `/webhooks/in/:siteId/:token`.
+
+### Interactive documentation
+
+- `GET /v1/openapi.json` — OpenAPI 3.0 spec (public, no auth).
+- `GET /v1/docs` — interactive Swagger UI (public).
+
+### Satellite apps (SSO + read-only data)
+
+External applications can integrate with the CMS as "satellites":
+
+- **`POST /api/agent/verify-token`** validates a CMS JWT and returns the user's identity and site, so the satellite shares the same session (SSO).
+- **Read-only data API** exposes what those apps need: `/api/opportunities`, `/api/pipeline`, `/api/contacts`, `/api/quotes`, `/api/calendar`, `/api/customers`, `/api/customers/activity`, `/api/call-verdict`.
 
 ## Stack
 
