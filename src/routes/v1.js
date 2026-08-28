@@ -1454,7 +1454,7 @@ router.get("/payment-links", async (req, res, next) => {
   try {
     const { siteId } = req.tenant;
     const b = req.query || {};
-    const links = await listPaymentLinks(siteId, { status: b.status, limit: b.limit, offset: b.offset });
+    const links = await listPaymentLinks(siteId, { status: b.status, contactEmail: b.contact_email, limit: b.limit, offset: b.offset });
     res.json({ paymentLinks: links, total: links.length });
   } catch (err) { next(err); }
 });

@@ -28,6 +28,7 @@ export function registerPaymentsRoutes(router) {
       if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
       const payment_links = await listPaymentLinks(siteId, {
         status: req.query.status || null,
+        contactEmail: req.query.contact_email || null,
         limit: req.query.limit,
         offset: req.query.offset,
       });

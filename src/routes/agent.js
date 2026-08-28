@@ -4544,6 +4544,7 @@ import { registerBackupJobsRoutes } from "./agent-backup-jobs.js";
 import { registerChannelLimitsRoutes } from "./agent-limits.js";
 import { registerClientServicesRoutes } from "./agent-client-services.js";
 import { registerTrackedLinksRoutes } from "./agent-tracked-links.js";
+import { registerAccessGrantsRoutes } from "./agent-access-grants.js";
 import { registerTickRoutes } from "./agent-tick.js";
 import { registerSourceSyncRoutes } from "./agent-source-sync.js";
 registerCrmRoutes(router);
@@ -4569,5 +4570,6 @@ registerChannelLimitsRoutes(router);
 registerClientServicesRoutes(router);
 registerTrackedLinksRoutes(router);
 registerSourceSyncRoutes(router);
+registerAccessGrantsRoutes(router);
 
 export default router;

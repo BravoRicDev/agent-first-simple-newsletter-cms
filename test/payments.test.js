@@ -60,6 +60,35 @@ describe("feature 38: link di pagamento stripe", () => {
 
   // ── (b)+(h) create: token generato, draft, stripe_url vuoto, amount Number ──
 
+  test("GET payment-links?contact_email= filtra per contatto (anche combinato con status)", async () => {
+    const email = "filter@example.test";
+    const createRes = await fetch(linksUrl(), {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Filtro contatto", amount: 10, contact_email: email }),
+    });
+    assert.equal(createRes.status, 200);
+    const { payment_link } = await createRes.json();
+
+    // solo filtro email
+    const filtered = await fetch(linksUrl(`?contact_email=${encodeURIComponent(email)}`), { headers: auth() });
+    assert.equal(filtered.status, 200);
+    const { payment_links } = await filtered.json();
+    assert.ok(payment_links.some((p) => p.id === payment_link.id), "il link del contatto c'è");
+    assert.ok(payment_links.every((p) => p.contact_email === email), "tutti i link appartengono al contatto");
+
+    // combinabile col filtro status
+    const combined = await fetch(linksUrl(`?contact_email=${encodeURIComponent(email)}&status=draft`), { headers: auth() });
+    assert.equal(combined.status, 200);
+    const { payment_links: combinedLinks } = await combined.json();
+    assert.ok(combinedLinks.some((p) => p.id === payment_link.id), "filtro email+status insieme");
+
+    // email diversa → escluso
+    const other = await fetch(linksUrl(`?contact_email=${encodeURIComponent("altra@example.test")}`), { headers: auth() });
+    const { payment_links: otherLinks } = await other.json();
+    assert.ok(!otherLinks.some((p) => p.id === payment_link.id), "link di altro contatto escluso");
+  });
+
   test("create payment link: token generato, status draft, stripe_url vuoto, amount normalizzato", async () => {
     const res = await fetch(linksUrl(), {
       method: "POST",

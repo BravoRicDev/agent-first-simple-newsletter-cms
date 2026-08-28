@@ -79,12 +79,16 @@ async function createStripePaymentLink({ title, amount, currency, token, baseUrl
 
 // ── Lettura ──────────────────────────────────────────────────────────────
 
-export async function listPaymentLinks(siteId, { status = null, limit = 50, offset = 0 } = {}) {
+export async function listPaymentLinks(siteId, { status = null, contactEmail = null, limit = 50, offset = 0 } = {}) {
   const params = [siteId];
   let where = "site_id = $1";
   if (status && VALID_STATUSES.includes(status)) {
     params.push(status);
     where += ` AND status = $${params.length}`;
+  }
+  if (contactEmail) {
+    params.push(normalizeEmail(contactEmail));
+    where += ` AND contact_email = $${params.length}`;
   }
   const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
   const off = Math.max(parseInt(offset, 10) || 0, 0);

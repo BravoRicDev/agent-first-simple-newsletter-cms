@@ -8,7 +8,7 @@ import { listTasks, getTask, createTask, updateTask, deleteTask, getFunnel, buil
 import { getPreferences, setPreferences, getOrCreatePrefToken } from "../services/preferences.js";
 import { mergeContacts } from "../services/merge.js";
 import { getContactEvents } from "../services/events.js";
-import { setContactFields, getContactRecord } from "../services/contacts.js";
+import { setContactFields, getContactRecord, upsertContact } from "../services/contacts.js";
 import { getEmailStatsCampaign, getEmailStatsSequence } from "../services/newsletter-stats.js";
 import {
   addContactNote, listContactNotes, deleteContactNote,
@@ -550,6 +550,14 @@ export function registerCrmRoutes(router) {
       const siteId = parseInt(req.params.siteId, 10);
       const email = String(req.params.email || "").trim().toLowerCase();
       if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      // Un contatto "puro" scritto solo da qui (mai passato da un submit)
+      // potrebbe non avere ancora una riga in contacts: gli UPDATE sotto
+      // sarebbero altrimenti no-op silenziosi (0 righe affette) e lo
+      // score/utm andrebbero persi senza errore. Upsert idempotente prima
+      // di scrivere, stesso pattern già usato da setContactFields.
+      if (req.body.score !== undefined || req.body.add_score !== undefined || (req.body.utm && typeof req.body.utm === "object")) {
+        await upsertContact(siteId, email);
+      }
       const updates = {};
       if (req.body.add_score !== undefined) {
         const rec = await getContactRecord(siteId, email);

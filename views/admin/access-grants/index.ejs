@@ -1,0 +1,111 @@
+<h1>Accessi protetti — <%= site ? site.name : '' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<p style="font-size:13px;color:#666;margin-bottom:20px;line-height:1.5;">
+  Un permesso di accesso consente a un utente finale (lead/cliente, senza account CMS) di
+  scaricare <strong>un file protetto</strong> tramite il link pubblico <code>/shared/&lt;token&gt;</code>.
+  Il link funziona solo fino alla scadenza (se impostata) e per il numero di consumi (se impostato).
+</p>
+
+<div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:25px;">
+  <h2 style="font-size:16px;margin-bottom:15px;">Nuovo permesso di accesso</h2>
+  <form method="POST" action="/admin/access-grants?site_id=<%= selectedSiteId %>" enctype="multipart/form-data">
+    <div class="form-group">
+      <label>Email destinatario (opzionale)</label>
+      <input type="email" name="email" placeholder="cliente@esempio.it" style="max-width:400px;">
+    </div>
+
+    <div class="form-group">
+      <label>File protetto</label>
+      <% if (files.length === 0) { %>
+        <p style="color:#999;font-size:13px;margin-bottom:8px;">Nessun file protetto esistente per questo sito. Caricane uno qui sotto.</p>
+      <% } else { %>
+        <select name="media_path" style="max-width:400px;">
+          <option value="">— seleziona file esistente —</option>
+          <% files.forEach(f => { %>
+            <option value="<%= f.media_path %>"><%= f.media_path %> (<%= f.size_formatted %>)</option>
+          <% }) %>
+        </select>
+      <% } %>
+      <div style="margin-top:8px;color:#666;font-size:13px;">oppure carica un nuovo file (salvato in media-protected):</div>
+      <input type="file" name="file" style="max-width:400px;">
+    </div>
+
+    <div style="display:flex;gap:15px;flex-wrap:wrap;">
+      <div class="form-group" style="flex:1;min-width:200px;">
+        <label>Scadenza (opzionale)</label>
+        <input type="datetime-local" name="expires_at">
+      </div>
+      <div class="form-group" style="flex:1;min-width:200px;">
+        <label>Consumi massimi (opzionale, vuoto = illimitati)</label>
+        <input type="number" name="max_uses" min="1" placeholder="es. 1" style="max-width:200px;">
+      </div>
+    </div>
+
+    <button type="submit" class="btn">Crea permesso</button>
+  </form>
+</div>
+
+<h2 style="font-size:18px;margin-bottom:12px;">Permessi creati</h2>
+
+<% if (grants.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun permesso creato per questo sito.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Email</th><th>File</th><th>Stato</th><th>Consumi</th><th>Scadenza</th><th>Sorgente</th><th>Link</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% grants.forEach(g => { %>
+    <% const expired = g.expires_at && new Date(g.expires_at).getTime() < Date.now(); %>
+    <% const exhausted = g.max_uses !== null && g.used_count >= g.max_uses; %>
+    <tr>
+      <td><%= g.email || '—' %></td>
+      <td><code><%= g.media_path %></code></td>
+      <td>
+        <% if (expired) { %><span class="badge badge-disabled">Scaduto</span><% } else if (exhausted) { %><span class="badge badge-disabled">Esaurito</span><% } else { %><span class="badge badge-active">Attivo</span><% } %>
+      </td>
+      <td><%= g.used_count %> / <%= g.max_uses === null ? '∞' : g.max_uses %></td>
+      <td><%= g.expires_at ? new Date(g.expires_at).toLocaleString('it-IT') : '—' %></td>
+      <td><%= g.source %></td>
+      <td>
+        <code style="font-size:12px;">/shared/<%= g.token.slice(0, 12) %>…</code>
+        <button type="button" class="btn btn-sm grant-copy" style="background:#059669;" data-url="/shared/<%= g.token %>">📋 Copia link</button>
+      </td>
+      <td style="white-space:nowrap;">
+        <form method="POST" action="/admin/access-grants/<%= g.id %>/revoke?site_id=<%= selectedSiteId %>" style="display:inline;"
+          onsubmit="return confirm('Revocare questo permesso? Il link smetterà di funzionare.')">
+          <button type="submit" class="btn btn-sm btn-danger">Revoca</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.grant-copy').forEach(btn => {
+    btn.addEventListener('click', function() {
+      navigator.clipboard.writeText(this.dataset.url).then(() => {
+        const orig = this.textContent;
+        this.textContent = '✅ Copiato!';
+        setTimeout(() => { this.textContent = orig; }, 2000);
+      });
+    });
+  });
+});
+</script>

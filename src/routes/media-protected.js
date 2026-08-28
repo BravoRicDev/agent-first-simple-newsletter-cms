@@ -1,11 +1,7 @@
 import { Router } from "express";
-import path from "path";
-import fs from "fs";
-import { fileURLToPath } from "url";
 import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../services/logger.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { PROTECTED_ROOT, resolveProtectedFilePath } from "../services/media-utils.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MEDIA PROTETTI — cartella servita SOLO tramite Express/Node.js
@@ -65,9 +61,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 //    "l'utente è il proprietario della chiamata / è admin del sito della
 //    chiamata" → lookup su `call_recordings`/`calls` prima di servire.
 // 3. Token firmati one-shot: per condividere un file protetto con un
-//    cliente/lead senza account, generare un token HMAC (JWT_SECRET) con
-//    scadenza (pattern già usato per i preventivi `/quote/:token`) e una
-//    route `/media-protected/shared/:token` che NON richiede login.
+//    cliente/lead senza account. IMPLEMENTATO come access_grants
+//    (db/104_access_grants.sql) + rotta pubblica `GET /shared/:token`
+//    (src/routes/access-grants-public.js), che riusa la stessa validazione
+//    path/realpath/anti-traversal di questa route via
+//    resolveProtectedFilePath (src/services/media-utils.js).
 // 4. Audit: loggare ogni accesso ai file protetti (chi, quando, quale
 //    file) — usare `auditLog` come già fatto per le altre entità.
 // 5. Retention: per file con dati personali (registrazioni, export GDPR)
@@ -78,23 +76,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 //    serve — così un backup del volume non espone il contenuto in chiaro.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Root assoluta della cartella protetta. `path.resolve` normalizza: la root
-// non deve MAI essere calcolata da input utente (solo path assoluto fisso).
-const PROTECTED_ROOT = path.resolve(__dirname, "../../media-protected");
-
-// Profondità massima consentita per i sottopercorsi. I file vivono al massimo
-// in 4 segmenti (es. `5/calls/123.mp3` = 3 segmenti): un tetto basso limita
-// la superficie di attacco e costringe a una gerarchia pensata, non
-// all'infinito annidamento.
-const MAX_PATH_DEPTH = 4;
-
-// Pattern di un singolo segmento di path. VOLUTAMENTE restrittivo:
-//   - niente "/" (impossibile creare sottopercorsi arbitrari nel filename)
-//   - il lookahead `(?!\.{1,2}$)` esclude i segmenti "." e ".." esatti
-//     (anti path traversal a livello di segmento — difesa 1 di 3, sotto
-//     ci sono anche il realpath check e la root di sendFile)
-//   - solo caratteri sicuri in URL e filesystem (timestamp-hash.ext)
-const SEGMENT_RE = /^(?!\.{1,2}$)[a-zA-Z0-9._-]+$/;
+// Root assoluta e validazione path condivise con la rotta pubblica
+// /shared/:token: PROTECTED_ROOT e resolveProtectedFilePath vivono in
+// src/services/media-utils.js (l'UNICO posto dove si valida il path dei
+// file protetti — mai riscrivere a mano il check altrove).
 
 const router = Router();
 
@@ -152,37 +137,16 @@ function requireProtectedAccess(req, res, next) {
 // Accept-Ranges/206 per audio/video (necessario per le registrazioni).
 router.get("/media-protected/*", requireAuth, requireProtectedAccess, (req, res, next) => {
   try {
-    // ── 3. Validazione del path relativo ────────────────────────────────
+    // ── 3-4. Validazione path + anti-traversal/anti-symlink ─────────────
     // req.params[0] è tutto ciò che segue `/media-protected/` (wildcard
-    // express). Esempio: /media-protected/5/calls/123.mp3 → "5/calls/123.mp3".
-    const relPath = String(req.params[0] || "");
-    const segments = relPath.split("/").filter(Boolean);
-    if (
-      segments.length === 0 ||
-      segments.length > MAX_PATH_DEPTH ||
-      !segments.every((s) => SEGMENT_RE.test(s))
-    ) {
+    // express), incluso l'eventuale sottocartella sito (es. "5/calls/123.mp3").
+    // La validazione (segmenti [a-zA-Z0-9._-], profondità <= 4, realpath
+    // dentro PROTECTED_ROOT) è condivisa con la rotta pubblica /shared/:token:
+    // risiede in resolveProtectedFilePath (src/services/media-utils.js) e non
+    // va riscritta a mano. siteId = null → filename è il percorso completo.
+    const resolved = resolveProtectedFilePath(null, req.params[0]);
+    if (!resolved) {
       // 404 (non 400) per non rivelare se un path "quasi giusto" esiste.
-      return res.status(404).json({ error: "File non trovato" });
-    }
-
-    const filePath = path.join(PROTECTED_ROOT, ...segments);
-
-    // ── 4. Anti-traversal E anti-symlink: il path reale deve restare ────
-    // dentro la root. NOTA: path.join normalizza i ".." — se il percorso
-    // richiesto conteneva ".." che sono passati (difesa 1), filePath può
-    // GIÀ puntare fuori dalla root (es. /etc/passwd). Il confronto va
-    // fatto con PROTECTED_ROOT, NON con filePath: `real === filePath` da
-    // solo non basta (un path già normalizzato fuori dalla root uguaglia
-    // il proprio realpath). Il check è quindi INCONDIZIONATO.
-    let real;
-    try {
-      real = fs.realpathSync(filePath);
-    } catch {
-      return res.status(404).json({ error: "File non trovato" });
-    }
-    if (!real.startsWith(PROTECTED_ROOT + path.sep)) {
-      logger.warn(`Media protetto: accesso fuori root bloccato (${real})`);
       return res.status(404).json({ error: "File non trovato" });
     }
 
@@ -190,7 +154,7 @@ router.get("/media-protected/*", requireAuth, requireProtectedAccess, (req, res,
     // `root` fa sì che Express risolva il path rispetto a PROTECTED_ROOT e
     // rifiuti qualsiasi tentativo di uscirne (anche percent-encoded).
     res.setHeader("Cache-Control", "private, no-store");
-    res.sendFile(relPath, { root: PROTECTED_ROOT, dotfiles: "deny" }, (err) => {
+    res.sendFile(resolved.relPath, { root: PROTECTED_ROOT, dotfiles: "deny" }, (err) => {
       // sendFile invoca il callback SOLO in caso di errore (o a fine invio
       // se si passa err). Se il file non esiste o è una directory → 404.
       if (err) {
@@ -199,7 +163,7 @@ router.get("/media-protected/*", requireAuth, requireProtectedAccess, (req, res,
         if (err.status === 403 || err.status === 404 || err.code === "ENOENT" || err.code === "EISDIR") {
           return res.status(404).json({ error: "File non trovato" });
         }
-        logger.error(`Media protetto: errore serve ${relPath}: ${err.message}`);
+        logger.error(`Media protetto: errore serve ${resolved.relPath}: ${err.message}`);
         return res.status(500).json({ error: "Errore durante il serve" });
       }
       return undefined;

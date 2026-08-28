@@ -31,6 +31,7 @@ import mediaRoutes from "./routes/media.js";
 // Media PROTETTI: serviti SOLO via route Express con autorizzazione. NON
 // montare mai express.static su questa cartella (vedi media-protected.js).
 import mediaProtectedRoutes from "./routes/media-protected.js";
+import accessGrantsAdminRoutes from "./routes/access-grants.js";
 import formsRoutes from "./routes/forms.js";
 import quizzesRoutes from "./routes/quizzes.js";
 import adminCrmRoutes from "./routes/admin-crm.js";
@@ -56,6 +57,7 @@ import mcpRoutes from "./routes/mcp.js";
 import trackingRoutes from "./routes/tracking.js";
 import preferencesRoutes from "./routes/preferences.js";
 import quotesRoutes from "./routes/quotes.js";
+import accessGrantsPublicRoutes from "./routes/access-grants-public.js";
 import v1Routes from "./routes/v1.js";
 import { startScheduler } from "./services/scheduler.js";
 
@@ -263,6 +265,7 @@ async function start() {
   // (deny by default: 401 senza utente, 403 senza ruolo admin). NON esiste
   // alcun express.static per media-protected — se ne serve uno, NON farlo.
   app.use(mediaProtectedRoutes);
+  app.use(accessGrantsAdminRoutes);
   app.use(formsRoutes);
   app.use(quizzesRoutes);
   app.use(adminCrmRoutes);
@@ -290,6 +293,7 @@ async function start() {
   app.use(trackingRoutes);
   app.use(preferencesRoutes);
   app.use(quotesRoutes);
+  app.use(accessGrantsPublicRoutes);
   app.use(agentRoutes);
 
   // Surface API compatibile ("API compatibili con CRM diffusi") su /v1:

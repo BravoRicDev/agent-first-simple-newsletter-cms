@@ -84,6 +84,35 @@ describe("crm: scoring, task, tracking, preferenze, merge, pipeline", () => {
     assert.equal(contact.score, Math.round(10 * 0.95 * 0.95), "2 giorni di decadimento");
   });
 
+  test("scoring: score leggibile in GET /contacts/:email e /contacts/:email/extras", async () => {
+    const email = "r3score@example.test";
+    // serve un invio perché GET /contacts/:email risponde 404 senza timeline
+    await query(
+      "INSERT INTO form_submissions (site_id, form_slug, data) VALUES ($1, $2, $3)",
+      [site.id, "contact-form", { email, name: "R3 Score" }]
+    );
+
+    // scrive lo score via extras PUT (upsert del contatto)
+    const putRes = await fetch(`${baseUrl}/api/agent/sites/${site.id}/contacts/${email}/extras`, {
+      method: "PUT",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({ score: 42 }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal((await putRes.json()).contact.score, 42);
+
+    // GET extras → contact.score
+    const extrasRes = await fetch(`${baseUrl}/api/agent/sites/${site.id}/contacts/${email}/extras`, { headers: auth() });
+    assert.equal(extrasRes.status, 200);
+    assert.equal((await extrasRes.json()).contact.score, 42, "extras espone lo score");
+
+    // GET /contacts/:email → score nel payload
+    const getRes = await fetch(`${baseUrl}/api/agent/sites/${site.id}/contacts/${email}`, { headers: auth() });
+    assert.equal(getRes.status, 200);
+    const body = await getRes.json();
+    assert.equal(body.score, 42, "dettaglio contatto espone lo score");
+  });
+
   // ── F5 Task ────────────────────────────────────────────────────────────
   test("task: CRUD completo", async () => {
     const createRes = await fetch(`${baseUrl}/api/agent/sites/${site.id}/tasks`, {

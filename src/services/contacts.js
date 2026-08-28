@@ -88,12 +88,12 @@ export async function upsertContact(siteId, email) {
 export async function getContactRecord(siteId, email) {
   const normalized = String(email || "").trim().toLowerCase();
   const row = (await query(
-    "SELECT tags, status, notes, value_estimate, pref_whatsapp, pref_email, pref_phone FROM contacts WHERE site_id = $1 AND email = $2",
+    "SELECT tags, status, notes, value_estimate, score, pref_whatsapp, pref_email, pref_phone FROM contacts WHERE site_id = $1 AND email = $2",
     [siteId, normalized]
   )).rows[0];
   // Fallback con i default di schema: whatsapp = non consenziente finché non
   // risulta altrimenti (il contatto non esiste ancora), email/phone = sì.
-  return row || { tags: [], status: "", notes: "", value_estimate: null, pref_whatsapp: false, pref_email: true, pref_phone: true };
+  return row || { tags: [], status: "", notes: "", value_estimate: null, score: 0, pref_whatsapp: false, pref_email: true, pref_phone: true };
 }
 
 export async function setContactFields(siteId, email, { tags, status, notes, value_estimate }) {

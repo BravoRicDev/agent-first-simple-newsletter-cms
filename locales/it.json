@@ -204,5 +204,6 @@
   "email.deployNotify.generalChanges": "Modifiche generali al sito",
   "email.deployNotify.executedOn": "Deploy eseguito il {date}",
   "email.siteSmtp.notConfigured": "Nessun SMTP configurato per il sito {siteId}",
-  "email.magicLink.sendFailed": "Errore invio email"
+  "email.magicLink.sendFailed": "Errore invio email",
+  "nav.access_grants": "Accessi protetti"
 }
