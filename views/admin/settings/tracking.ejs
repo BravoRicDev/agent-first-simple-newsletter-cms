@@ -96,6 +96,48 @@
     </div>
   </div>
 
+  <h2 style="font-size:15px;margin-top:24px;">Provider di consenso esterno (avanzato)</h2>
+  <p style="font-size:12px;color:#666;margin-bottom:10px;">
+    Solo per siti che gestiscono il banner cookie con uno script di terze parti (es. un consent manager più ricco) invece del banner CMS sopra. Lascia "CMS integrato" se non sai cosa scegliere: è il comportamento attuale, nessuna modifica.
+  </p>
+  <div class="form-group">
+    <label>Provider</label>
+    <select name="consent_provider">
+      <option value="" <%= (!trackingConfig.consentProvider || trackingConfig.consentProvider === 'native') ? 'selected' : '' %>>CMS integrato (default)</option>
+      <option value="external" <%= trackingConfig.consentProvider === 'external' ? 'selected' : '' %>>Esterno (script di terze parti)</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>URL script libreria consenso (JS)</label>
+    <input type="text" name="consent_lib_url" value="<%= trackingConfig.consentProvider === 'external' ? trackingConfig.consentLibUrl : '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.js">
+  </div>
+  <div class="form-group">
+    <label>URL foglio di stile libreria consenso (CSS, opzionale)</label>
+    <input type="text" name="consent_lib_css_url" value="<%= trackingConfig.consentProvider === 'external' ? trackingConfig.consentLibCssUrl : '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.css">
+  </div>
+  <div class="form-group">
+    <label>URL script di inizializzazione (bridge sui cookie CMS)</label>
+    <input type="text" name="consent_script_url" value="<%= trackingConfig.consentProvider === 'external' ? trackingConfig.consentScriptUrl : '' %>" placeholder="/media/<%= selectedSiteId %>/consent/bridge.js">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Deve scrivere i cookie consent_analytics / consent_marketing ("1"/"0") e chiamare gtag('consent','update',...) / fbq('consent','grant'|'revoke') — sono gli stessi che usa il resto del CMS (CAPI, pixel, evento Lead qui sotto).
+    </div>
+  </div>
+
+  <h2 style="font-size:15px;margin-top:24px;">Evento Lead automatico su pagine di conversione</h2>
+  <p style="font-size:12px;color:#666;margin-bottom:10px;">
+    Per siti con form esterni al CMS (es. un altro tool di lead generation) dove il CAPI server-side non può scattare: spara un evento Meta Pixel lato browser sulle pagine indicate, solo dopo consenso marketing, una volta per sessione. Lascia entrambi i campi vuoti per disattivare (nessuna modifica al comportamento attuale).
+  </p>
+  <div style="display:flex;gap:15px;">
+    <div class="form-group" style="flex:1;">
+      <label>Nome evento</label>
+      <input type="text" name="lead_event_name" value="<%= trackingConfig.leadEventName %>" placeholder="Lead">
+    </div>
+    <div class="form-group" style="flex:2;">
+      <label>Pagine (separate da virgola)</label>
+      <input type="text" name="lead_pages" value="<%= trackingConfig.leadPages %>" placeholder="/thank-you, /grazie">
+    </div>
+  </div>
+
   <button type="submit" class="btn" style="margin-top:10px;">Salva</button>
 </form>
 <% } else { %>

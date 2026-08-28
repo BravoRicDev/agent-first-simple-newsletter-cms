@@ -29,7 +29,7 @@ import {
   getAvailabilityRules, setAvailabilityRules, computeAvailableSlots, bookCall,
   listCalendars, getCalendar, createCalendar, updateCalendar, deleteCalendar,
 } from "../services/calls.js";
-import { getSiteTrackingConfigMasked, setSiteTrackingConfig } from "../services/tracking.js";
+import { getSiteTrackingConfigMasked, setSiteTrackingConfig, getPageTrackingOverride, setPageTrackingOverride } from "../services/tracking.js";
 import { getSiteSeoConfig, setSiteSeoConfig } from "../services/site-seo.js";
 import { formatBytes, formatKb, formatMb } from "../services/format.js";
 import { normalizeUrlPath } from "../services/urls.js";
@@ -2619,6 +2619,8 @@ router.put("/api/agent/sites/:siteId/tracking", requireAuth, requireAgent, async
     for (const f of [
       "ga4Id", "gtmId", "metaPixelId", "metaCapiToken", "metaCapiTestCode", "clarityId", "searchConsoleVerification",
       "consentBannerText", "consentAcceptLabel", "consentRejectLabel", "consentPrivacyUrl",
+      "consentProvider", "consentLibUrl", "consentLibCssUrl", "consentScriptUrl",
+      "leadEventName", "leadPages",
     ]) {
       if (f in req.body) fields[f] = req.body[f];
     }
@@ -2628,6 +2630,39 @@ router.put("/api/agent/sites/:siteId/tracking", requireAuth, requireAgent, async
     if (fields.metaCapiToken === "••••••••") delete fields.metaCapiToken;
     await setSiteTrackingConfig(siteId, fields);
     res.json(await getSiteTrackingConfigMasked(siteId));
+  } catch (err) { next(err); }
+});
+
+router.get("/api/agent/sites/:siteId/pages/:pageId/tracking", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    const pageId = parseInt(req.params.pageId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    // Verifica che la pagina appartenga al sito
+    const page = (await query("SELECT id FROM pages WHERE id = $1 AND site_id = $2", [pageId, siteId])).rows[0];
+    if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+
+    const override = await getPageTrackingOverride(pageId);
+    res.json({ pixelEnabled: override.pixel_enabled, trackPageview: override.track_pageview, trackLead: override.track_lead });
+  } catch (err) { next(err); }
+});
+
+router.put("/api/agent/sites/:siteId/pages/:pageId/tracking", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    const pageId = parseInt(req.params.pageId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    // Verifica che la pagina appartenga al sito
+    const page = (await query("SELECT id FROM pages WHERE id = $1 AND site_id = $2", [pageId, siteId])).rows[0];
+    if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+
+    const fields = {};
+    for (const f of ["pixelEnabled", "trackPageview", "trackLead"]) {
+      if (f in req.body) fields[f] = req.body[f];
+    }
+    await setPageTrackingOverride(pageId, fields);
+    const override = await getPageTrackingOverride(pageId);
+    res.json({ pixelEnabled: override.pixel_enabled, trackPageview: override.track_pageview, trackLead: override.track_lead });
   } catch (err) { next(err); }
 });
 

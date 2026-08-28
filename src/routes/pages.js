@@ -14,6 +14,7 @@ import { exportPublishedPages, deleteStaticPage, fullExport } from "../services/
 import { extractAndReplaceBase64 } from "../services/media-utils.js";
 import { normalizeUrlPath } from "../services/urls.js";
 import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js";
+import { getPageTrackingOverride, setPageTrackingOverride } from "../services/tracking.js";
 // Niente tracking (GA4/Pixel/consenso) nelle route di preview qui sotto:
 // sono anteprime interne nell'iframe dell'admin, non traffico pubblico —
 // iniettarlo inquinerebbe le statistiche con le visualizzazioni dell'admin
@@ -154,7 +155,16 @@ router.get("/admin/pages/:id/edit", requireAuth, resolveSite, authorize("pages",
     const snippets = (await query("SELECT id, name FROM snippets WHERE site_id = $1 ORDER BY name", [result.rows[0].site_id])).rows;
     const site = (await query("SELECT id, name, domain FROM sites WHERE id = $1", [result.rows[0].site_id])).rows[0];
     const seo = (await query("SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image FROM page_seo WHERE page_id = $1", [result.rows[0].id])).rows[0] || {};
-    const page = { ...result.rows[0], ...seo };
+    // Override tracking di pagina (opzionale, tri-state: assente/null = eredita
+    // dal sito) — vedi services/tracking.js. Esposti come page.tracking_* per
+    // l'editor (stesso pattern dei campi SEO qui sopra).
+    const trackingOverride = await getPageTrackingOverride(result.rows[0].id);
+    const page = {
+      ...result.rows[0], ...seo,
+      tracking_pixel_enabled: trackingOverride.pixel_enabled ?? null,
+      tracking_track_pageview: trackingOverride.track_pageview ?? null,
+      tracking_track_lead: trackingOverride.track_lead ?? null,
+    };
 
     const analytics = (await query(
       `SELECT
@@ -245,6 +255,16 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
            updated_at = NOW()`,
       [req.params.id, meta_title || null, meta_description || null, meta_keywords || null, canonical_url || null, noindex, og_image || null]
     ).catch(() => {});
+
+    // Override tracking di pagina: select vuota ("") → null (eredita dal
+    // sito), "1" → true, "0" → false. Tutti opzionali, stesso pattern SEO
+    // sopra — vedi views/admin/pages/edit.ejs.
+    const parseTri = (v) => (v === "1" ? true : v === "0" ? false : null);
+    await setPageTrackingOverride(req.params.id, {
+      pixelEnabled: parseTri(req.body.tracking_pixel_enabled),
+      trackPageview: parseTri(req.body.tracking_track_pageview),
+      trackLead: parseTri(req.body.tracking_track_lead),
+    }).catch(() => {});
 
     res.redirect(`/admin/pages?site_id=${siteId}&saved=1`);
     if (oldUrlPath !== data.url_path) {

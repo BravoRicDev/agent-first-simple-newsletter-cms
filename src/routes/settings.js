@@ -222,6 +222,12 @@ router.post("/admin/settings/tracking", requireAuth, authorize("settings", "upda
       consentAcceptLabel: req.body.consent_accept_label,
       consentRejectLabel: req.body.consent_reject_label,
       consentPrivacyUrl: req.body.consent_privacy_url,
+      consentProvider: req.body.consent_provider,
+      consentLibUrl: req.body.consent_lib_url,
+      consentLibCssUrl: req.body.consent_lib_css_url,
+      consentScriptUrl: req.body.consent_script_url,
+      leadEventName: req.body.lead_event_name,
+      leadPages: req.body.lead_pages,
     };
     // Il token CAPI non viene mai ripresentato in chiaro nel form (solo
     // mascherato): un campo lasciato vuoto significa "non toccarlo", non

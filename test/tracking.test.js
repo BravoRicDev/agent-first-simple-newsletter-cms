@@ -1,13 +1,20 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createTestSite, closeDb } from "./helpers.js";
-import { getSiteTrackingConfig, getSiteTrackingConfigMasked, setSiteTrackingConfig, sendMetaCapiEvent, injectTrackingIntoStandalone } from "../src/services/tracking.js";
+import { query } from "../src/db.js";
+import {
+  getSiteTrackingConfig, getSiteTrackingConfigMasked, setSiteTrackingConfig, sendMetaCapiEvent, injectTrackingIntoStandalone,
+  getPageTrackingOverride, setPageTrackingOverride, getEffectiveTrackingConfig,
+} from "../src/services/tracking.js";
 
 describe("tracking: config per sito, mascheramento token, Conversions API", () => {
   let site;
 
   before(async () => { site = await createTestSite("Tracking Test"); });
-  after(async () => { await closeDb(); });
+  // closeDb() chiamato solo nell'ultimo describe del file (vedi sotto): con
+  // describe multipli nello stesso file node:test li esegue in sequenza, e
+  // chiudere il pool qui romperebbe i describe successivi che usano ancora
+  // il DB ("Cannot use a pool after calling end on the pool").
 
   test("sito senza config: hasAnyTracking false, nessun campo popolato", async () => {
     const c = await getSiteTrackingConfig(site.id);
@@ -125,5 +132,90 @@ describe("tracking: injectTrackingIntoStandalone (semi-wrapped)", () => {
   test("input non stringa: ritorna invariato", () => {
     assert.equal(injectTrackingIntoStandalone(null, blocks), null);
     assert.equal(injectTrackingIntoStandalone("", blocks), "");
+  });
+});
+
+describe("tracking: override per-pagina (pixel/pageview/lead opzionali)", () => {
+  let site, page;
+
+  before(async () => {
+    site = await createTestSite("Tracking Per-Page Test");
+    await setSiteTrackingConfig(site.id, { metaPixelId: "1234567890" });
+    page = (await query(
+      "INSERT INTO pages (site_id, url_path, title, published) VALUES ($1, '/pagina-test', 'Pagina', true) RETURNING id",
+      [site.id]
+    )).rows[0];
+  });
+  after(async () => { await closeDb(); });
+
+  test("nessuna riga override: getPageTrackingOverride ritorna {} (eredita)", async () => {
+    const o = await getPageTrackingOverride(page.id);
+    assert.deepEqual(o, {});
+  });
+
+  test("pageId falsy: getPageTrackingOverride ritorna {} senza query", async () => {
+    assert.deepEqual(await getPageTrackingOverride(null), {});
+    assert.deepEqual(await getPageTrackingOverride(0), {});
+  });
+
+  test("nessun override: getEffectiveTrackingConfig eredita ESATTAMENTE dal sito (zero differenze da oggi)", async () => {
+    const site2 = await createTestSite("Tracking Per-Page No Override");
+    await setSiteTrackingConfig(site2.id, { metaPixelId: "999", ga4Id: "G-XYZ" });
+    const p2 = (await query(
+      "INSERT INTO pages (site_id, url_path, title, published) VALUES ($1, '/altra', 'Altra', true) RETURNING id",
+      [site2.id]
+    )).rows[0];
+    const effective = await getEffectiveTrackingConfig(site2.id, p2.id);
+    assert.equal(effective.pixelEnabled, true, "pixel attivo di default perché il sito ha metaPixelId");
+    assert.equal(effective.trackPageview, true, "PageView attivo di default perché il sito ha tracking");
+    assert.equal(effective.leadOverride, null, "nessun override: lascia decidere la logica leadPages lato client");
+    assert.equal(effective.ga4Id, "G-XYZ", "il resto della config di sito passa invariato");
+  });
+
+  test("override parziale (solo pixelEnabled=false): gli altri 2 campi restano ereditati", async () => {
+    await setPageTrackingOverride(page.id, { pixelEnabled: false });
+    const o = await getPageTrackingOverride(page.id);
+    assert.equal(o.pixel_enabled, false);
+    assert.equal(o.track_pageview, null, "non toccato: resta eredita");
+    assert.equal(o.track_lead, null, "non toccato: resta eredita");
+
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.pixelEnabled, false, "override rispettato");
+    assert.equal(effective.trackPageview, true, "eredita: sito ha tracking attivo");
+    assert.equal(effective.leadOverride, null, "eredita: nessun override");
+  });
+
+  test("override multipli: trackPageview=false e trackLead=true forzato", async () => {
+    await setPageTrackingOverride(page.id, { trackPageview: false, trackLead: true });
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.pixelEnabled, false, "l'override precedente su pixelEnabled resta (chiave non toccata in questa chiamata)");
+    assert.equal(effective.trackPageview, false);
+    assert.equal(effective.leadOverride, true, "Lead forzato anche fuori da leadPages");
+  });
+
+  test("reset esplicito a null dopo un override precedente: torna a eredita", async () => {
+    await setPageTrackingOverride(page.id, { pixelEnabled: null, trackPageview: null, trackLead: null });
+    const o = await getPageTrackingOverride(page.id);
+    assert.equal(o.pixel_enabled, null);
+    assert.equal(o.track_pageview, null);
+    assert.equal(o.track_lead, null);
+
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.pixelEnabled, true, "tornato a eredita: sito ha metaPixelId");
+    assert.equal(effective.leadOverride, null);
+  });
+
+  test("setPageTrackingOverride con pageId falsy: no-op silenzioso", async () => {
+    await assert.doesNotReject(setPageTrackingOverride(null, { pixelEnabled: true }));
+  });
+
+  test("setPageTrackingOverride con fields vuoto: no-op, non crea riga", async () => {
+    const p3 = (await query(
+      "INSERT INTO pages (site_id, url_path, title, published) VALUES ($1, '/vuota', 'Vuota', true) RETURNING id",
+      [site.id]
+    )).rows[0];
+    await setPageTrackingOverride(p3.id, {});
+    const o = await getPageTrackingOverride(p3.id);
+    assert.deepEqual(o, {}, "nessuna riga creata, fields vuoto = niente da fare");
   });
 });

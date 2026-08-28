@@ -6,7 +6,7 @@ import { query } from "../db.js";
 import { expandSnippets } from "./page-renderer.js";
 import { logger } from "./logger.js";
 import { resolveLayoutName, getSiteThemeVars } from "./site-render.js";
-import { getSiteTrackingConfigMasked, renderTrackingBlocks, injectTrackingIntoStandalone } from "./tracking.js";
+import { getSiteTrackingConfigMasked, getEffectiveTrackingConfig, renderTrackingBlocks, injectTrackingIntoStandalone } from "./tracking.js";
 import { getSiteSeoConfig } from "./site-seo.js";
 import {
   getPublishedPagesForSitemap, buildSitemapXml, buildRobotsTxt,
@@ -65,11 +65,14 @@ async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
     const seoLocals = seoContext
       ? buildSeoLocals(page, page.url_path, { ...seoContext, isHomepage: page.url_path === "/" })
       : {};
+    // Calcola config tracking effettiva per questa pagina (merge sito + override pagina)
+    const effectiveTracking = await getEffectiveTrackingConfig(siteId, page.id);
+    const trackingLocals = { ...themeVars, ...effectiveTracking };
 
     let finalHtml;
     if (page.layout_mode === "wrapped") {
       finalHtml = await ejs.renderFile(layoutTemplate, {
-        ...themeVars,
+        ...trackingLocals,
         title: page.title || "",
         content: html,
         ...seoLocals,
@@ -87,7 +90,7 @@ async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
       // Stesso discorso per il tracking (GA4/banner consenso): Caddy non
       // passa da Express, quindi va iniettato nel markup esportato.
       finalHtml = injectSeoIntoStandalone(html, seoLocals);
-      finalHtml = injectTrackingIntoStandalone(finalHtml, await renderTrackingBlocks(themeVars));
+      finalHtml = injectTrackingIntoStandalone(finalHtml, await renderTrackingBlocks(trackingLocals));
     }
 
     const filename = urlPathToFilename(page.url_path);
@@ -227,7 +230,7 @@ export async function generate404Page(siteId) {
     const site = (await query("SELECT id, homepage_path, layout_template FROM sites WHERE id = $1", [siteId])).rows[0];
     if (!site) return { ok: false, error: "Sito non trovato" };
     const layoutName = resolveLayoutName(site.layout_template);
-    const themeVars = { ...(await getSiteThemeVars(siteId)), ...(await getSiteTrackingConfigMasked(siteId)) };
+    const themeVars = { ...(await getSiteThemeVars(siteId)) };
 
     const targetPath = site.homepage_path || "/";
     const pages = (await query(
@@ -245,6 +248,9 @@ export async function generate404Page(siteId) {
 
     const page = pages[0];
     const html = await expandSnippets(siteId, page.content || "");
+    // Usa override tracking della pagina di base (homepage) per la 404
+    const effectiveTracking = await getEffectiveTrackingConfig(siteId, page.id);
+    const trackingLocals = { ...themeVars, ...effectiveTracking };
 
     // La pagina 404 non deve MAI essere indicizzata, indipendentemente da
     // cosa dice page_seo per il contenuto che ne ha ispirato il markup
@@ -257,7 +263,7 @@ export async function generate404Page(siteId) {
       const siteSeo = await getSiteSeoConfig(siteId);
       const seoLocals = buildSeoLocals(page, "/404", { baseUrl, siteSeo, brandName: themeVars.brandName, isHomepage: false });
       finalHtml = await ejs.renderFile(layoutTemplate, {
-        ...themeVars,
+        ...trackingLocals,
         title: page.title || "",
         content: html,
         ...seoLocals,
@@ -272,7 +278,7 @@ export async function generate404Page(siteId) {
       // Il tracking invece sì: la 404 wrapped passa dal layout che include
       // i partial, quindi anche la standalone deve avere GA4/banner.
       finalHtml = injectSeoIntoStandalone(html, { noindex: true });
-      finalHtml = injectTrackingIntoStandalone(finalHtml, await renderTrackingBlocks(themeVars));
+      finalHtml = injectTrackingIntoStandalone(finalHtml, await renderTrackingBlocks(trackingLocals));
     }
 
     const dir = getSiteStaticDir(siteId);

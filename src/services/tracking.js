@@ -26,6 +26,34 @@ const TRACKING_KEYS = {
   consentAcceptLabel: "tracking_consent_accept_label",
   consentRejectLabel: "tracking_consent_reject_label",
   consentPrivacyUrl: "tracking_consent_privacy_url",
+  // Provider del banner di consenso: "native" (banner CMS integrato,
+  // default — vuoto = native, retrocompatibile) oppure "external" (un
+  // banner di terze parti gestito fuori dal CMS, es. per siti con un lead
+  // form esterno che vogliono un consent manager più ricco). Quando è
+  // "external" il banner nativo NON viene renderizzato: sta al sito
+  // scrivere gli stessi cookie consent_analytics/consent_marketing letti
+  // dal resto del CMS (CAPI, pixel, ecc.) — vedi consentLibUrl/
+  // consentScriptUrl sotto per un provider vendored servito da media/.
+  consentProvider: "tracking_consent_provider",
+  // URL della libreria di consenso esterna (JS) e del relativo CSS, e dello
+  // script che la inizializza/bridgea sui cookie CMS. Tipicamente puntano a
+  // asset vendored in media/<site>/... (bind-mount, sopravvivono ai
+  // rebuild) ma possono essere qualunque URL assoluto. Usati solo quando
+  // consentProvider === "external".
+  consentLibUrl: "tracking_consent_lib_url",
+  consentLibCssUrl: "tracking_consent_lib_css_url",
+  consentScriptUrl: "tracking_consent_script_url",
+  // Evento Meta Pixel da sparare lato browser su pagine di conversione che
+  // non passano da un submit gestito dal CMS (es. form esterni: videoask,
+  // altri CRM). Gated SEMPRE su consenso marketing (Consent Mode v2), una
+  // volta per sessione. Vuoto = nessun Lead automatico (comportamento
+  // attuale, nessuna regressione).
+  leadEventName: "tracking_lead_event",
+  // Pagine su cui sparare leadEventName: lista separata da virgole di
+  // sottostringhe del pathname (case-insensitive, match "contiene"), es.
+  // "/thank-you,/grazie". Vuoto = nessun Lead automatico anche se
+  // leadEventName è impostato (entrambe le chiavi servono).
+  leadPages: "tracking_lead_pages",
 };
 
 const CONSENT_DEFAULTS = {
@@ -38,6 +66,7 @@ const CONSENT_DEFAULTS = {
 function emptyConfig() {
   const c = {};
   for (const field of Object.keys(TRACKING_KEYS)) c[field] = "";
+  c.consentProvider = "native";
   c.hasAnyTracking = false;
   return c;
 }
@@ -57,6 +86,19 @@ export async function getSiteTrackingConfig(siteId) {
     for (const [field, defaultValue] of Object.entries(CONSENT_DEFAULTS)) {
       if (!c[field]) c[field] = defaultValue;
     }
+  }
+  // Vuoto = "native" (retrocompatibile: nessuna riga in settings finora
+  // significava "banner CMS integrato", e deve continuare a significarlo).
+  if (!c.consentProvider) c.consentProvider = "native";
+  // Default degli URL del provider esterno: asset vendored per-sito in
+  // media/<site>/consent/ (bind-mount, sopravvivono ai rebuild). Calcolati
+  // solo se il provider è "external" e non è stato impostato un URL
+  // esplicito — così il caso comune (asset nel percorso convenzionale)
+  // funziona con la sola chiave tracking_consent_provider=external.
+  if (c.consentProvider === "external") {
+    if (!c.consentLibUrl) c.consentLibUrl = `/media/${siteId}/consent/consent.js`;
+    if (!c.consentLibCssUrl) c.consentLibCssUrl = `/media/${siteId}/consent/consent.css`;
+    if (!c.consentScriptUrl) c.consentScriptUrl = `/media/${siteId}/consent/bridge.js`;
   }
   return c;
 }
@@ -216,4 +258,100 @@ export function injectTrackingIntoStandalone(html, { head = "", body = "" } = {}
   }
 
   return html;
+}
+
+// ── Per-pagina tracking overrides ───────────────────────────────────────────
+// Tabella: page_tracking_overrides (page_id PK, pixel_enabled, track_pageview,
+// track_lead — tutti NULLABLE per tri-state: NULL = eredita, true/false = override)
+
+export async function getPageTrackingOverride(pageId) {
+  if (!pageId) return {};
+  const result = await query(
+    `SELECT pixel_enabled, track_pageview, track_lead
+     FROM page_tracking_overrides WHERE page_id = $1`,
+    [pageId]
+  );
+  if (result.rows.length === 0) return {};
+  const row = result.rows[0];
+  return {
+    pixel_enabled: row.pixel_enabled ?? null,
+    track_pageview: row.track_pageview ?? null,
+    track_lead: row.track_lead ?? null,
+  };
+}
+
+export async function setPageTrackingOverride(pageId, fields) {
+  if (!pageId) return;
+
+  // Campi: pixelEnabled, trackPageview, trackLead (camelCase dall'API/UI)
+  // undefined = non toccare (chiave assente); null = resetta a eredita (NULL nel DB)
+  const fieldMap = {
+    pixelEnabled: "pixel_enabled",
+    trackPageview: "track_pageview",
+    trackLead: "track_lead",
+  };
+
+  const cols = [];
+  const values = [pageId];
+  const updateSets = [];
+  let paramIdx = 2;
+
+  for (const [apiField, dbField] of Object.entries(fieldMap)) {
+    if (apiField in fields) {
+      const value = fields[apiField];
+      cols.push(dbField);
+      // value può essere true, false, null — tutti validi
+      values.push(value === null ? null : value === true);
+      updateSets.push(`${dbField} = $${paramIdx}`);
+      paramIdx++;
+    }
+  }
+
+  if (cols.length === 0) return;
+
+  // NB: updated_at è un letterale (NOW()) sia in INSERT che in UPDATE, MAI
+  // un placeholder — così il numero di colonne dichiarate combacia sempre
+  // col numero di placeholder in VALUES (bug precedente: la colonna
+  // updated_at finiva nella lista colonne ma non aveva un $N corrispondente,
+  // "INSERT has more target columns than expressions").
+  const sql = `
+    INSERT INTO page_tracking_overrides (page_id, ${cols.join(", ")}, updated_at)
+    VALUES (${values.map((_, i) => `$${i + 1}`).join(", ")}, NOW())
+    ON CONFLICT (page_id) DO UPDATE SET ${updateSets.join(", ")}, updated_at = NOW()
+  `;
+  await query(sql, values);
+}
+
+export async function getEffectiveTrackingConfig(siteId, pageId) {
+  const siteConfig = await getSiteTrackingConfigMasked(siteId);
+  const pageOverride = await getPageTrackingOverride(pageId);
+
+  // Default site-level: pixel è attivo se c'è un metaPixelId
+  // trackPageview default true se c'è tracking, trackLead dipende da leadPages/leadEventName (logica client-side)
+  const effective = { ...siteConfig };
+
+  // pixelEnabled: default true se il sito ha metaPixelId, altrimenti false
+  // ma se l'override è esplicito (true/false/null), usa quello
+  if (pageOverride.pixel_enabled !== undefined && pageOverride.pixel_enabled !== null) {
+    effective.pixelEnabled = pageOverride.pixel_enabled;
+  } else {
+    effective.pixelEnabled = !!siteConfig.metaPixelId;
+  }
+
+  // trackPageview: default true se il sito ha tracking, override se impostato
+  if (pageOverride.track_pageview !== undefined && pageOverride.track_pageview !== null) {
+    effective.trackPageview = pageOverride.track_pageview;
+  } else {
+    effective.trackPageview = siteConfig.hasAnyTracking;
+  }
+
+  // leadOverride: true|false|null (null = nessun override, usa logica leadPages client-side)
+  // Questo serve solo per FORZARE on/off il Lead indipendentemente dal match leadPages
+  if (pageOverride.track_lead !== undefined && pageOverride.track_lead !== null) {
+    effective.leadOverride = pageOverride.track_lead;
+  } else {
+    effective.leadOverride = null;
+  }
+
+  return effective;
 }

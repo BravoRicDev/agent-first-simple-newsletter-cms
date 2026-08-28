@@ -694,6 +694,8 @@ GET    /api/agent/sites/:id/calls/slots                  ← slot liberi calcola
 POST   /api/agent/sites/:id/calls/book                   ← prenota per conto di qualcuno
 GET    /api/agent/sites/:id/tracking                     ← config GA4/GTM/Meta Pixel/CAPI/Clarity (token mascherato)
 PUT    /api/agent/sites/:id/tracking                     ← imposta config tracking
+GET    /api/agent/sites/:id/pages/:pid/tracking          ← override tracking di una pagina (null = eredita dal sito)
+PUT    /api/agent/sites/:id/pages/:pid/tracking          ← imposta override { pixelEnabled?, trackPageview?, trackLead? }
 GET    /api/agent/sites/:id/pages/:pid/seo               ← meta/canonical/noindex/OG di una pagina
 PUT    /api/agent/sites/:id/pages/:pid/seo               ← imposta SEO pagina (effetto su tutti i layout_mode, vedi sezione SEO)
 GET    /api/agent/sites/:id/seo                          ← default SEO del sito (immagine OG, handle Twitter, robots.txt extra)
@@ -1110,6 +1112,65 @@ lingua diversa dall'italiano, ecc.), non modificarli "di default".
 
 **Non inviare mai GA4 e GTM insieme se GA4 è già gestito dentro GTM**:
 doppio conteggio delle visite.
+
+### Chiavi avanzate (banner esterno, evento Lead automatico)
+
+Oltre ai campi sopra, `PUT /api/agent/sites/:id/tracking` accetta anche:
+
+```
+consentProvider?      "native" (default, banner CMS integrato) | "external"
+consentLibUrl?         URL script (JS) del banner esterno — solo se consentProvider="external"
+consentLibCssUrl?      URL CSS del banner esterno (opzionale)
+consentScriptUrl?      URL script di inizializzazione/bridge del banner esterno
+leadEventName?         nome evento Meta Pixel da sparare lato browser (es. "Lead")
+leadPages?              pagine su cui spararlo: sottostringhe del pathname separate da virgola (es. "/thank-you,/grazie")
+```
+
+Tutte opzionali, vuoto = comportamento attuale (nessuna regressione). Casi
+d'uso:
+- **`consentProvider="external"`**: per siti che vogliono gestire il consenso
+  con uno script di terze parti invece del banner CMS (es. un consent
+  manager più ricco). Il banner nativo NON viene più renderizzato; il CMS si
+  limita a caricare gli URL indicati (tipicamente asset vendored per-sito in
+  `media/<site>/consent/`, bind-mount — sopravvivono ai rebuild). CONTRATTO:
+  lo script esterno deve scrivere gli stessi cookie letti dal resto del CMS
+  — `consent_analytics`/`consent_marketing` ("1"/"0") — e chiamare
+  `gtag('consent','update',...)`/`fbq('consent','grant'|'revoke')`
+  coerentemente, altrimenti CAPI/pixel/Lead automatico restano ciechi sul
+  consenso reale.
+- **`leadEventName`+`leadPages`**: per siti con un form di conversione
+  ESTERNO al CMS (altro CRM, tool di lead gen) dove il CAPI server-side in
+  `forms.js`/`quizzes.js`/`newsletter.js` non può scattare (il CMS non vede
+  mai la submit). Spara l'evento lato browser sulle pagine indicate (tipico:
+  una pagina di ringraziamento), sempre gated sul consenso marketing
+  (Consent Mode v2), una volta per sessione.
+
+### Tracking per singola pagina (override opzionale)
+
+```
+GET    /api/agent/sites/:siteId/pages/:pageId/tracking  ← override attuale della pagina (null = eredita dal sito)
+PUT    /api/agent/sites/:siteId/pages/:pageId/tracking  ← { pixelEnabled?, trackPageview?, trackLead? } — ognuno true|false|null
+```
+
+Tutto **opzionale e per-pagina**, sopra alla config di sito qui sopra: una
+pagina senza override si comporta esattamente come detta la config di sito
+(zero differenze). Tri-state per ciascun campo:
+- **assente dal body PUT** → non tocca quel campo (resta quello che era);
+- **`null`** → resetta esplicitamente a "eredita dal sito";
+- **`true`/`false`** → override esplicito.
+
+Campi:
+- `pixelEnabled`: attiva/disattiva il Meta Pixel SOLO su questa pagina
+  (eredita = attivo se il sito ha `metaPixelId`).
+- `trackPageview`: attiva/disattiva l'evento `PageView` automatico su questa
+  pagina (eredita = attivo se il sito ha tracking).
+- `trackLead`: forza `true` = spara sempre l'evento Lead (`leadEventName`)
+  su questa pagina anche se il suo path NON è in `leadPages`; forza `false`
+  = non sparare MAI il Lead qui anche se il path È in `leadPages`; `null`/
+  assente = usa la logica normale di `leadPages` lato client.
+
+Disponibile anche via UI in "Modifica pagina" (3 select "Eredita dal sito /
+Attivo / Disattivo"), stesso pattern dei campi SEO per-pagina.
 
 ### Meta Conversions API (lato server)
 

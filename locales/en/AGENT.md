@@ -687,6 +687,8 @@ GET    /api/agent/sites/:id/calls/slots                  ← computed free slots
 POST   /api/agent/sites/:id/calls/book                   ← book on someone's behalf
 GET    /api/agent/sites/:id/tracking                     ← GA4/GTM/Meta Pixel/CAPI/Clarity config (token masked)
 PUT    /api/agent/sites/:id/tracking                     ← set tracking config
+GET    /api/agent/sites/:id/pages/:pid/tracking          ← a page's tracking override (null = inherits from site)
+PUT    /api/agent/sites/:id/pages/:pid/tracking          ← set override { pixelEnabled?, trackPageview?, trackLead? }
 GET    /api/agent/sites/:id/pages/:pid/seo               ← a page's meta/canonical/noindex/OG
 PUT    /api/agent/sites/:id/pages/:pid/seo               ← set page SEO (only affects wrapped pages, see SEO section)
 GET    /api/agent/sites/:id/seo                          ← site-wide SEO defaults (OG image, Twitter handle, robots.txt extra)
@@ -1100,6 +1102,64 @@ them "by default".
 
 **Never send both GA4 and GTM if GA4 is already managed inside GTM** —
 double-counts pageviews.
+
+### Advanced keys (external consent provider, automatic Lead event)
+
+Besides the fields above, `PUT /api/agent/sites/:id/tracking` also accepts:
+
+```
+consentProvider?      "native" (default, built-in CMS banner) | "external"
+consentLibUrl?         external banner script URL (JS) — only if consentProvider="external"
+consentLibCssUrl?      external banner CSS URL (optional)
+consentScriptUrl?      external banner init/bridge script URL
+leadEventName?         Meta Pixel event to fire client-side (e.g. "Lead")
+leadPages?              pages to fire it on: comma-separated pathname substrings (e.g. "/thank-you,/thanks")
+```
+
+All optional, empty = current behavior (no regression). Use cases:
+- **`consentProvider="external"`**: for sites that want to manage consent
+  with a third-party script instead of the CMS banner (e.g. a richer
+  consent manager). The native banner is no longer rendered; the CMS just
+  loads the given URLs (typically per-site vendored assets under
+  `media/<site>/consent/`, bind-mount — survive rebuilds). CONTRACT: the
+  external script must write the same cookies read by the rest of the CMS —
+  `consent_analytics`/`consent_marketing` ("1"/"0") — and call
+  `gtag('consent','update',...)`/`fbq('consent','grant'|'revoke')`
+  consistently, otherwise CAPI/pixel/automatic Lead stay blind to real
+  consent.
+- **`leadEventName`+`leadPages`**: for sites whose conversion form is
+  EXTERNAL to the CMS (another CRM, a lead-gen tool) where the server-side
+  CAPI in `forms.js`/`quizzes.js`/`newsletter.js` can never fire (the CMS
+  never sees the submit). Fires the event client-side on the given pages
+  (typically a thank-you page), always gated on marketing consent (Consent
+  Mode v2), once per session.
+
+### Per-page tracking (optional override)
+
+```
+GET    /api/agent/sites/:siteId/pages/:pageId/tracking  ← page's current override (null = inherits from site)
+PUT    /api/agent/sites/:siteId/pages/:pageId/tracking  ← { pixelEnabled?, trackPageview?, trackLead? } — each true|false|null
+```
+
+Fully **optional and per-page**, layered on top of the site config above: a
+page with no override behaves exactly like the site config says (zero
+difference). Tri-state per field:
+- **absent from the PUT body** → leaves that field untouched (keeps whatever it was);
+- **`null`** → explicitly resets to "inherit from site";
+- **`true`/`false`** → explicit override.
+
+Fields:
+- `pixelEnabled`: turns the Meta Pixel on/off on THIS page only (inherit =
+  on if the site has `metaPixelId`).
+- `trackPageview`: turns the automatic `PageView` event on/off on this page
+  (inherit = on if the site has tracking).
+- `trackLead`: `true` = always fire the Lead event (`leadEventName`) on
+  this page even if its path is NOT in `leadPages`; `false` = never fire
+  Lead here even if the path IS in `leadPages`; `null`/absent = use the
+  normal `leadPages` client-side logic.
+
+Also available via the "Edit page" UI (3 selects "Inherit from site /
+On / Off"), same pattern as the per-page SEO fields.
 
 ### Meta Conversions API (server-side)
 

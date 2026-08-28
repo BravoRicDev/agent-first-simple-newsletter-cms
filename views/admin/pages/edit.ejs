@@ -115,6 +115,38 @@
           Escludi dai motori di ricerca (noindex)
         </label>
       </div>
+
+      <hr style="margin:20px 0; border-color:#e5e7eb;">
+      <h4 style="margin-bottom:10px;font-size:14px;color:#374151;">Tracking (opzionale — override per questa pagina)</h4>
+      <p style="font-size:12px;color:#6b7280;margin-bottom:10px;">Lascia su "Eredita dal sito" per usare la configurazione globale. Le impostazioni qui hanno effetto solo se il sito ha tracking attivo (GA4/GTM/Meta Pixel/Clarity).</p>
+
+      <div class="form-group">
+        <label>Meta Pixel su questa pagina</label>
+        <select name="tracking_pixel_enabled">
+          <option value="" <%= !page.tracking_pixel_enabled && page.tracking_pixel_enabled !== false ? 'selected' : '' %>>Eredita dal sito</option>
+          <option value="1" <%= page.tracking_pixel_enabled === true ? 'selected' : '' %>>Attivo</option>
+          <option value="0" <%= page.tracking_pixel_enabled === false ? 'selected' : '' %>>Disattivo</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>PageView su questa pagina</label>
+        <select name="tracking_track_pageview">
+          <option value="" <%= !page.tracking_track_pageview && page.tracking_track_pageview !== false ? 'selected' : '' %>>Eredita dal sito</option>
+          <option value="1" <%= page.tracking_track_pageview === true ? 'selected' : '' %>>Attivo</option>
+          <option value="0" <%= page.tracking_track_pageview === false ? 'selected' : '' %>>Disattivo</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Evento Lead su questa pagina</label>
+        <select name="tracking_track_lead">
+          <option value="" <%= !page.tracking_track_lead && page.tracking_track_lead !== false ? 'selected' : '' %>>Eredita dal sito (usa leadPages)</option>
+          <option value="1" <%= page.tracking_track_lead === true ? 'selected' : '' %>>Forza sempre (anche fuori leadPages)</option>
+          <option value="0" <%= page.tracking_track_lead === false ? 'selected' : '' %>>Non sparare mai (anche se in leadPages)</option>
+        </select>
+      </div>
+
       <div class="form-group">
         <label>Contenuto HTML</label>
         <textarea name="content" id="pageContent"><%= page.content %></textarea>

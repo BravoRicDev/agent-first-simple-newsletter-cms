@@ -5,7 +5,7 @@ import { resolveSite } from "../middleware/resolve-site.js";
 import { expandSnippets } from "../services/page-renderer.js";
 import { requireAuth } from "../middleware/auth.js";
 import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js";
-import { getSiteTrackingConfigMasked, renderTrackingBlocks, injectTrackingIntoStandalone } from "../services/tracking.js";
+import { getSiteTrackingConfigMasked, getEffectiveTrackingConfig, renderTrackingBlocks, injectTrackingIntoStandalone } from "../services/tracking.js";
 import { getSiteSeoConfig } from "../services/site-seo.js";
 import {
   getPublishedPagesForSitemap, buildSitemapXml, buildRobotsTxt,
@@ -150,7 +150,7 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
   }
 
   const layoutName = "layouts/" + resolveLayoutName(req.site?.layout_template);
-  const themeVars = { ...(await getSiteThemeVars(siteId)), ...(await getSiteTrackingConfigMasked(siteId)) };
+  const themeVars = { ...(await getSiteThemeVars(siteId)) };
 
   const urlPath = req.path === "/" ? "/" : req.path.replace(/\/$/, "") || "/";
 
@@ -209,16 +209,18 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
         if (homeResult.rows.length > 0) {
           const page = homeResult.rows[0];
           const seoLocals = await buildSeoLocals(page, "/", true);
+          const effectiveTracking = await getEffectiveTrackingConfig(siteId, page.id);
+          const trackingLocals = { ...themeVars, ...effectiveTracking };
           if (page.layout_mode === "standalone") {
             if (seoLocals.noindex) res.setHeader("X-Robots-Tag", "noindex");
             let html = await expandSnippets(siteId, page.content);
             html = injectSeoIntoStandalone(html, seoLocals);
-            html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(themeVars));
+            html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(trackingLocals));
             return res.send(html);
           }
           const renderedContent = await expandSnippets(siteId, page.content);
           return res.render(layoutName, {
-            ...themeVars,
+            ...trackingLocals,
             title: page.title,
             content: renderedContent,
             ...seoLocals,
@@ -240,6 +242,8 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
     const page = result.rows[0];
 
     const seoLocals = await buildSeoLocals(page, urlPath, urlPath === "/");
+    const effectiveTracking = await getEffectiveTrackingConfig(siteId, page.id);
+    const trackingLocals = { ...themeVars, ...effectiveTracking };
 
     // Tracciamento visita (fire-and-forget)
     query(
@@ -251,13 +255,13 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
       if (seoLocals.noindex) res.setHeader("X-Robots-Tag", "noindex");
       let html = await expandSnippets(siteId, page.content);
       html = injectSeoIntoStandalone(html, seoLocals);
-      html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(themeVars));
+      html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(trackingLocals));
       return res.send(html);
     }
 
     const renderedContent = await expandSnippets(siteId, page.content);
     res.render(layoutName, {
-      ...themeVars,
+      ...trackingLocals,
       title: page.title,
       content: renderedContent,
       ...seoLocals,
