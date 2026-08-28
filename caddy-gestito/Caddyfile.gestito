@@ -13,6 +13,13 @@
             root * /app/static/{host}
             rewrite * {http.matchers.file.relative}
             file_server
+            # Il tracking/pixel è parametrizzato da DB+UI: le pagine statiche NON
+            # devono mai essere servite da cache stale del browser. no-cache =>
+            # il browser deve sempre rivalidare (304 se invariato, 200 se
+            # cambiato) — altrimenti un HTML pre-fix resta in cache euristica
+            # e il pixel/Lead risultano "sbagliati" anche se il server è già
+            # aggiornato (vedi ticket recupero pixel elenacorvesi/lumonboy).
+            header Cache-Control "no-cache"
         }
         reverse_proxy gestione-siti:3000
     }

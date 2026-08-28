@@ -184,6 +184,10 @@
     if (!(window.fbq && typeof window.fbq === 'function')) return;
     try { sessionStorage.setItem(FLAG_KEY, '1'); } catch (e) {}
     fbq('track', EVENT_NAME);
+    // Diagnostica: verifica in DevTools che il Lead sia partito davvero
+    // (digitare `leadFlag` in console → "1") senza dover riaprire il Pixel
+    // Helper. Puramente additiva, non cambia il comportamento di tracking.
+    try { window.leadFlag = '1'; console.log('[Lead] ✓', EVENT_NAME, '→', location.pathname); } catch (e) {}
   }
 
   // Consenso già presente al caricamento (visitatore di ritorno, o provider
