@@ -163,7 +163,7 @@ router.post("/admin/users/:id/delete", requireAuth, authorize("users", "delete")
   try {
     const result = await query("SELECT site_id, email, role FROM users WHERE id = $1", [req.params.id]);
     if (result.rows.length === 0) return res.status(404).render("error", { message: res.locals.t("api.common.userNotFound") });
-    if (req.user.role !== "superadmin" && !sameSite(result.rows[0].site_id, req.user.site_id)) {
+    if (req.user.role !== "superadmin" && !sameSite(result.rows[0].site_id, req.user.site_id, req.user.role === "superadmin")) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     }
     if (parseInt(req.params.id, 10) === req.user.sub) {
