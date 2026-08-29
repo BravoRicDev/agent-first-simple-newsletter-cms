@@ -581,8 +581,10 @@ router.get("/admin/pages/:id/internal-links", requireAuth, authorize("pages", "r
 
 router.post("/admin/pages/:pageId/social", requireAuth, async (req, res, next) => {
   try {
-    const page = (await query("SELECT site_id FROM pages WHERE id = $1", [req.params.pageId])).rows[0];
+    const page = (await query("SELECT id, site_id FROM pages WHERE id = $1 AND site_id = $2", [req.params.pageId, req.user.site_id])).rows[0];
     if (!page) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
+    // Superadmin bypass: if user is superadmin, page.site_id from query will differ,
+    // but the combined query already restricted by user's site_id, so we need an extra check
     if (req.user.role !== "superadmin" && page.site_id !== req.user.site_id) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     }
@@ -598,7 +600,7 @@ router.post("/admin/pages/:pageId/social", requireAuth, async (req, res, next) =
 
 router.post("/admin/pages/:pageId/social/:postId/delete", requireAuth, async (req, res, next) => {
   try {
-    const page = (await query("SELECT site_id FROM pages WHERE id = $1", [req.params.pageId])).rows[0];
+    const page = (await query("SELECT id, site_id FROM pages WHERE id = $1 AND site_id = $2", [req.params.pageId, req.user.site_id])).rows[0];
     if (!page) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
     if (req.user.role !== "superadmin" && page.site_id !== req.user.site_id) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });

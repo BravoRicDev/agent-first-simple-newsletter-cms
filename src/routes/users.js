@@ -7,8 +7,15 @@ import { auditLog } from "../services/audit.js";
 
 const router = Router();
 
-function sameSite(targetSiteId, actorSiteId) {
-  return targetSiteId != null && actorSiteId != null && targetSiteId === actorSiteId;
+function sameSite(targetSiteId, actorSiteId, actorIsSuperadmin) {
+  // If actor is superadmin, always allow (they manage all sites)
+  if (actorIsSuperadmin) return true;
+  // If target has NULL site_id (superadmin), non-superadmin cannot act on it
+  if (targetSiteId === null) return false;
+  // If actor has NULL site_id, deny
+  if (actorSiteId === null) return false;
+  // Normal case: site_ids must match explicitly
+  return targetSiteId === actorSiteId;
 }
 
 // setter/closer: account di servizio per il modulo satellite collego-sales
@@ -83,7 +90,7 @@ router.get("/admin/users/:id/edit", requireAuth, authorize("users", "update"), a
   try {
     const result = await query("SELECT * FROM users WHERE id = $1", [req.params.id]);
     if (result.rows.length === 0) return res.status(404).render("error", { message: res.locals.t("api.common.userNotFound") });
-    if (req.user.role !== "superadmin" && !sameSite(result.rows[0].site_id, req.user.site_id)) {
+    if (req.user.role !== "superadmin" && !sameSite(result.rows[0].site_id, req.user.site_id, req.user.role === "superadmin")) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     }
     const sites = req.user.role === "superadmin"
@@ -99,7 +106,7 @@ router.post("/admin/users/:id", requireAuth, authorize("users", "update"), async
     const result = await query("SELECT site_id, role, status FROM users WHERE id = $1", [targetId]);
     if (result.rows.length === 0) return res.status(404).render("error", { message: res.locals.t("api.common.userNotFound") });
     const before = result.rows[0];
-    if (req.user.role !== "superadmin" && !sameSite(before.site_id, req.user.site_id)) {
+    if (req.user.role !== "superadmin" && !sameSite(before.site_id, req.user.site_id, req.user.role === "superadmin")) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     }
     const { name, surname, role, status } = req.body;

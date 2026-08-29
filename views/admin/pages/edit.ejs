@@ -334,7 +334,7 @@ function insertSnippet(name) {
   const ta = document.getElementById('pageContent');
   const start = ta.selectionStart;
   const end = ta.selectionEnd;
-  const snippet = '{{snippet:' + name + '}}';
+  const snippet = '{{snippet:' + JSON.stringify(name) + '}}';
   ta.value = ta.value.substring(0, start) + snippet + ta.value.substring(end);
   ta.selectionStart = ta.selectionEnd = start + snippet.length;
   ta.focus();

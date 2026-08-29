@@ -54,11 +54,11 @@ async function checkSnippetUsage(event, snippetId, snippetName) {
   try {
     const r = await fetch('/admin/snippets/' + snippetId + '/usage-check');
     const data = await r.json();
-    let msg = 'Eliminare lo snippet "' + snippetName + '"?';
+    let msg = 'Eliminare lo snippet ' + JSON.stringify(snippetName) + '?';
     if (data.pages_count > 0) {
       msg = '⚠️ ATTENZIONE: questo snippet è usato in ' + data.pages_count + ' pagina/e:\n';
       msg += data.pages.map(function(p) { return '  \u2022 ' + p.url_path; }).join('\n');
-      msg += '\n\nEliminandolo, quelle pagine mostreranno il tag {{snippet:' + snippetName + '}} invece del contenuto.\n\nConfermi comunque?';
+      msg += '\n\nEliminandolo, quelle pagine mostreranno il tag {{snippet:' + JSON.stringify(snippetName) + '}} invece del contenuto.\n\nConfermi comunque?';
     }
     if (confirm(msg)) form.submit();
   } catch {
@@ -70,7 +70,7 @@ async function checkSnippetUsage(event, snippetId, snippetName) {
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.snippet-copy').forEach(btn => {
     btn.addEventListener('click', function() {
-      var tag = '{{snippet:' + btn.dataset.snippetName + '}}';
+      var tag = '{{snippet:' + JSON.stringify(btn.dataset.snippetName) + '}}';
       navigator.clipboard.writeText(tag).then(function() {
         var orig = btn.textContent;
         btn.textContent = '✅ Copiato!';
