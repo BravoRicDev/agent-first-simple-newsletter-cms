@@ -75,8 +75,30 @@ Oltre alla gestione dei siti, il CMS include un **CRM completo** attivabile per 
 
 ### Newsletter e social
 
-- **Newsletter** (`/admin/newsletter`): gestione iscritti (con export), campagne, template email, impostazioni SMTP con **test di connessione**.
+- **Newsletter** (`/admin/newsletter`): gestione iscritti (con export), campagne, template email, impostazioni SMTP con **test di connessione**. Le campagne supportano stati `draft`/`sending`/`paused`/`sent`; l'invio può esseremesso/cancellato.
 - **Social poster** (`/admin/social`): **attualmente uno stub** (verifica la presenza del token, non pubblica realmente).
+- **Sequenze newsletter** (`/admin/newsletter/sequences`): sequenze email automatizzate multi-step con ritardi configurabili, targeting per tag o segmento, e tracciamento progresso per iscritto (apertura/click).
+
+### Marketing & tracking
+
+- **Link tracciati** (`/l/:token`): crea link redirect tracciati con analisi click/open, configurabili come attivi/pausati, e un token univoco per email e contenuti esterni.
+- **Page tracking** (`/admin/settings/tracking`): override di tracciamento per pagina — attiva/disattiva GA4, GTM, Meta Pixel, Clarity, ecc. su pagine specifiche. Include banner di consenso GDPR generato automaticamente con Google Consent Mode v2 quando un tracker è configurato.
+- **Link pagamento** (`/admin/payments`, `/pay/:token`): crea link di pagamento single-use con prezzo, descrizione e email contatto configurabili. Vista pubblica cliente in `/pay/:token`.
+- **Questionari** (`/admin/quizzes`): questionari a punteggio con opzioni risposta configurabili, soglie di superamento e logica redirect. Le domande sono tracciate per contatto.
+
+### Controllo accessi & contenuti protetti
+
+- **Accessi protetti** (`/admin/access-grants`): emetti token temporanei, single-use che concedono accesso a file multimediali protetti. I token possono essere creati dal pannello admin o via API agente, con isolamento per-sito tramite `media-protected/`.
+
+### AI Agente & automazione
+
+- **Agent builder** (`/admin/agent-builder`): crea e testa agenti AI personalizzati con prompt configurabili, assegnazione di tool e riferimenti alla knowledge base. I test vengono eseguiti in sandbox isolata.
+- **Sandbox** (`/admin/sandbox`): crea scenari e sperimenta agenti AI in isolamento senza modificare dati live.
+- **Human-in-the-Loop (HITL)** (`/admin/approvals`): instrada operazioni AI rischiose (es. modifiche distruttive, modifiche bulk) attraverso una coda di approvazione manuale prima dell'esecuzione.
+- **Suggerimenti risposta**: suggerimenti AI generati per le risposte alle conversazioni, con ciclo di feedback accetta/rifiuta.
+- **Source sync** (`/admin/import`): importa contatti, utenti, opportunità, pipeline, tag, custom fields, calendari, form, sondaggi, campagne commerce e conversazioni da sistemi CRM esterni via connettori configurabili. Supporta sync incrementale, budget limitro e retry errori.
+- **Agent runtime**: gestisce credenziali agente AI, ambienti runtime e stato conversazione per agenti autonomi (Claude Code, OpenCode, etc).
+- **Servizi clienti** (`/admin/clients`): gestisce cataloghi di servizi clienti e marca i clienti con servizi specifici, con tag opzionali sui contatti.
 
 ## API esterne e integrazioni
 
