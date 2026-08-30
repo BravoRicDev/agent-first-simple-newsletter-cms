@@ -100,7 +100,7 @@ Il CMS gestisce più siti web indipendenti (`sites` table), ciascuno con:
 
 ### Integrazioni Esterne
 - **OAuth** (`services/oauth.js`): Google login, calendar sync, drive integration
-- **Social posting** (`services/social-poster.js`): stub per Twitter/LinkedIn/Facebook (attualmente solo controllo token)
+- **Social posting** (`services/social-poster.js`): implementa la pubblicazione su Twitter/LinkedIn/Facebook. Chiama le API reali quando i token sono configurati, e usa la modalità simulata quando non sono disponibili. I post sono marcati come `simulated: true` o `false` per distinguerli.
 - **Webhooks** (`services/webhooks.js`): notifiche outbound su eventi (form inviato, chiamata completata, ecc.)
 - **Calendar sync** (`services/calendar-sync.js`): integrazione Google Calendar per riunioni, disponibilità
 - **Pagamenti** (`services/payments.js`): generazione link pagamento (non processamento pagamento completo)

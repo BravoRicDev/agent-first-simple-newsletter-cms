@@ -100,7 +100,7 @@ Backups are stored in `./backups/` (docker volume or local directory).
 | `LINKEDIN_ACCESS_TOKEN` | No | — | LinkedIn access token (currently checks token only) |
 | `FACEBOOK_PAGE_TOKEN` | No | — | Facebook page token (currently checks token only) |
 
-**Status**: social posting is a stub. The system validates tokens but does not publish yet.
+**Status**: social posting implementato. Il sistema chiama le API di Twitter/LinkedIn/Facebook quando i token sono configurati, e usa la modalità simulata quando non sono disponibili. I post sono marcati come `simulated: true` o `false` per distinguerli.
 
 ## Quick Start (Docker)
 

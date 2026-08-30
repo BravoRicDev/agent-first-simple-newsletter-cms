@@ -102,7 +102,7 @@ I backup sono salvati in `./backups/` (volume Docker o directory locale).
 | `LINKEDIN_ACCESS_TOKEN` | No | — | Token accesso LinkedIn (attualmente solo controllo token) |
 | `FACEBOOK_PAGE_TOKEN` | No | — | Token pagina Facebook (attualmente solo controllo token) |
 
-**Stato**: il social posting è uno stub. Il sistema valida i token ma non pubblica ancora.
+**Stato**: social posting implementato. Il sistema chiama le API di Twitter/LinkedIn/Facebook quando i token sono configurati, e usa la modalità simulata quando non sono disponibili. I post sono marcati come `simulated: true` o `false` per distinguerli.
 
 ## Avvio Rapido (Docker)
 

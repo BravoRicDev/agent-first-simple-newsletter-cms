@@ -33,7 +33,7 @@
 | ✅ Opportunities + board | /admin/opportunities* | crm-agent.js | ✅ | ✅ |
 | ✅ Quotes | /admin/quotes* | quotes.js | ✅ | ✅ |
 | ✅ Newsletter subscribers/campaigns/sequences/templates/settings | /admin/newsletter* | newsletter.js | ✅ | ✅ |
-| ✅ Social poster (stub) | /admin/social | admin/social/view | ✅ | ✅ |
+| ✅ Social poster | /admin/social | admin/social/view | ✅ | ✅ |
 | ✅ Users CRUD | /admin/users* | users.js | ✅ | ✅ |
 | ✅ API tokens | /admin/api-tokens* | api-tokens.js | ✅ | ✅ |
 | ❌ Protected access / Access grants | /admin/access-grants* | access-grants.js | ❌ | ❌ |
