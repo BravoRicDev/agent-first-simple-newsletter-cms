@@ -581,9 +581,14 @@ export function registerCrmRoutes(router) {
              utm_source = COALESCE(utm_source, $1),
              utm_medium = COALESCE(utm_medium, $2),
              utm_campaign = COALESCE(utm_campaign, $3),
+             utm_term = COALESCE(utm_term, $4),
+             utm_content = COALESCE(utm_content, $5),
              updated_at = NOW()
-           WHERE site_id = $4 AND email = $5`,
-          [u.utm_source || null, u.utm_medium || null, u.utm_campaign || null, siteId, email]
+           WHERE site_id = $6 AND email = $7`,
+          [
+            u.utm_source || null, u.utm_medium || null, u.utm_campaign || null,
+            u.utm_term || null, u.utm_content || null, siteId, email,
+          ]
         );
       }
       const record = await getContactRecord(siteId, email);

@@ -533,7 +533,11 @@ router.post("/forms/:siteId/:formSlug", formLimiter, resolveSite, formMultipart,
     const cleanData = {};
     for (const [key, val] of Object.entries(formData)) {
       if (typeof val !== "string") continue;
-      if (allowedKeys ? !allowedKeys.has(key) : key.length > 100) continue;
+      // I campi UTM standard (utm_source/medium/campaign/term/content) sono
+      // SEMPRE accettati, anche se non dichiarati nel builder: la cattura
+      // client-side del widget {{form:slug}} li inietta come hidden input →
+      // il tracking funziona senza toccare i singoli form.
+      if (allowedKeys ? (!allowedKeys.has(key) && !key.startsWith("utm_")) : key.length > 100) continue;
       cleanData[key] = val.slice(0, 5000);
     }
 
@@ -578,25 +582,36 @@ router.post("/forms/:siteId/:formSlug", formLimiter, resolveSite, formMultipart,
         addContactTag(siteId, email, tag).catch(err => logger.error(`Contatti: tag da form fallito (site=${siteId}, ${email}, tag=${tag}): ${err.message}`));
       }
 
-      // UTM sorgente: prima origine vince (recordContactUtm è idempotente).
+      // UTM sorgente: 5 parametri standard (Meta/Google), prima origine vince
+      // (recordContactUtm è idempotente). Valori troncati a 255 come le colonne.
       const utm = {
-        utm_source: cleanData.utm_source || req.query.utm_source || null,
-        utm_medium: cleanData.utm_medium || req.query.utm_medium || null,
-        utm_campaign: cleanData.utm_campaign || req.query.utm_campaign || null,
+        utm_source: String(cleanData.utm_source || req.query.utm_source || "").slice(0, 255) || null,
+        utm_medium: String(cleanData.utm_medium || req.query.utm_medium || "").slice(0, 255) || null,
+        utm_campaign: String(cleanData.utm_campaign || req.query.utm_campaign || "").slice(0, 255) || null,
+        utm_term: String(cleanData.utm_term || req.query.utm_term || "").slice(0, 255) || null,
+        utm_content: String(cleanData.utm_content || req.query.utm_content || "").slice(0, 255) || null,
       };
-      if (utm.utm_source || utm.utm_medium || utm.utm_campaign) {
+      if (utm.utm_source || utm.utm_medium || utm.utm_campaign || utm.utm_term || utm.utm_content) {
         import("../services/events.js").then(({ emitContactEvent }) => {
           (async () => {
             try {
+              // UPSERT atomico: crea il contatto se manca e setta i campi UTM
+              // SOLO se vuoti ("prima origine vince"). Prima era un UPDATE
+              // separato fire-and-forget che poteva girare PRIMA della INSERT
+              // di upsertContact → l'UTM andava perso (race).
               await query(
-                `UPDATE contacts SET
-                   utm_source = COALESCE(utm_source, $1),
-                   utm_medium = COALESCE(utm_medium, $2),
-                   utm_campaign = COALESCE(utm_campaign, $3),
-                   first_source = CASE WHEN first_source = '' THEN COALESCE($1, '') ELSE first_source END,
-                   updated_at = NOW()
-                 WHERE site_id = $4 AND email = $5`,
-                [utm.utm_source || null, utm.utm_medium || null, utm.utm_campaign || null, siteId, email]
+                `INSERT INTO contacts
+                   (site_id, email, utm_source, utm_medium, utm_campaign, utm_term, utm_content, first_source)
+                 VALUES ($1, $2, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar, COALESCE($3::varchar, ''))
+                 ON CONFLICT (site_id, email) DO UPDATE SET
+                   utm_source = COALESCE(contacts.utm_source, EXCLUDED.utm_source),
+                   utm_medium = COALESCE(contacts.utm_medium, EXCLUDED.utm_medium),
+                   utm_campaign = COALESCE(contacts.utm_campaign, EXCLUDED.utm_campaign),
+                   utm_term = COALESCE(contacts.utm_term, EXCLUDED.utm_term),
+                   utm_content = COALESCE(contacts.utm_content, EXCLUDED.utm_content),
+                   first_source = CASE WHEN contacts.first_source = '' THEN EXCLUDED.first_source ELSE contacts.first_source END,
+                   updated_at = NOW()`,
+                [siteId, email, utm.utm_source, utm.utm_medium, utm.utm_campaign, utm.utm_term, utm.utm_content]
               );
             } catch (err) {
               logger.error(`UTM update fallito (site=${siteId}, ${email}): ${err.message}`);

@@ -47,6 +47,27 @@ function renderFormHtml(siteId, form) {
   <input type="text" name="_honeypot" style="position:absolute;left:-9999px;top:-9999px;" tabindex="-1" autocomplete="off" aria-hidden="true">
   ${fieldsHtml}
   <button type="submit">${submitLabel}</button>
+  <script>
+  (function () {
+    // UTM standard (Meta/Google Ads): legge i 5 parametri dall'URL della
+    // landing e li inietta come hidden input -> il server li cattura anche
+    // se il form NON dichiara alcun campo utm. Nessuna modifica ai singoli
+    // form: è il comportamento attivo ovunque dopo il deploy, anche nelle
+    // pagine esportate staticamente.
+    var keys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+    var params = new URLSearchParams(location.search);
+    var form = document.currentScript ? document.currentScript.closest("form") : null;
+    if (!form) return;
+    keys.forEach(function (k) {
+      var v = params.get(k);
+      if (v === null || v === "") return;
+      if (v.length > 255) v = v.slice(0, 255);
+      var h = form.querySelector('input[name="' + k + '"]');
+      if (!h) { h = document.createElement("input"); h.type = "hidden"; h.name = k; form.appendChild(h); }
+      h.value = v;
+    });
+  })();
+  </script>
 </form>`;
 }
 

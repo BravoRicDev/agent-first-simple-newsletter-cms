@@ -15,7 +15,7 @@ import { logger } from "./logger.js";
 
 const FIELD_WHITELIST = new Set([
   "tag", "status", "score", "value_estimate", "email", "notes",
-  "utm_source", "utm_medium", "utm_campaign", "first_source",
+  "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "first_source",
   "pref_email", "pref_sms", "pref_phone", "pref_whatsapp", "pref_marketing",
 ]);
 
@@ -73,6 +73,8 @@ function evalRule(rule, ctx) {
     case "utm_source": actual = contact.utm_source || ""; break;
     case "utm_medium": actual = contact.utm_medium || ""; break;
     case "utm_campaign": actual = contact.utm_campaign || ""; break;
+    case "utm_term": actual = contact.utm_term || ""; break;
+    case "utm_content": actual = contact.utm_content || ""; break;
     case "first_source": actual = contact.first_source || ""; break;
     case "pref_email": actual = !!contact.pref_email; break;
     case "pref_sms": actual = !!contact.pref_sms; break;
@@ -111,8 +113,8 @@ async function loadContactContext(siteId, email) {
   const normalized = normalizeEmail(email);
   const contactRow = (await query(
     `SELECT tags, status, notes, value_estimate, score, utm_source, utm_medium,
-            utm_campaign, first_source, pref_email, pref_sms, pref_phone,
-            pref_whatsapp, pref_marketing
+            utm_campaign, utm_term, utm_content, first_source, pref_email, pref_sms,
+            pref_phone, pref_whatsapp, pref_marketing
      FROM contacts WHERE site_id = $1 AND email = $2`,
     [siteId, normalized]
   )).rows[0];

@@ -44,20 +44,22 @@ export async function mergeContacts(siteId, sourceEmail, intoEmail) {
     const utmSource = dst?.utm_source || src?.utm_source || null;
     const utmMedium = dst?.utm_medium || src?.utm_medium || null;
     const utmCampaign = dst?.utm_campaign || src?.utm_campaign || null;
+    const utmTerm = dst?.utm_term || src?.utm_term || null;
+    const utmContent = dst?.utm_content || src?.utm_content || null;
     const firstSource = dst?.first_source || src?.first_source || "";
     const prefToken = dst?.pref_token || src?.pref_token || null;
 
     await client.query(
       `UPDATE contacts SET tags = $1, notes = $2, score = $3, value_estimate = $4,
          status = $5, utm_source = $6, utm_medium = $7, utm_campaign = $8,
-         first_source = $9, pref_token = $10,
-         pref_email = $11, pref_sms = $12, pref_phone = $13,
-         pref_whatsapp = $14, pref_marketing = $15,
+         utm_term = $9, utm_content = $10, first_source = $11, pref_token = $12,
+         pref_email = $13, pref_sms = $14, pref_phone = $15,
+         pref_whatsapp = $16, pref_marketing = $17,
          updated_at = NOW()
-       WHERE site_id = $16 AND email = $17`,
+       WHERE site_id = $18 AND email = $19`,
       [
         tags, notes, score, value, status, utmSource, utmMedium, utmCampaign,
-        firstSource, prefToken,
+        utmTerm, utmContent, firstSource, prefToken,
         !!(dst?.pref_email || src?.pref_email), !!(dst?.pref_sms || src?.pref_sms),
         !!(dst?.pref_phone || src?.pref_phone), !!(dst?.pref_whatsapp || src?.pref_whatsapp),
         !!(dst?.pref_marketing || src?.pref_marketing),

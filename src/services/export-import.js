@@ -26,7 +26,7 @@ const EXPORT_LIMIT = 10000;
 const EXPORT_TABLES = {
   contacts: [
     "id", "email", "tags", "status", "notes", "value_estimate", "score",
-    "utm_source", "utm_medium", "utm_campaign", "first_source",
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "first_source",
     "pref_email", "pref_sms", "pref_phone", "pref_whatsapp", "pref_marketing",
     "created_at", "updated_at",
   ],
@@ -60,6 +60,8 @@ const CSV_COLUMNS = [
   { key: "utm_source", label: "utm_source" },
   { key: "utm_medium", label: "utm_medium" },
   { key: "utm_campaign", label: "utm_campaign" },
+  { key: "utm_term", label: "utm_term" },
+  { key: "utm_content", label: "utm_content" },
   { key: "created_at", label: "created_at" },
 ];
 
@@ -94,7 +96,7 @@ export async function exportSiteData(siteId, { tables = [] } = {}) {
 export async function exportCsv(siteId) {
   const rows = (await query(
     `SELECT email, tags, status, notes, value_estimate, score,
-            utm_source, utm_medium, utm_campaign, created_at
+            utm_source, utm_medium, utm_campaign, utm_term, utm_content, created_at
      FROM contacts WHERE site_id = $1 ORDER BY id LIMIT ${EXPORT_LIMIT}`,
     [siteId]
   )).rows;
@@ -132,11 +134,12 @@ async function upsertContactRow(siteId, raw) {
   }
   await query(
     `INSERT INTO contacts (site_id, email, tags, status, notes, value_estimate, score,
-                           utm_source, utm_medium, utm_campaign)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                           utm_source, utm_medium, utm_campaign, utm_term, utm_content)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT (site_id, email) DO UPDATE SET
        tags = $3, status = $4, notes = $5, value_estimate = $6, score = $7,
-       utm_source = $8, utm_medium = $9, utm_campaign = $10, updated_at = NOW()`,
+       utm_source = $8, utm_medium = $9, utm_campaign = $10,
+       utm_term = $11, utm_content = $12, updated_at = NOW()`,
     [
       siteId, email,
       normalizeTags(raw.tags),
@@ -147,6 +150,8 @@ async function upsertContactRow(siteId, raw) {
       String(raw.utm_source || "").slice(0, 255),
       String(raw.utm_medium || "").slice(0, 255),
       String(raw.utm_campaign || "").slice(0, 255),
+      String(raw.utm_term || "").slice(0, 255),
+      String(raw.utm_content || "").slice(0, 255),
     ]
   );
   return { ok: true };
