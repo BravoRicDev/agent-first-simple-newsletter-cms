@@ -158,7 +158,7 @@ describe("feature 35: webhook in/out", () => {
       method: "POST",
       headers: { ...auth(), "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "n8n in", direction: "in", secret: "in-tok-a",
+        name: "n8n in", direction: "in", secret: "in-token-abcdefghijkl123456",
         events: { "lead.created": { action: "create_contact" } },
       }),
     });
@@ -344,14 +344,14 @@ describe("feature 35: webhook in/out", () => {
       method: "POST",
       headers: { ...auth(), "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "n8n lead in", direction: "in", secret: "in-tok-f",
+        name: "n8n lead in", direction: "in", secret: "in-token-abcdefghijkl456789",
         events: { "lead.created": { action: "create_contact", config: { tags: ["webhook-lead"] } } },
       }),
     });
     const { webhook } = await res.json();
 
     const email = uniqueEmail("lead");
-    const outcome = await handleIncoming(site.id, "in-tok-f", { event_type: "lead.created", email });
+    const outcome = await handleIncoming(site.id, "in-token-abcdefghijkl456789", { event_type: "lead.created", email });
     assert.deepEqual(outcome, { received: true, actions: 1 });
 
     const rows = (await query("SELECT * FROM contacts WHERE site_id = $1 AND email = $2", [site.id, email])).rows;
@@ -362,7 +362,7 @@ describe("feature 35: webhook in/out", () => {
     assert.equal(await handleIncoming(site.id, "sbagliato", { event_type: "lead.created", email }), null);
     // Webhook disattivato → null.
     await query("UPDATE webhooks SET active = false WHERE id = $1", [webhook.id]);
-    assert.equal(await handleIncoming(site.id, "in-tok-f", { event_type: "lead.created", email }), null);
+    assert.equal(await handleIncoming(site.id, "in-token-abcdefghijkl456789", { event_type: "lead.created", email }), null);
   });
 
   // ── (g)+(h) route pubblica: 401 con token errato, 200 con token valido ─
@@ -381,14 +381,14 @@ describe("feature 35: webhook in/out", () => {
       method: "POST",
       headers: { ...auth(), "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "pubblico in", direction: "in", secret: "pub-tok-h",
+        name: "pubblico in", direction: "in", secret: "pub-token-abcdefghijkl098765",
         events: { "lead.created": { action: "create_contact" } },
       }),
     });
     assert.equal(res.status, 200);
 
     const email = uniqueEmail("pub");
-    const good = await fetch(publicUrl(site.id, "pub-tok-h"), {
+    const good = await fetch(publicUrl(site.id, "pub-token-abcdefghijkl098765"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event_type: "lead.created", email }),
@@ -409,13 +409,13 @@ describe("feature 35: webhook in/out", () => {
       method: "POST",
       headers: { ...auth(), "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "n8n emit", direction: "in", secret: "in-tok-i",
+        name: "n8n emit", direction: "in", secret: "in-token-abcdefghijkl112233",
         events: { "quote.signed": { action: "emit_event", config: { event_type: "quote_signed" } } },
       }),
     });
 
     const email = uniqueEmail("emit");
-    const outcome = await handleIncoming(site.id, "in-tok-i", {
+    const outcome = await handleIncoming(site.id, "in-token-abcdefghijkl112233", {
       event_type: "quote.signed", email, quote_id: 42,
     });
     assert.deepEqual(outcome, { received: true, actions: 1 });
@@ -436,7 +436,7 @@ describe("feature 35: webhook in/out", () => {
       method: "POST",
       headers: { ...auth(), "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: "n8n task", direction: "in", secret: "in-tok-k",
+        name: "n8n task", direction: "in", secret: "in-token-abcdefghijkl445566",
         events: {
           "tag.me": { action: "add_tag", config: { tag: "da-webhook" } },
           "todo.now": { action: "create_task", config: { title: "Chiama subito" } },
@@ -445,11 +445,11 @@ describe("feature 35: webhook in/out", () => {
     });
 
     const email = uniqueEmail("task");
-    await handleIncoming(site.id, "in-tok-k", { event_type: "tag.me", email });
+    await handleIncoming(site.id, "in-token-abcdefghijkl445566", { event_type: "tag.me", email });
     const contact = (await query("SELECT tags FROM contacts WHERE site_id = $1 AND email = $2", [site.id, email])).rows[0];
     assert.ok(contact && contact.tags.includes("da-webhook"));
 
-    await handleIncoming(site.id, "in-tok-k", { event_type: "todo.now", email });
+    await handleIncoming(site.id, "in-token-abcdefghijkl445566", { event_type: "todo.now", email });
     const tasks = (await query(
       "SELECT * FROM tasks WHERE site_id = $1 AND email = $2 AND title = 'Chiama subito'",
       [site.id, email]

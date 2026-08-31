@@ -118,14 +118,13 @@ async function executeAction(siteId, workflow, action, email, eventType, payload
     case "send_campaign": {
       const campaignId = parseInt(cfg.campaign_id, 10);
       if (!campaignId) return;
-      // Idempotenza: se il contatto ha già ricevuto questa campagna (via
-      // newsletter_sends), skip — un workflow non deve re-inviare la stessa
+      // Idempotenza: se l'invio per (sito,email,campagna) è già stato
+      // registrato, skip — un workflow non deve re-inviare la stessa
       // campagna allo stesso destinatario a ogni evento.
       const sent = (await query(
-        `SELECT 1 FROM newsletter_sends ns
-         JOIN newsletter_subscribers sub ON sub.id = ns.subscriber_id
-         WHERE ns.campaign_id = $1 AND sub.site_id = $2 AND sub.email = $3`,
-        [campaignId, siteId, email]
+        `SELECT 1 FROM workflow_sent_emails
+         WHERE site_id = $1 AND email = $2 AND kind = 'campaign' AND campaign_id = $3 LIMIT 1`,
+        [siteId, email, campaignId]
       )).rows[0];
       if (sent) return;
       const campaign = (await query(
@@ -137,11 +136,25 @@ async function executeAction(siteId, workflow, action, email, eventType, payload
       const { sendSiteEmail } = await import("./email.js");
       const html = await renderPreviewHtml(siteId, campaign.html_content, "");
       await sendSiteEmail(siteId, email, campaign.subject, html);
+      // Registra l'invio qui (la guardia sopra legge questa tabella): prima
+      // si guardava newsletter_sends ma non veniva MAI scritto nulla.
+      await query(
+        `INSERT INTO workflow_sent_emails (site_id, email, kind, campaign_id)
+         VALUES ($1,$2,'campaign',$3)
+         ON CONFLICT (site_id, email, kind, campaign_id, step_id) DO NOTHING`,
+        [siteId, email, campaignId]
+      );
       break;
     }
     case "send_sequence": {
       const stepId = parseInt(cfg.step_id, 10);
       if (!stepId) return;
+      const sentSeq = (await query(
+        `SELECT 1 FROM workflow_sent_emails
+         WHERE site_id = $1 AND email = $2 AND kind = 'sequence' AND step_id = $3 LIMIT 1`,
+        [siteId, email, stepId]
+      )).rows[0];
+      if (sentSeq) return;
       const step = (await query(
         `SELECT st.subject, st.html_content FROM newsletter_sequence_steps st
          JOIN newsletter_sequences sq ON sq.id = st.sequence_id
@@ -153,6 +166,12 @@ async function executeAction(siteId, workflow, action, email, eventType, payload
       const { sendSiteEmail } = await import("./email.js");
       const html = await renderPreviewHtml(siteId, step.html_content, "");
       await sendSiteEmail(siteId, email, step.subject, html);
+      await query(
+        `INSERT INTO workflow_sent_emails (site_id, email, kind, step_id)
+         VALUES ($1,$2,'sequence',$3)
+         ON CONFLICT (site_id, email, kind, campaign_id, step_id) DO NOTHING`,
+        [siteId, email, stepId]
+      );
       break;
     }
     case "create_task": {

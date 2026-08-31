@@ -627,7 +627,19 @@ router.post("/admin/export-static", requireAuth, async (req, res, next) => {
       siteId = first?.id;
     }
     if (!siteId) return res.status(400).json({ error: res.locals.t("api.common.siteNotDetermined") });
-    await exportPublishedPages({ siteId });
+    const result = await exportPublishedPages({ siteId });
+    // exportPublishedPages NON lancia mai per errori di singola pagina: torna
+    // { errors, results }. Prima l'admin riceveva {ok:true} anche se la pagina
+    // era andata in errore (layout rotto, tracking fallito) → export "riuscito"
+    // fittizio.
+    const failed = (result?.results || []).filter((r) => !r.ok);
+    if (failed.length > 0) {
+      return res.status(500).json({
+        ok: false,
+        message: res.locals.t("api.pages.staticExportErrors"),
+        errors: failed.slice(0, 20).map((f) => ({ url_path: f.url_path, error: f.error })),
+      });
+    }
     res.json({ ok: true, message: res.locals.t("api.pages.staticExportCompleted") });
   } catch (err) { next(err); }
 });
@@ -637,7 +649,15 @@ router.post("/admin/export-static-all", requireAuth, async (req, res, next) => {
     if (req.user.role !== "superadmin") {
       return res.status(403).json({ error: res.locals.t("api.pages.superadminOnlyExportAll") });
     }
-    await fullExport();
+    const result = await fullExport();
+    if (result?.totalErrors > 0) {
+      return res.status(500).json({
+        ok: false,
+        message: res.locals.t("api.pages.staticExportErrors"),
+        exported: result.totalExported,
+        errors: result.totalErrors,
+      });
+    }
     res.json({ ok: true, message: res.locals.t("api.pages.fullExportAllSites") });
   } catch (err) { next(err); }
 });

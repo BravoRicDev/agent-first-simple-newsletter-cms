@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { query } from "../../../db.js";
 import { upsertByExternalId, findInternalId } from "../upsert.js";
 
@@ -57,13 +58,16 @@ function normalizeInvoiceStatus(v) {
   return "draft";
 }
 
-async function ensureUniqueInvoiceNumber(siteId, baseNumber) {
+async function ensureUniqueInvoiceNumber(baseNumber) {
   let invoiceNumber = baseNumber;
   let attempt = 0;
   while (attempt < 100) {
+    // L'indice idx_invoices_invoice_number è GLOBALE (non per-sito): il check
+    // deve esserlo anch'esso, altrimenti due siti con lo stesso numero
+    // collisionano con 23505 al secondo import.
     const existing = await query(
-      "SELECT id FROM invoices WHERE site_id = $1 AND invoice_number = $2 LIMIT 1",
-      [siteId, invoiceNumber]
+      "SELECT id FROM invoices WHERE invoice_number = $1 LIMIT 1",
+      [invoiceNumber]
     );
     if (existing.rows.length === 0) return invoiceNumber;
     const suffix = "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
@@ -185,7 +189,7 @@ export async function syncAll(ctx) {
 
           // invoiceNumber di CRM sorgente è un NUMERO: normalizziamo a stringa.
           const baseNumber = invoice.invoiceNumber != null ? String(invoice.invoiceNumber) : "INV-" + Date.now();
-          const invoiceNumber = await ensureUniqueInvoiceNumber(siteId, baseNumber);
+          const invoiceNumber = await ensureUniqueInvoiceNumber(baseNumber);
 
           const cols = {
             contact_id: contactId,
@@ -310,6 +314,17 @@ export async function syncAll(ctx) {
             cols,
             timestamps,
           });
+
+          // Token pubblico del link di pagamento: generato SOLO in INSERT
+          // (mai in UPDATE, altrimenti l'URL /pay/:token cambierebbe a ogni
+          // sync). DEFAULT '' con indice UNIQUE parziale (111) → niente più
+          // collisioni tra import.
+          if (action === "inserted" && row) {
+            await query(
+              "UPDATE payment_links SET token = $1 WHERE id = $2",
+              [crypto.randomBytes(32).toString("hex"), row.id]
+            );
+          }
 
           if (action === "inserted") addStat("commerce", "upserted", 1);
           else if (action === "updated") addStat("commerce", "updated", 1);

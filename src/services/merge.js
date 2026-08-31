@@ -76,7 +76,43 @@ export async function mergeContacts(siteId, sourceEmail, intoEmail) {
        AND NOT EXISTS (SELECT 1 FROM newsletter_subscribers WHERE site_id = $2 AND email = $1)`,
       [into, siteId, source]
     );
-    await client.query("UPDATE segment_members SET email = $1 WHERE site_id = $2 AND email = $3", [into, siteId, source]);
+    // Segmento: se il destinatario è GIÀ membro dello stesso segmento,
+    // l'UPDATE violerebbe la PK (segment_id, email) → 23505 e rollback del
+    // merge. Escludiamo i segmenti già occupati dal destinatario.
+    await client.query(
+      `UPDATE segment_members sm SET email = $1
+       WHERE sm.site_id = $2 AND sm.email = $3
+         AND NOT EXISTS (
+           SELECT 1 FROM segment_members x
+           WHERE x.site_id = $2 AND x.email = $1 AND x.segment_id = sm.segment_id
+         )`,
+      [into, siteId, source]
+    );
+
+    // Custom values del contatto sorgente: vanno UNITI nel destinatario
+    // prima della DELETE (contact_custom_values è chiavato per contact_id,
+    // FK ON DELETE CASCADE — senza copia andrebbero persi per sempre).
+    if (src) {
+      const dstRow = (await client.query(
+        "SELECT id FROM contacts WHERE site_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
+        [siteId, into]
+      )).rows[0];
+      if (dstRow && dstRow.id !== src.id) {
+        const srcCv = (await client.query(
+          "SELECT object_key, values FROM contact_custom_values WHERE site_id = $1 AND contact_id = $2",
+          [siteId, src.id]
+        )).rows;
+        for (const cv of srcCv) {
+          await client.query(
+            `INSERT INTO contact_custom_values (site_id, contact_id, object_key, values)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (site_id, contact_id, object_key)
+             DO UPDATE SET values = contact_custom_values.values || EXCLUDED.values`,
+            [siteId, dstRow.id, cv.object_key, JSON.stringify(cv.values)]
+          );
+        }
+      }
+    }
 
     // Elimina il contatto sorgente (se esisteva).
     if (src) {

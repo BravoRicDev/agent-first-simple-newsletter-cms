@@ -52,6 +52,14 @@ function sanitizeWebhookData(siteId, data = {}) {
     throw httpError(400, "URL http/https obbligatorio per webhook out");
   }
   const secret = String(data.secret ?? "").slice(0, 255);
+  // Webhook IN: il `secret` è il TOKEN nel path pubblico (/webhooks/in/:token):
+  // senza una soglia minima di entropia un segreto debole/riusato espone
+  // scritture non autenticate (create_contact/add_tag/create_task). Minimo
+  // 24 char — le installazioni esistenti non vengono toccate (questo check
+  // scatta solo in create/update).
+  if (direction === "in" && secret.length < 24) {
+    throw httpError(400, "Secret del webhook IN: minimo 24 caratteri");
+  }
 
   let events = data.events;
   if (Array.isArray(events)) {

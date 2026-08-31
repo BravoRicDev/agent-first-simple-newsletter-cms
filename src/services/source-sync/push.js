@@ -73,23 +73,21 @@ export async function enqueuePush(siteId, entityType, opts = {}) {
   const operation = ["upsert", "delete"].includes(opts.operation) ? opts.operation : "upsert";
   const externalId = String(opts.externalId || "").slice(0, 255);
 
-  // Dedup: entità già in coda (pending/sending) → non accodare di nuovo.
-  // L'indice parziale 109 (UNIQUE su site_id/entity_type/entity_id dove
-  // status IN ('pending','sending')) rende la dedup ATOMICA anche con
-  // enqueue concorrenti (TOCTOU): il SELECT qui sotto è solo un fast-path
-  // per non scrivere inutilmente; la garanzia vera è l'ON CONFLICT.
+  // Dedup per (entità, OPERAZIONE): una delete non deve essere scartata per
+  // la presenza di un upsert pending della stessa entità (indice 110 include
+  // operation). Il SELECT è solo fast-path; la garanzia è l'ON CONFLICT.
   const existing = (await query(
     `SELECT 1 FROM source_push_queue
-     WHERE site_id = $1 AND entity_type = $2 AND entity_id = $3
+     WHERE site_id = $1 AND entity_type = $2 AND entity_id = $3 AND operation = $4
        AND status IN ('pending','sending') LIMIT 1`,
-    [siteId, entityType, entityId]
+    [siteId, entityType, entityId, operation]
   )).rows[0];
   if (existing) return { queued: 0, deduped: true };
 
   const inserted = await query(
     `INSERT INTO source_push_queue (site_id, entity_type, entity_id, external_id, operation, origin)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (site_id, entity_type, entity_id) WHERE status IN ('pending','sending')
+     ON CONFLICT (site_id, entity_type, entity_id, operation) WHERE status IN ('pending','sending')
      DO NOTHING
      RETURNING id`,
     [siteId, entityType, entityId, externalId, operation, origin]
@@ -141,17 +139,22 @@ async function loadContactForPush(siteId, id) {
   let cv = row.custom_values || {};
   if (typeof cv === "string") { try { cv = JSON.parse(cv); } catch { cv = {}; } }
 
+  // Mappa field_key → external_id (id definizione GHL) caricata UNA volta:
+  // prima ogni chiave custom faceva partire una query dedicata (N+1).
+  const fieldDefs = (
+    await query(
+      "SELECT field_key, external_id FROM custom_fields WHERE site_id = $1 AND object_key = 'contact' AND external_id IS NOT NULL",
+      [siteId]
+    )
+  ).rows;
+  const externalIdByKey = new Map(fieldDefs.map((r) => [r.field_key, r.external_id]));
+
   const custom = [];
   for (const [key, value] of Object.entries(cv)) {
     if (PROFILE_KEYS.has(key)) continue;
     if (value === undefined || value === null || value === "") continue;
-    const def = (
-      await query(
-        "SELECT external_id FROM custom_fields WHERE site_id = $1 AND field_key = $2 AND object_key = 'contact' AND external_id IS NOT NULL LIMIT 1",
-        [siteId, key]
-      )
-    ).rows[0];
-    if (def?.external_id) custom.push({ id: def.external_id, value });
+    const defId = externalIdByKey.get(key);
+    if (defId) custom.push({ id: defId, value });
   }
 
   return {

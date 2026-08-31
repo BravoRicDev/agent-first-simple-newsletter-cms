@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { handleIncoming } from "../services/webhooks.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -7,6 +8,18 @@ import { handleIncoming } from "../services/webhooks.js";
 // modulo in src/index.js con express.json() già globale; qui il body JSON
 // è garantito. Token non valido → 401.
 // ─────────────────────────────────────────────────────────────────────────
+
+// Limiter di contenimento (difesa in profondità): l'endpoint è pubblico e
+// il token (secret) è l'unica barriera; un limiter per-IP evita che un
+// attaccante bruci il DB con richieste a token casuali (owasp: brute-force
+// sul path token).
+const webhookInLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Troppe richieste. Riprova tra un minuto." },
+});
 
 async function handleIncomingRequest(req, res, next) {
   try {
@@ -22,7 +35,7 @@ async function handleIncomingRequest(req, res, next) {
 }
 
 export function registerPublicWebhookRoutes(router) {
-  router.post("/webhooks/in/:siteId/:token", handleIncomingRequest);
+  router.post("/webhooks/in/:siteId/:token", webhookInLimiter, handleIncomingRequest);
 }
 
 // Router autonomo esportato per i test (montato su app.use senza auth) e

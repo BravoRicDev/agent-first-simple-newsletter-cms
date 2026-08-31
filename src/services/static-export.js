@@ -293,11 +293,22 @@ export async function generate404Page(siteId) {
   }
 }
 
+// Mutex in-process per sito: il tick dello scheduler (fullExport, ogni 5
+// tick) e le route manuali (/admin/export-static, agent export) possono
+// partire in parallelo; senza lock createSymlinks/cleanupOrphanedFiles
+// riscrivevano/cancellavano file mentre un altro export era in corso.
+const exportLocks = new Set();
+
 export async function exportPublishedPages({ siteId, pageIds = null }) {
   if (!config.staticExportEnabled) {
     logger.debug("Static export disabled via config");
     return { site_id: siteId, exported: 0, errors: 0, results: [] };
   }
+  if (exportLocks.has(siteId)) {
+    logger.warn(`Static export: export già in corso per site ${siteId}, salto questo giro`);
+    return { site_id: siteId, exported: 0, errors: 0, results: [], skipped: true };
+  }
+  exportLocks.add(siteId);
   try {
     return await exportPublishedPagesInner(siteId, pageIds);
   } catch (err) {
@@ -308,6 +319,8 @@ export async function exportPublishedPages({ siteId, pageIds = null }) {
     // aspettano un throw (o results.errors) per segnalare un export fallito.
     logger.error(`Export failed: site=${siteId}`, { error: err.message });
     throw err;
+  } finally {
+    exportLocks.delete(siteId);
   }
 }
 

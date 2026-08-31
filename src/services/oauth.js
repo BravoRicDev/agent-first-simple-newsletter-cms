@@ -30,6 +30,29 @@ function httpError(status, message) {
   return err;
 }
 
+// ── Masking (mai esporre segreti/token nelle risposte API) ─────────────
+// client_secret e refresh_token sono credenziali persistenti: un token agent
+// (anche di un ruolo basso con accesso al sito) NON deve poterle leggere in
+// chiaro via API. Si restituisce solo la PRESENZA (flag *_set) e i campi
+// non sensibili. L'unico momento in cui si "scrive" il client_secret è
+// createApp/updateApp (chi lo fornisce lo sa già); anche lì non lo ri-espone.
+function maskApp(row) {
+  if (!row) return null;
+  const { client_secret, ...rest } = row;
+  return { ...rest, client_secret_set: !!client_secret };
+}
+
+function maskConnection(row) {
+  if (!row) return null;
+  const { access_token, refresh_token, client_secret, ...rest } = row;
+  return {
+    ...rest,
+    access_token_set: !!access_token,
+    refresh_token_set: !!refresh_token,
+    client_secret_set: rest.client_secret_set !== undefined ? rest.client_secret_set : !!client_secret,
+  };
+}
+
 // Sanitizza i campi di un'app OAuth. I campi mancanti restano undefined così
 // il chiamante (create/update) decide il fallback (default o valore attuale).
 function sanitizeAppData(data = {}) {
@@ -74,7 +97,7 @@ export async function listApps(siteId) {
     "SELECT * FROM oauth_apps WHERE site_id = $1 ORDER BY id",
     [siteId]
   );
-  return result.rows;
+  return result.rows.map(maskApp);
 }
 
 export async function createApp(siteId, data = {}) {
@@ -92,7 +115,7 @@ export async function createApp(siteId, data = {}) {
       clean.enabled === undefined ? true : clean.enabled,
     ]
   );
-  return result.rows[0];
+  return maskApp(result.rows[0]);
 }
 
 export async function updateApp(siteId, id, data = {}) {
@@ -118,7 +141,7 @@ export async function updateApp(siteId, id, data = {}) {
       siteId,
     ]
   );
-  return result.rows[0];
+  return maskApp(result.rows[0]);
 }
 
 export async function deleteApp(siteId, id) {
@@ -301,7 +324,7 @@ export async function exchangeCode(siteId, { app_id, code, state } = {}) {
     connection = ins.rows[0];
   }
 
-  return { connection, account_email: accountEmail };
+  return { connection: maskConnection(connection), account_email: accountEmail };
 }
 
 // Rinnova l'access_token con il refresh_token salvato. Stessa filosofia:
@@ -361,7 +384,7 @@ export async function refreshToken(siteId, connectionId) {
      WHERE id = $3 RETURNING *`,
     [String(data.access_token ?? ""), expiresAt, connId]
   );
-  return { ok: true, connection: upd.rows[0] };
+  return { ok: true, connection: maskConnection(upd.rows[0]) };
 }
 
 // ── Connessioni ─────────────────────────────────────────────────────────
@@ -376,7 +399,7 @@ export async function listConnections(siteId) {
      ORDER BY c.id`,
     [siteId]
   );
-  return result.rows;
+  return result.rows.map(maskConnection);
 }
 
 export async function disconnect(siteId, appId) {

@@ -3908,6 +3908,12 @@ router.post("/api/agent/sites/:siteId/backup", requireAuth, requireAgent, async 
     // conferma newsletter → null (le stesse policy di masking delle GET).
     const sanitizedNlSettings = (nlSettings.rows || []).map(r => ({ ...r, smtp_pass: r.smtp_pass ? "***" : null, smtp_pass_set: !!r.smtp_pass }));
     const sanitizedNlSubscribers = (nlSubscribers.rows || []).map(r => ({ ...r, token: null }));
+    // I contatti non devono esportare il pref_token (bearer pubblico verso
+    // /preferences/:token): rimosso dal backup.
+    const sanitizedContacts = (contacts.rows || []).map((r) => {
+      const { pref_token, ...rest } = r;
+      return rest;
+    });
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="site_${siteId}_backup.zip"`);
@@ -3922,7 +3928,7 @@ router.post("/api/agent/sites/:siteId/backup", requireAuth, requireAgent, async 
       templates: templates.rows, seo: seo.rows, social_posts: socialPosts.rows,
       site_variables: variables.rows, site_domains: domains.rows,
       site_modules: modules.rows, forms: forms.rows,
-      form_submissions: submissions.rows, contacts: contacts.rows,
+      form_submissions: submissions.rows, contacts: sanitizedContacts,
       calls: calls.rows, call_availability: callAvailability.rows, calendars: calendars.rows,
       ingest_log: ingestLog.rows,
       newsletter_settings: sanitizedNlSettings, newsletter_subscribers: sanitizedNlSubscribers,
@@ -4312,6 +4318,13 @@ router.post("/api/agent/sites/:siteId/newsletter/campaigns/:campaignId/test-send
   try {
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    // L'invio di test usa l'SMTP del sito verso un destinatario ARBITRARIO:
+    // privilegiato (un agente qualsiasi non deve poter usare la quota SMTP
+    // del sito per inviare email a terzi) → solo admin/superadmin, come il
+    // send reale della campagna.
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
+      return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    }
 
     const campaign = (await query(
       "SELECT * FROM newsletter_campaigns WHERE id = $1 AND site_id = $2",

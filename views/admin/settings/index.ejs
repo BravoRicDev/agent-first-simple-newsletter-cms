@@ -39,7 +39,9 @@
       <td>
         <% if (isSecretSettingKey(s.key)) { %>
           <span class="secret-value">••••••••</span>
+          <% if (canUpdateSettings) { %>
           <button type="button" class="btn btn-sm" style="background:#6b7280;" onclick="toggleSecret(this, '<%= s.key %>')">Mostra</button>
+          <% } %>
         <% } else { %>
           <%= s.value %>
         <% } %>

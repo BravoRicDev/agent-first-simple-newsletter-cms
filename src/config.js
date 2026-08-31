@@ -32,7 +32,13 @@ export default {
   staticExportEnabled: process.env.STATIC_EXPORT_ENABLED !== "false",
 
   backupEnabled: process.env.BACKUP_ENABLED !== "false",
-  backupRetentionDays: parseInt(process.env.BACKUP_RETENTION_DAYS || "14", 10),
+  // Retention validata: un valore non numerico diventava NaN → la pulizia dei
+  // vecchi auto-*.sql.gz non scattava MAI (confronto con NaN = false), senza
+  // alcun log. Con valore invalido si ripiega su 14.
+  backupRetentionDays: (() => {
+    const n = parseInt(process.env.BACKUP_RETENTION_DAYS || "14", 10);
+    return Number.isFinite(n) && n > 0 ? n : 14;
+  })(),
 
   // Chiave OpenAI "letterale" — usata dove si chiama direttamente un endpoint
   // OpenAI specifico non astraibile dietro LLM_BASE_URL (es. Whisper per la trascrizione).

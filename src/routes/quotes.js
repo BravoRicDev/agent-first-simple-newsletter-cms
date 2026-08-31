@@ -35,13 +35,16 @@ function esc(value) {
 }
 
 function renderQuotePage(req, res, quote, { signed = false, alreadySigned = false } = {}) {
-  const total = quote.items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.price) || 0), 0);
+  // items può essere NULL su righe importate/legacy (colonna jsonb): senza
+  // guardia reduce/map crashavano con 500 su /quote/:token e /sign.
+  const items = Array.isArray(quote.items) ? quote.items : [];
+  const total = items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.price) || 0), 0);
   const fmt = (n) => new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   const title = esc(quote.title || "Preventivo");
   const number = esc(quote.quote_number);
   const siteName = esc(quote.site_name || "");
-  const safeItems = quote.items.map(it => ({
+  const safeItems = items.map(it => ({
     description: esc(it.description || ""),
     qty: Number(it.qty) || 1,
     price: Number(it.price) || 0,
@@ -105,7 +108,14 @@ router.get("/quote/:token/pdf", quoteLimiter, async (req, res, next) => {
     // solo caratteri sicuri (niente virgolette/CRLF da quote_number).
     const safeFilename = String(quote.quote_number || "preventivo").replace(/[^a-zA-Z0-9._-]/g, "");
     res.setHeader("Content-Disposition", `inline; filename="${safeFilename}.pdf"`);
-    buildQuotePdf(quote, quote.site_name).pipe(res);
+    const doc = buildQuotePdf(quote, quote.site_name);
+    // Stream error handler: senza listener, un EPIPE/errore PDFKit su un
+    // client che si disconnette diventa uncaughtException → crash del processo.
+    doc.on("error", (err) => {
+      if (!res.headersSent) next(err); else res.destroy();
+    });
+    res.on("error", () => { try { doc.destroy(); } catch { /* già chiuso */ } });
+    doc.pipe(res);
   } catch (err) { next(err); }
 });
 

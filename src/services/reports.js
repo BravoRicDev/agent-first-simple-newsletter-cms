@@ -326,6 +326,13 @@ export async function sendReport(siteId, configId) {
       "UPDATE report_configs SET last_sent_at = NOW(), updated_at = NOW() WHERE id = $1 AND site_id = $2",
       [configId, siteId]
     ).catch(err => logger.error(`Reports: aggiornamento last_sent_at fallito (config=${configId}): ${err.message}`));
+  } else {
+    // Tutti falliti: registra last_error_at (retry non più di una volta
+    // all'ora; prima il retry era ad OGNI tick, per sempre).
+    await query(
+      "UPDATE report_configs SET last_error_at = NOW(), updated_at = NOW() WHERE id = $1 AND site_id = $2",
+      [configId, siteId]
+    ).catch(err => logger.error(`Reports: aggiornamento last_error_at fallito (config=${configId}): ${err.message}`));
   }
 
   // Il log del run non deve mai far fallire la risposta.
@@ -363,7 +370,8 @@ export async function runDueReports() {
      WHERE active = true
        AND (last_sent_at IS NULL
             OR (kind = 'weekly' AND last_sent_at < NOW() - INTERVAL '7 days')
-            OR (kind = 'monthly' AND last_sent_at < NOW() - INTERVAL '30 days'))`
+            OR (kind = 'monthly' AND last_sent_at < NOW() - INTERVAL '30 days'))
+       AND (last_error_at IS NULL OR last_error_at < NOW() - INTERVAL '1 hour')`
   )).rows;
 
   let sent = 0;

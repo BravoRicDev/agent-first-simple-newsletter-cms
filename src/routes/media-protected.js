@@ -150,6 +150,20 @@ router.get("/media-protected/*", requireAuth, requireProtectedAccess, (req, res,
       return res.status(404).json({ error: "File non trovato" });
     }
 
+    // ── 3bis. Scoping per TENANT ─────────────────────────────────────
+    // Il primo segmento del path è il sito che possiede il file (es.
+    // "5/calls/123.mp3"): un admin NON superadmin può leggere SOLO i file
+    // del proprio sito. Prima un admin del sito A poteva richiedere
+    // /media-protected/<sitoB>/... (registrazioni/export GDPR altrui).
+    // La cartella top-level "calls/" (primo segmento NON numerico) resta
+    // accessibile agli admin come in passato.
+    if (req.user.role === "admin" && req.user.site_id) {
+      const firstSeg = String(req.params[0] || "").split("/")[0];
+      if (/^\d+$/.test(firstSeg) && Number(firstSeg) !== Number(req.user.site_id)) {
+        return res.status(403).json({ error: "Accesso negato" });
+      }
+    }
+
     // ── 5. Serve con root esplicita ─────────────────────────────────────
     // `root` fa sì che Express risolva il path rispetto a PROTECTED_ROOT e
     // rifiuti qualsiasi tentativo di uscirne (anche percent-encoded).

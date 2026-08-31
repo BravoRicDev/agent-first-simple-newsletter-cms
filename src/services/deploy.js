@@ -100,7 +100,14 @@ export async function deploysite({ siteId, siteName, siteDomain, userId, pages =
   if (webhookUrl) {
     try {
       const ok = await callDeployWebhook(webhookUrl, deployPayload);
-      results.webhook = ok ? "ok" : "error";
+      if (!ok) {
+        results.webhook = "error";
+        // Prima il fallimento HTTP del webhook NON entrava in results.errors:
+        // la dashboard mostrava "deploy completato" senza alcun avviso.
+        results.errors.push("Webhook deploy: risposta non-2xx dal webhook");
+      } else {
+        results.webhook = "ok";
+      }
     } catch (err) {
       results.webhook = "error";
       results.errors.push(`Webhook: ${err.message}`);
@@ -138,8 +145,19 @@ export async function deploysite({ siteId, siteName, siteDomain, userId, pages =
         defaultBody: defaultHtml,
       });
 
-      await sendEmail(adminEmails.join(","), subject, html);
-      results.email = "ok";
+      // Un'email malformata non deve bloccare le altre: invio per destinatario
+      // con best-effort (prima adminEmails.join(",") faceva fallire TUTTO se
+      // un solo indirizzo era invalido).
+      let sent = 0;
+      for (const email of adminEmails) {
+        try {
+          await sendEmail(email, subject, html);
+          sent++;
+        } catch (err) {
+          logger.error(`Deploy notify email fallita per ${email}: ${err.message}`);
+        }
+      }
+      if (sent > 0) results.email = "ok";
     }
   } catch (err) {
     results.email = "error";

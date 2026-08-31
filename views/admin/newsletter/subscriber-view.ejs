@@ -48,7 +48,7 @@
           <summary style="cursor:pointer;color:#4f46e5;font-size:13px;">Vedi</summary>
           <div style="max-width:500px;max-height:300px;overflow:auto;border:1px solid #eee;border-radius:6px;padding:10px;margin-top:8px;font-size:13px;">
             <!-- Stored XSS: html_content non sanitizzato → iframe sandbox
-                 (senza allow-scripts) invece di <%- grezzo. -->
+                 (senza allow-scripts) invece di output EJS grezzo. -->
             <iframe sandbox style="width:100%;min-height:150px;border:0;" srcdoc="<%= escapeAttr(s.html_content) %>"></iframe>
           </div>
         </details>

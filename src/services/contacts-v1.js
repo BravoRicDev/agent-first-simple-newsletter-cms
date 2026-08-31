@@ -210,13 +210,25 @@ export async function updateContact(siteId, id, data = {}) {
 
 export async function deleteContact(siteId, id) {
   const row = (await query(
-    "SELECT email FROM contacts WHERE site_id = $1 AND id = $2",
+    "SELECT email, ghl_id FROM contacts WHERE site_id = $1 AND id = $2",
     [siteId, parseInt(id, 10)]
   )).rows[0];
   if (!row) return null;
   const email = row.email;
   await clearCustomValues(siteId, id);
   await query("DELETE FROM contacts WHERE id = $1 AND site_id = $2", [parseInt(id, 10), siteId]);
+  // Push delete al CRM sorgente (sync bidirezionale): l'id da cancellare è
+  // il ghl_id, NON external_id (UUID locale, 090).
+  import("./source-sync/push.js")
+    .then(({ enqueuePush }) =>
+      enqueuePush(siteId, "contact", {
+        entityId: parseInt(id, 10),
+        operation: "delete",
+        externalId: String(row.ghl_id || ""),
+        origin: "cms",
+      })
+    )
+    .catch(() => {});
   emit(siteId, email, "contact_deleted", { contact_id: parseInt(id, 10), email });
   return parseInt(id, 10);
 }

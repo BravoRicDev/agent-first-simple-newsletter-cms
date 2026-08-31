@@ -939,6 +939,11 @@ router.get("/quotes/:id/pdf", async (req, res, next) => {
     const doc = buildQuotePdf(quote, siteRow?.name || "");
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="preventivo-${quote.quote_number}.pdf"`);
+    // Stream error handler: EPIPE/disconnessione non deve crashare il processo.
+    doc.on("error", (err) => {
+      if (!res.headersSent) next(err); else res.destroy();
+    });
+    res.on("error", () => { try { doc.destroy(); } catch { /* già chiuso */ } });
     doc.pipe(res);
   } catch (err) { next(err); }
 });

@@ -65,7 +65,12 @@ async function syncUsersPage(ctx, users) {
         const existing = (
           await query("SELECT id, external_id FROM users WHERE email = $1 LIMIT 1", [u.email])
         ).rows[0];
-        if (existing && !existing.external_id) {
+        // S1 v2: adotta il record locale esistente (stessa email) quando il
+        // suo external_id NON è quello sorgente (migrazione 090: external_id
+        // locale è un UUID sempre valorizzato → il vecchio check
+        // "!existing.external_id" non scattava mai e l'utente GHL non veniva
+        // importato).
+        if (existing && existing.external_id !== u.id) {
           if (!dryRun) {
             await query("UPDATE users SET external_id = $1 WHERE id = $2", [u.id, existing.id]);
           }

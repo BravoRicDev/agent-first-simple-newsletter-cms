@@ -160,7 +160,9 @@ export async function updateOpportunity(siteId, id, fields = {}) {
 export async function deleteOpportunity(siteId, id) {
   const row = await getOpportunity(siteId, id);
   if (!row) return 0;
-  pushOpportunity(siteId, row.id, { operation: "delete", externalId: String(row.external_id || "") });
+  // IMPORTANTE: l'id da cancellare su GHL è il `ghl_id` (id sul CRM sorgente),
+  // NON `external_id` (UUID locale assegnato dalla migrazione 090).
+  pushOpportunity(siteId, row.id, { operation: "delete", externalId: String(row.ghl_id || "") });
   await query("DELETE FROM opportunities WHERE id = $1 AND site_id = $2", [parseInt(id, 10), siteId]);
   emit(siteId, row.contact_email, "opportunity_deleted", { opportunity_id: parseInt(id, 10), title: row.title });
   return 1;

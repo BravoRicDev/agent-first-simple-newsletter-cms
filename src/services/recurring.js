@@ -119,36 +119,51 @@ function computeNextDue(task) {
 
 // Rigenera le task ricorrenti scadute (next_due_at <= NOW()) in righe della
 // tabella `tasks`. siteId opzionale: se omesso, processa tutti i siti.
+// Transazione unica: SELECT ... FOR UPDATE SKIP LOCKED dentro BEGIN tiene i
+// lock per tutto il giro e rende INSERT+UPDATE atomici — prima il SELECT
+// girava in autocommit (lock rilasciati a fine statement) e due esecutori
+// (tick scheduler + route manuale) potevano generare la STESSA task due
+// volte.
 export async function generateDueRecurringTasks(siteId = null) {
-  const params = [];
-  let where = "active = true AND next_due_at IS NOT NULL AND next_due_at <= NOW()";
-  if (siteId) {
-    params.push(parseInt(siteId, 10));
-    where += ` AND site_id = $${params.length}`;
-  }
-  const rows = (await query(
-    `SELECT * FROM recurring_tasks WHERE ${where} ORDER BY next_due_at ASC FOR UPDATE SKIP LOCKED`,
-    params
-  )).rows;
-
+  const client = await getClient();
   let generated = 0;
-  for (const task of rows) {
-    try {
-      await query(
-        `INSERT INTO tasks (site_id, email, assignee_id, title, notes, due_at, status, created_by)
-         VALUES ($1, '', $2, $3, $4, $5, 'open', NULL)`,
-        [task.site_id, task.assignee_id, task.title, task.notes, task.next_due_at]
-      );
-      const nextDue = computeNextDue(task);
-      await query(
-        `UPDATE recurring_tasks SET next_due_at = $1, last_generated_at = NOW(), updated_at = NOW()
-         WHERE id = $2`,
-        [nextDue, task.id]
-      );
-      generated++;
-    } catch (err) {
-      logger.error(`Recurring task #${task.id} fallita: ${err.message}`);
+  try {
+    await client.query("BEGIN");
+    const params = [];
+    let where = "active = true AND next_due_at IS NOT NULL AND next_due_at <= NOW()";
+    if (siteId) {
+      params.push(parseInt(siteId, 10));
+      where += ` AND site_id = $${params.length}`;
     }
+    const rows = (await client.query(
+      `SELECT * FROM recurring_tasks WHERE ${where} ORDER BY next_due_at ASC FOR UPDATE SKIP LOCKED`,
+      params
+    )).rows;
+
+    for (const task of rows) {
+      try {
+        await client.query(
+          `INSERT INTO tasks (site_id, email, assignee_id, title, notes, due_at, status, created_by)
+           VALUES ($1, '', $2, $3, $4, $5, 'open', NULL)`,
+          [task.site_id, task.assignee_id, task.title, task.notes, task.next_due_at]
+        );
+        const nextDue = computeNextDue(task);
+        await client.query(
+          `UPDATE recurring_tasks SET next_due_at = $1, last_generated_at = NOW(), updated_at = NOW()
+           WHERE id = $2`,
+          [nextDue, task.id]
+        );
+        generated++;
+      } catch (err) {
+        logger.error(`Recurring task #${task.id} fallita: ${err.message}`);
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
   return { generated };
 }

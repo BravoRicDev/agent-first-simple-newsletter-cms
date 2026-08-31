@@ -205,5 +205,6 @@
   "email.deployNotify.executedOn": "Deploy executed on {date}",
   "email.siteSmtp.notConfigured": "No SMTP configured for site {siteId}",
   "email.magicLink.sendFailed": "Failed to send email",
-  "nav.access_grants": "Protected Access"
+  "nav.access_grants": "Protected Access",
+  "api.pages.staticExportErrors": "Static export completed with errors"
 }

@@ -46,10 +46,11 @@ async function getGlobalTickInterval(key, fallback) {
 // relativo step indipendentemente dal contatore — usato dall'endpoint per
 // permettere un run mirato (es. test, o riallineamento manuale).
 export async function runTick(siteId = null, { runDecay = null, runSegments = null } = {}) {
-  tickCounter++;
-
   // Lock multi-nodo: se un'altra istanza sta già eseguendo il tick in questa
   // finestra, saltiamo (evita doppie esecuzioni in cluster Active/Active).
+  // NOTA: tickCounter viene incrementato SOLO dopo il lock: in cluster un
+  // tick saltato dal lock non deve avanzare il contatore locale, altrimenti
+  // decay/segmenti partirebbero in momenti incoerenti tra i nodi.
   let lockClient = null;
   try {
     lockClient = await getClient();
@@ -60,6 +61,7 @@ export async function runTick(siteId = null, { runDecay = null, runSegments = nu
       logger.warn("Tick: lock non acquisito (altra istanza in corso), salto questo giro");
       return { tick: tickCounter, skipped: true, reason: "another-instance-locked" };
     }
+    tickCounter++;
 
     const decayEvery = await getGlobalTickInterval("tick_scoring_decay_every", DEFAULT_DECAY_EVERY);
     const segmentEvery = await getGlobalTickInterval("tick_segment_refresh_every", DEFAULT_SEGMENT_REFRESH_EVERY);

@@ -14,7 +14,11 @@ import { getKpis, listViews } from "../services/dashboard.js";
 const RANGES = ["7d", "30d", "90d"];
 
 export function registerAdminDashboardRoutes(router) {
-  router.get("/admin/dashboard", requireAuth, authorize("analytics", "read"), async (req, res, next) => {
+  // NOTA: path dedicato /admin/dashboard-crm. La "Dashboard realtime CRM"
+  // era registrata su /admin/dashboard, ma src/routes/serve.js ha la STESSA
+  // route ed è montata PRIMA (index.js) → la vinceva sempre, rendendo questa
+  // vista irraggiungibile (dead code). Path dedicato = nessuno shadowing.
+  router.get("/admin/dashboard-crm", requireAuth, authorize("analytics", "read"), async (req, res, next) => {
     try {
       const isSuperadmin = req.user.role === "superadmin";
       const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];

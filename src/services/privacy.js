@@ -89,6 +89,15 @@ export async function eraseContactData(siteId, email) {
   // senza alcun segnale all'operatore — peggio di non cancellare nulla per
   // una richiesta art. 17, perché sembra completata.
   const client = await getClient();
+  // ghl_id del contatto prima della cancellazione, per il push delete al CRM
+  // sorgente (l'external_id locale è un UUID, non l'id GHL).
+  let ghlId = "";
+  try {
+    ghlId = (await query(
+      "SELECT ghl_id FROM contacts WHERE site_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
+      [siteId, normalized]
+    )).rows[0]?.ghl_id || "";
+  } catch { /* best-effort */ }
   try {
     await client.query("BEGIN");
     if (submissionIds.length > 0) {
@@ -112,6 +121,21 @@ export async function eraseContactData(siteId, email) {
     throw err;
   } finally {
     client.release();
+  }
+
+  // Dopo la cancellazione (art. 17), propaga il delete anche al CRM sorgente
+  // (sync bidirezionale) se il contatto è stato effettivamente rimosso.
+  if (deleted.contact > 0) {
+    import("./source-sync/push.js")
+      .then(({ enqueuePush }) =>
+        enqueuePush(siteId, "contact", {
+          email: normalized,
+          operation: "delete",
+          externalId: ghlId,
+          origin: "cms",
+        })
+      )
+      .catch(() => {});
   }
 
   return deleted;

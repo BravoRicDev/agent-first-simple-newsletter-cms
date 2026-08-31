@@ -213,7 +213,7 @@ async function pushCallsToCalendar(siteId, config, conn) {
   let calls;
   try {
     calls = (await query(
-      `SELECT id, email, scheduled_at, status, outcome_notes AS notes
+      `SELECT id, email, scheduled_at, status, outcome_notes AS notes, google_event_id
        FROM calls WHERE site_id = $1 AND scheduled_at IS NOT NULL`,
       [siteId]
     )).rows;
@@ -238,12 +238,48 @@ async function pushCallsToCalendar(siteId, config, conn) {
         end: { dateTime: end.toISOString() },
         description: call.notes || "",
       };
-      const res = await googleFetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-      if (!res.ok) {
+
+      // Idempotenza: se la call ha già un google_event_id, AGGIORNA l'evento
+      // (PUT) invece di crearne un altro a ogni sync. Prima ogni sync ripetuto
+      // ri-POSTava tutto → eventi duplicati nel calendario.
+      let method = "POST";
+      let eventUrl = url;
+      if (call.google_event_id) {
+        method = "PUT";
+        eventUrl = `${url}/${encodeURIComponent(call.google_event_id)}`;
+      }
+
+      const res = await googleFetch(eventUrl, { method, headers, body: JSON.stringify(body) });
+
+      if (res.ok) {
+        if (method === "POST") {
+          const data = await res.json().catch(() => ({}));
+          const eid = data?.id || "";
+          if (eid) {
+            await query("UPDATE calls SET google_event_id = $1 WHERE id = $2", [eid, call.id])
+              .catch((err) => logger.warn(`calendar-sync: salvataggio google_event_id fallito (call ${call.id}): ${err.message}`));
+          }
+        }
+        pushed++;
+      } else if (method === "PUT" && res.status === 404) {
+        // Evento rimosso manualmente da Google: ricrealo (POST) e salva il
+        // nuovo id, così la call torna idempotente.
+        const re = await googleFetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+        if (re.ok) {
+          const data = await re.json().catch(() => ({}));
+          const eid = data?.id || "";
+          if (eid) {
+            await query("UPDATE calls SET google_event_id = $1 WHERE id = $2", [eid, call.id])
+              .catch((err) => logger.warn(`calendar-sync: ri-salvataggio google_event_id fallito (call ${call.id}): ${err.message}`));
+          }
+          pushed++;
+        } else {
+          const text = await re.text().catch(() => "");
+          errors.push(`call #${call.id}: ricreazione HTTP ${re.status} ${String(text).slice(0, 200)}`);
+        }
+      } else {
         const text = await res.text().catch(() => "");
         errors.push(`call #${call.id}: HTTP ${res.status} ${String(text).slice(0, 200)}`);
-      } else {
-        pushed++;
       }
     } catch (err) {
       // Un errore di rete su una chiamata NON blocca le altre.

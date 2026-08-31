@@ -35,7 +35,7 @@
         </span>
         <% if (c.last_error) { %>
           <div style="color:#b91c1c;font-size:11px;margin-top:4px;" title="<%= c.last_error %>">
-            ⚠ invio fallito <%= new Date(c.last_error_at).toLocaleString('it-IT') %>
+            ⚠ invio fallito <%= c.last_error_at ? new Date(c.last_error_at).toLocaleString('it-IT') : '' %>
           </div>
         <% } %>
       </td>

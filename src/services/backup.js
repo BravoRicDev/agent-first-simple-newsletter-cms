@@ -54,6 +54,13 @@ function dumpToFile(databaseUrl, tmpFile) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      // Pulizia vera: senza kill/destroy, su errore pg_dump continuava a
+      // scrivere sul tmp e gli stream restavano aperti (file descriptor leak).
+      try { dump.kill("SIGKILL"); } catch { /* già terminato */ }
+      try { out.destroy(); } catch { /* già chiuso */ }
+      try { gzip.destroy(); } catch { /* già chiuso */ }
+      try { dump.stdout.destroy(); } catch { /* già chiuso */ }
+      try { fs.unlinkSync(tmpFile); } catch { /* file non esistente */ }
       reject(err);
     };
     const maybeResolve = () => {
@@ -97,7 +104,10 @@ export async function runScheduledBackup() {
   const file = path.join(BACKUP_DIR, `auto-${todayStr()}.sql.gz`);
   if (fs.existsSync(file)) return;
 
-  const tmpFile = `${file}.tmp`;
+  // Tmp univoco per processo+istante: il tick dello scheduler e il run manuale
+  // (backup-jobs.js) possono scrivere lo stesso giorno — con un tmp condiviso
+  // due pg_dump concorrenti corrompevano il file ("last wins" su dump parziale).
+  const tmpFile = path.join(BACKUP_DIR, `auto-${todayStr()}.sql.gz.tmp-${process.pid}-${Date.now()}`);
   try {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     await dumpToFile(config.databaseUrl, tmpFile);

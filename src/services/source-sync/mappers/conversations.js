@@ -140,18 +140,26 @@ export async function syncForContacts(ctx, extIds) {
                 for (const msg of msgs) {
                   try {
                     const direction = msg.direction === "outbound" ? "out" : "in";
+                    const sourceMessageId = String(msg.id || "").slice(0, 255);
 
+                    // ON CONFLICT sul source_message_id globale (indice 110):
+                    // stesso messaggio ri-sincronizzato → no-op. Prima senza
+                    // vincolo l'intera cronologia veniva reinserita ad ogni
+                    // full sync (crescita illimitata di duplicati).
                     await query(
                       `INSERT INTO conversation_messages
-                       (conversation_id, direction, body, subject, meta, created_at)
-                       VALUES ($1, $2, $3, $4, $5, $6)`,
+                       (conversation_id, direction, body, subject, meta, created_at, source_message_id)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)
+                       ON CONFLICT (source_message_id) WHERE source_message_id IS NOT NULL
+                       DO NOTHING`,
                       [
                         conversationId,
                         direction,
                         msg.body || msg.message || "",
                         msg.subject || "",
                         JSON.stringify({ type: msg.type, status: msg.status } || {}),
-                        msg.dateAdded
+                        msg.dateAdded,
+                        sourceMessageId || null,
                       ]
                     );
                     addStat("conversations", "upserted", 1);
