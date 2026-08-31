@@ -14,6 +14,17 @@ import {
 
 const router = Router();
 
+// Redirect "back" sicuro: accetta SOLO path relativi same-origin ("/admin/..."),
+// rifiutando scheme ("https://..."), "//evil" e backslash. Previene l'open
+// redirect su res.redirect(req.body.back) per phishing fuori dal dominio.
+function safeBack(v, fallback) {
+  const s = String(v || "").trim();
+  if (s.startsWith("/") && !s.startsWith("//") && !s.startsWith("\\") && !/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+    return s;
+  }
+  return fallback;
+}
+
 // ── Admin CRM: segmenti, workflow, task, funnel ──────────────────────────
 // Viste essenziali: index con tabella + form inline; il grosso dell'uso
 // è via API agent/MCP, qui l'accesso rapido per gli umani.
@@ -426,8 +437,7 @@ router.post("/admin/quotes/:id/status", requireAuth, authorize("forms", "update"
   try {
     const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
     const quote = await setQuoteStatus(siteId, req.params.id, req.body.status);
-    const back = req.body.back || `/admin/opportunities?site_id=${siteId}`;
-    res.redirect(back);
+    res.redirect(safeBack(req.body.back, `/admin/opportunities?site_id=${siteId}`));
   } catch (err) { next(err); }
 });
 
@@ -435,7 +445,7 @@ router.post("/admin/quotes/:id/delete", requireAuth, authorize("forms", "delete"
   try {
     const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
     await deleteQuote(siteId, req.params.id);
-    res.redirect(req.body.back || `/admin/opportunities?site_id=${siteId}`);
+    res.redirect(safeBack(req.body.back, `/admin/opportunities?site_id=${siteId}`));
   } catch (err) { next(err); }
 });
 

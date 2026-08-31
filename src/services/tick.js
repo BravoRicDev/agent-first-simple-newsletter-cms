@@ -1,4 +1,4 @@
-import { query } from "../db.js";
+import { query, getClient } from "../db.js";
 import { logger } from "./logger.js";
 import { processDelayedActions } from "./workflows.js";
 import { applyScoreDecay } from "./scoring.js";
@@ -21,6 +21,14 @@ const DEFAULT_DECAY_EVERY = 10;
 const DEFAULT_SEGMENT_REFRESH_EVERY = 5;
 const DELAYED_ACTIONS_LIMIT = 50;
 
+// Multi-nodo: in un cluster Active/Active un cron esterno (scripts/run-tick.sh)
+// può girare su ogni nodo. Senza lock le azioni differite/decay/segmenti
+// girerebbero una volta per nodo. pg_try_advisory_lock su chiave dedicata
+// garantisce che in ogni finestra di tick UN SOLO nodo esegua il lavoro
+// (stesso pattern di scheduler.js). Se il lock non è disponibile, il tick
+// viene saltato (altra istanza in corso) e viene risposto senza lavoro.
+const TICK_LOCK_KEY = 72800123;
+
 // Contatore in-process: azzerato ad ogni riavvio del processo (comportamento
 // accettabile per un throttling best-effort, non serve persistenza).
 let tickCounter = 0;
@@ -40,42 +48,66 @@ async function getGlobalTickInterval(key, fallback) {
 export async function runTick(siteId = null, { runDecay = null, runSegments = null } = {}) {
   tickCounter++;
 
-  const decayEvery = await getGlobalTickInterval("tick_scoring_decay_every", DEFAULT_DECAY_EVERY);
-  const segmentEvery = await getGlobalTickInterval("tick_segment_refresh_every", DEFAULT_SEGMENT_REFRESH_EVERY);
-
-  const shouldDecay = runDecay !== null ? runDecay : tickCounter % decayEvery === 0;
-  const shouldRefreshSegments = runSegments !== null ? runSegments : tickCounter % segmentEvery === 0;
-
-  const result = {
-    tick: tickCounter,
-    delayed_actions: { executed: 0 },
-    scoring_decay: null,
-    segment_refresh: null,
-  };
-
+  // Lock multi-nodo: se un'altra istanza sta già eseguendo il tick in questa
+  // finestra, saltiamo (evita doppie esecuzioni in cluster Active/Active).
+  let lockClient = null;
   try {
-    result.delayed_actions = await processDelayedActions(siteId, { limit: DELAYED_ACTIONS_LIMIT });
-  } catch (err) {
-    logger.error(`Tick: azioni differite fallite: ${err.message}`);
-  }
+    lockClient = await getClient();
+    const lockRes = await lockClient.query("SELECT pg_try_advisory_lock($1) AS locked", [TICK_LOCK_KEY]);
+    if (!lockRes.rows[0].locked) {
+      lockClient.release();
+      lockClient = null;
+      logger.warn("Tick: lock non acquisito (altra istanza in corso), salto questo giro");
+      return { tick: tickCounter, skipped: true, reason: "another-instance-locked" };
+    }
 
-  if (shouldDecay) {
+    const decayEvery = await getGlobalTickInterval("tick_scoring_decay_every", DEFAULT_DECAY_EVERY);
+    const segmentEvery = await getGlobalTickInterval("tick_segment_refresh_every", DEFAULT_SEGMENT_REFRESH_EVERY);
+
+    const shouldDecay = runDecay !== null ? runDecay : tickCounter % decayEvery === 0;
+    const shouldRefreshSegments = runSegments !== null ? runSegments : tickCounter % segmentEvery === 0;
+
+    const result = {
+      tick: tickCounter,
+      skipped: false,
+      delayed_actions: { executed: 0 },
+      scoring_decay: null,
+      segment_refresh: null,
+    };
+
     try {
-      result.scoring_decay = await applyScoreDecay(siteId);
+      result.delayed_actions = await processDelayedActions(siteId, { limit: DELAYED_ACTIONS_LIMIT });
     } catch (err) {
-      logger.error(`Tick: scoring decay fallito: ${err.message}`);
+      logger.error(`Tick: azioni differite fallite: ${err.message}`);
+    }
+
+    if (shouldDecay) {
+      try {
+        result.scoring_decay = await applyScoreDecay(siteId);
+      } catch (err) {
+        logger.error(`Tick: scoring decay fallito: ${err.message}`);
+      }
+    }
+
+    if (shouldRefreshSegments) {
+      try {
+        result.segment_refresh = await refreshSegments(siteId);
+      } catch (err) {
+        logger.error(`Tick: refresh segmenti fallito: ${err.message}`);
+      }
+    }
+
+    return result;
+  } finally {
+    if (lockClient) {
+      try {
+        await lockClient.query("SELECT pg_advisory_unlock($1)", [TICK_LOCK_KEY]);
+      } catch (err) {
+        logger.error(`Tick: unlock fallito (la connessione verrà chiusa dal pool): ${err.message}`);
+      }
+      lockClient.release();
     }
   }
-
-  if (shouldRefreshSegments) {
-    try {
-      result.segment_refresh = await refreshSegments(siteId);
-    } catch (err) {
-      logger.error(`Tick: refresh segmenti fallito: ${err.message}`);
-    }
-  }
-
-  return result;
 }
 
 // Uso solo nei test, per un contatore deterministico tra i vari "it".

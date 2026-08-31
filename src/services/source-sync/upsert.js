@@ -142,10 +142,21 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
   }
   setClauses.push(`id = $${i++}`);
   values.push(existing.id);
+  // NB: la WHERE deve aggiungere site_id SOLO se la colonna esiste
+  // (come nel ramo SELECT): pipeline_stages (db/074) non ha site_id e
+  // prima l'UPDATE falliva con "column site_id does not exist", facendo
+  // sì che label/color/position degli stage non venissero MAI aggiornati
+  // ai sync successivi (errore inghiottito dal catch del mapper).
+  let where = `id = $${i++}`;
+  const whereValues = [existing.id];
+  if (hasSiteId) {
+    where += ` AND site_id = $${i++}`;
+    whereValues.push(siteId);
+  }
   const row = (
     await query(
-      `UPDATE ${table} SET ${setClauses.join(", ")} WHERE id = $${i++} AND site_id = $${i++} RETURNING *`,
-      values
+      `UPDATE ${table} SET ${setClauses.join(", ")} WHERE ${where} RETURNING *`,
+      [...values, ...whereValues]
     )
   ).rows[0];
   return { row, action: "updated" };

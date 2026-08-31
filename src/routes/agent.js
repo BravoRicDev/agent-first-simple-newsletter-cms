@@ -2254,6 +2254,12 @@ router.put("/api/agent/sites/:siteId/settings/:key", requireAuth, requireAgent, 
   try {
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    // Solo admin/superadmin: la scrittura delle settings di sito è operazione
+    // privilegiata (un `collaboratore` con token non deve poterla fare via
+    // superficie agent, aggirando la matrice permessi).
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
+      return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    }
 
     const { key } = req.params;
     const { value } = agentSettingSchema.parse(req.body);
@@ -3618,6 +3624,9 @@ router.post("/api/agent/sites/:siteId/deploy", requireAuth, requireAgent, async 
   try {
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
+      return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    }
 
     const site = (await query(
       "SELECT id, name, domain FROM sites WHERE id = $1", [siteId]
@@ -3856,6 +3865,11 @@ router.post("/api/agent/sites/:siteId/backup", requireAuth, requireAgent, async 
   try {
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    // Il backup contiene l'intero dataset del sito (utenti, contatti, iscritti
+    // newsletter, settings): sensibile, solo admin/superadmin.
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
+      return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    }
     const siteInfo = (await query("SELECT id, name, domain FROM sites WHERE id = $1", [siteId])).rows[0];
     if (!siteInfo) return res.status(404).json({ error: res.locals.t("api.common.siteNotFound") });
 
@@ -4271,6 +4285,10 @@ router.post("/api/agent/sites/:siteId/newsletter/campaigns/:campaignId/send", re
   try {
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    // L'invio di una campagna newsletter è privilegiato: solo admin/superadmin.
+    if (req.user.role !== "superadmin" && req.user.role !== "admin") {
+      return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+    }
 
     const campaign = (await query(
       "SELECT * FROM newsletter_campaigns WHERE id = $1 AND site_id = $2",
@@ -4547,6 +4565,7 @@ import { registerTrackedLinksRoutes } from "./agent-tracked-links.js";
 import { registerAccessGrantsRoutes } from "./agent-access-grants.js";
 import { registerTickRoutes } from "./agent-tick.js";
 import { registerSourceSyncRoutes } from "./agent-source-sync.js";
+import { registerGhlPushRoutes } from "./agent-ghl-push.js";
 registerCrmRoutes(router);
 registerRecurringRoutes(router);
 registerTickRoutes(router);
@@ -4570,6 +4589,7 @@ registerChannelLimitsRoutes(router);
 registerClientServicesRoutes(router);
 registerTrackedLinksRoutes(router);
 registerSourceSyncRoutes(router);
+registerGhlPushRoutes(router);
 registerAccessGrantsRoutes(router);
 
 export default router;

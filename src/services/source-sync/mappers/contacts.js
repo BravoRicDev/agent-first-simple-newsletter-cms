@@ -31,10 +31,19 @@ async function upsertContact(ctx, extId, contact) {
       )
     ).rows[0];
 
-    // S1: si "adotta" SOLO un record locale puro (senza external_id).
-    // Se external_id === extId il record è già nostro: prosegui verso
+    // S1: si "adotta" un record locale esistente (stessa email) quando il suo
+    // external_id NON è quello sorgente che stiamo per scrivere.
+    //
+    // Prima della migrazione 090 i record creati dal CMS avevano external_id
+    // NULL: bastava controllare "!existing.external_id". Con 090
+    // (DEFAULT gen_random_uuid()) l'external_id locale è SEMPRE valorizzato,
+    // quindi quella condizione non scattava più e l'import dello stesso
+    // contatto presente anche in GHL falliva sul vincolo UNIQUE(site_id,email)
+    // (INSERT con email duplicata → errore 23505). L'adozione prevale quando
+    // l'id locale non coincide col sorgente: lo sovrascrive con l'id GHL.
+    // Se external_id === extId il record è già nostro: si prosegue verso
     // l'upsert normale che gestisce skip-if-unchanged/update correttamente.
-    const shouldAdopt = existing && !existing.external_id;
+    const shouldAdopt = existing && existing.external_id !== extId;
     const cols = {
       email,
       status: contact.status || "",

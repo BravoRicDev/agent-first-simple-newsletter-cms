@@ -201,6 +201,27 @@ async function schedulerTick() {
     } catch (err) {
       logger.error(`Source sync tick fallito: ${err.message}`);
     }
+
+    // Webhook OUT: delivery automatica della coda (single-fire garantito da
+    // advisory lock globale + claim atomico, vedi services/webhooks.js).
+    try {
+      const { deliverPending } = await import("./webhooks.js");
+      const dw = await deliverPending(50);
+      if (dw.delivered > 0) logger.info(`Webhook out: ${dw.delivered} delivery inviate, ${dw.remaining} rimaste`);
+    } catch (err) {
+      logger.error(`Webhook out deliver tick fallito: ${err.message}`);
+    }
+
+    // Push bidirezionale verso il CRM sorgente (GoHighLevel), opzionale per
+    // sito: CANALE single-fire (advisory lock per-sito + anti-echo + no-import
+    // + replica al passo, vedi services/source-sync/push.js).
+    try {
+      const { runGhlPushDue } = await import("./source-sync/push.js");
+      const gp = await runGhlPushDue();
+      if (gp.started > 0) logger.info(`GHL push: avviati ${gp.started} run`);
+    } catch (err) {
+      logger.error(`GHL push tick fallito: ${err.message}`);
+    }
   } finally {
     if (lockClient) {
       try {

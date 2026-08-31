@@ -25,6 +25,18 @@ function emit(siteId, email, eventType, payload) {
   ).catch((err) => logger.error(`events emit fallito (${eventType}): ${err.message}`));
 }
 
+// Hook per il PUSH opzionale verso il CRM sorgente (GoHighLevel).
+// Fire-and-forget; no-op se il push non è abilitato per il sito. `origin`
+// implementa l'anti-echo (le mutate arrivate da GHL non vengono rispedite).
+function pushOpportunity(siteId, id, options = {}) {
+  if (!siteId || !id) return;
+  import("./source-sync/push.js")
+    .then(({ enqueuePush }) =>
+      enqueuePush(siteId, "opportunity", { entityId: id, operation: options.operation || "upsert", externalId: options.externalId || "", origin: options.origin || "cms" })
+    )
+    .catch(() => {});
+}
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -101,6 +113,7 @@ export async function createOpportunity(siteId, { email, pipeline_id = null, sta
     expected_close_at || null, String(notes || "").slice(0, 5000)]
     )).rows[0];
     emit(siteId, normalized, "opportunity_stage_changed", { opportunity_id: row.id, to_stage: row.stage, title: row.title });
+    pushOpportunity(siteId, row.id);
     return mapOpportunity(row);
     }
 
@@ -140,12 +153,14 @@ export async function updateOpportunity(siteId, id, fields = {}) {
       ).catch(() => {});
     }
   }
+  pushOpportunity(siteId, current.id);
   return getOpportunity(siteId, id);
 }
 
 export async function deleteOpportunity(siteId, id) {
   const row = await getOpportunity(siteId, id);
   if (!row) return 0;
+  pushOpportunity(siteId, row.id, { operation: "delete", externalId: String(row.external_id || "") });
   await query("DELETE FROM opportunities WHERE id = $1 AND site_id = $2", [parseInt(id, 10), siteId]);
   emit(siteId, row.contact_email, "opportunity_deleted", { opportunity_id: parseInt(id, 10), title: row.title });
   return 1;
@@ -259,6 +274,7 @@ export async function moveOpportunityStage(siteId, id, { stage = "", pipeline_id
   if (status !== current.status) {
     emit(siteId, current.contact_email, "opportunity_status_changed", { opportunity_id: current.id, from_status: current.status, to_status: status });
   }
+  pushOpportunity(siteId, current.id);
   return getOpportunity(siteId, id);
 }
 

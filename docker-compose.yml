@@ -32,6 +32,11 @@ services:
       retries: 3
 
   db:
+    # NODO SINGOLO: questa è la Postgres locale del postgres docker compose.
+    # In configurazione multi-nodo/ridondante ("server gemelli") questo servizio
+    # NON viene usato: Postgres è gestito da Patroni/Spilo nel cluster
+    # (infra/cluster/, vedi docs/CLUSTER.it.md) e l'app parte con
+    # infra/cluster/docker-compose.app.yml.
     image: postgres:16-alpine
     restart: unless-stopped
     volumes:

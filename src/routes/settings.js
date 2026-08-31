@@ -50,8 +50,11 @@ router.get("/admin/settings", requireAuth, resolveSite, authorize("settings", "r
 // Ritorna il valore di una chiave secret su richiesta (bottone "Mostra"):
 // il valore reale NON è più nel DOM della pagina (prima era in data-value,
 // leggibile da qualunque XSS residuo o da chi ispeziona il sorgente).
-// Solo chiavi che matchano il pattern secret, solo utenti con permesso read.
-router.get("/admin/settings/:key/value", requireAuth, authorize("settings", "read"), async (req, res, next) => {
+// Solo chiavi che matchano il pattern secret. Richiede settings:update
+// (admin/superadmin): NIENTE lettura per i ruoli con solo settings:read
+// (es. collaboratore), che altrimenti leggerebbero i token in chiaro
+// aggirando il mascheramento del pannello e della GET agent.
+router.get("/admin/settings/:key/value", requireAuth, authorize("settings", "update"), async (req, res, next) => {
   try {
     const isSecret = /key|secret|password|token|pass/i.test(req.params.key || "");
     if (!isSecret) return res.status(404).json({ error: "Non trovato" });

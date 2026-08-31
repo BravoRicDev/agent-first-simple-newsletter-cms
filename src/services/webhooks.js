@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { query } from "../db.js";
+import { query, getClient } from "../db.js";
 import { safeFetch } from "./ssrf.js";
 import { logger } from "./logger.js";
 import { upsertContact, addContactTag } from "./contacts.js";
@@ -13,6 +13,13 @@ import { createTask } from "./tasks.js";
 // firma HMAC-SHA256 (X-Webhook-Signature), timeout 10s e retry con backoff
 // esponenziale (2^attempts minuti, max 5 tentativi → failed).
 //
+// CLUSTER (Active/Active): deliverPending() è "single-fire": usa un advisory
+// lock globale + claim atomico (FOR UPDATE SKIP LOCKED → status 'sending').
+// In ogni finestra UN SOLO nodo svuota l'outbox e due nodi non spediscono
+// mai la stessa delivery (evita l'innesco multiplo della stessa automazione,
+// es. verso GoHighLevel). `origin` traccia da dove nasce l'evento
+// ('cms'|'agent'|'ghl_in'|'import') per l'anti-echo del push GHL.
+//
 // IN: handleIncoming() riceve eventi esterni (endpoint pubblico con token)
 // e applica il mapping {event_type: {action, config}} del webhook.
 //
@@ -24,6 +31,10 @@ const DIRECTIONS = new Set(["in", "out"]);
 const MAX_EVENTS = 100;
 const MAX_ATTEMPTS = 5;
 const DELIVERY_TIMEOUT_MS = 10000;
+// Chiave del lock globale "un solo nodo svuota l'outbox alla volta".
+const WEBHOOK_DELIVER_LOCK_KEY = 74812001;
+
+const VALID_ORIGINS = new Set(["cms", "agent", "ghl_in", "import"]);
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -135,8 +146,11 @@ export async function deleteWebhook(siteId, id) {
 // Accoda una delivery per ogni webhook OUT attivo del sito che inoltra
 // `eventType`. Fire-and-forget: le INSERT sono isolate, un errore non
 // blocca mai il chiamante (che è comunque il flusso eventi).
-export async function enqueueForEvent(siteId, eventType, payload = {}) {
+// `options.origin` ('cms'|'agent'|'ghl_in'|'import') registra da dove
+// nasce l'evento (usato per l'anti-echo del push verso il CRM sorgente).
+export async function enqueueForEvent(siteId, eventType, payload = {}, options = {}) {
   if (!siteId || !eventType) return { queued: 0 };
+  const origin = VALID_ORIGINS.has(options.origin) ? options.origin : "cms";
   const rows = (await query(
     `SELECT id FROM webhooks
      WHERE site_id = $1 AND direction = 'out' AND active = true
@@ -149,9 +163,9 @@ export async function enqueueForEvent(siteId, eventType, payload = {}) {
   for (const w of rows) {
     try {
       await query(
-        `INSERT INTO webhook_deliveries (webhook_id, site_id, event_type, payload)
-         VALUES ($1, $2, $3, $4)`,
-        [w.id, siteId, String(eventType).slice(0, 100), JSON.stringify(payload || {})]
+        `INSERT INTO webhook_deliveries (webhook_id, site_id, event_type, payload, origin)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [w.id, siteId, String(eventType).slice(0, 100), JSON.stringify(payload || {}), origin]
       );
       queued++;
     } catch (err) {
@@ -173,7 +187,7 @@ async function recordDeliveryFailure(delivery, error) {
   } else {
     const minutes = Math.pow(2, attempts); // backoff esponenziale 2^attempts
     await query(
-      `UPDATE webhook_deliveries SET attempts = $1, last_error = $2,
+      `UPDATE webhook_deliveries SET status = 'pending', attempts = $1, last_error = $2,
          next_attempt_at = NOW() + make_interval(mins => $3)
        WHERE id = $4`,
       [attempts, lastError, minutes, delivery.id]
@@ -391,79 +405,150 @@ function shouldEnrich(eventType) {
 // { allowPrivate } è SOLO per i test con server HTTP locali: di default il
 // fetch passa da safeFetch (ssrf.js) che blocca IP privati/loopback/link-local
 // (difesa in profondità per i webhook out, fix CORREZIONI-TRACCIATE).
+//
+// CLUSTER single-fire: advisory lock globale (un solo nodo draina alla
+// volta) + claim atomico con FOR UPDATE SKIP LOCKED (status 'sending'):
+// anche due chiamate concorrenti (due nodi Active/Active) non selezionano
+// mai la stessa riga → una sola delivery per evento.
 export async function deliverPending(limit = 50, { siteId = null, allowPrivate = false } = {}) {
-  const params = [];
-  let where = "d.status = 'pending' AND d.next_attempt_at <= NOW()";
-  if (siteId) {
-    params.push(siteId);
-    where += ` AND d.site_id = $${params.length}`;
-  }
-  params.push(Math.min(parseInt(limit, 10) || 50, 200));
-  const rows = (await query(
-    `SELECT d.id, d.webhook_id, d.site_id, d.event_type, d.payload, d.attempts,
-            w.url, w.secret
-     FROM webhook_deliveries d
-     JOIN webhooks w ON w.id = d.webhook_id
-     WHERE ${where}
-     ORDER BY d.created_at ASC
-     LIMIT $${params.length}`,
-    params
-  )).rows;
+  const lockClient = await getClient();
+  let locked = false;
+  try {
+    const lockRes = await lockClient.query(
+      "SELECT pg_try_advisory_lock($1) AS locked",
+      [WEBHOOK_DELIVER_LOCK_KEY]
+    );
+    locked = lockRes.rows[0].locked;
+    if (!locked) {
+      // Un altro nodo/istanza sta già svuotando la coda: salta senza sprecare
+      // chiamate. Le righe restano pending e verranno prese al giro successivo.
+      const remainingParams = siteId ? [siteId] : [];
+      const remainingWhere = siteId ? " AND site_id = $1" : "";
+      const remaining = (await query(
+        `SELECT COUNT(*)::int AS n FROM webhook_deliveries
+         WHERE status = 'pending' AND next_attempt_at <= NOW()${remainingWhere}`,
+        remainingParams
+      )).rows[0].n;
+      return { delivered: 0, failed: 0, remaining, skipped: true };
+    }
 
-  let delivered = 0;
-  let failed = 0;
-  for (const delivery of rows) {
+    // Reaper: righe rimaste in 'sending' oltre 10min (processo morto durante
+    // la consegna) vengono riportate a 'pending' per un nuovo tentativo.
+    // Il timeout di consegna è 10s, quindi 10min non può intaccare una
+    // consegna legittima in corso.
+    await query(
+      `UPDATE webhook_deliveries SET status = 'pending'
+       WHERE status = 'sending' AND created_at < NOW() - interval '10 minutes'`
+    );
+
+    // Claim atomico: marca come 'sending' le righe selezionate (escluse da
+    // qualunque altro worker), poi recupera url/secret dei webhook.
+    let rows = [];
     try {
-      // ENRICHMENT: arricchisci il payload con dati completi contatto/opportunità
-      if (shouldEnrich(delivery.event_type)) {
-        await enrichPayload(delivery);
+      await lockClient.query("BEGIN");
+      const params = [];
+      let where = "d.status = 'pending' AND d.next_attempt_at <= NOW()";
+      if (siteId) {
+        params.push(siteId);
+        where += ` AND d.site_id = $${params.length}`;
       }
+      params.push(Math.min(parseInt(limit, 10) || 50, 200));
 
-      const body = JSON.stringify({ event_type: delivery.event_type, payload: delivery.payload });
-      const headers = {
-        "Content-Type": "application/json",
-        "X-Webhook-Event": delivery.event_type,
-      };
-      if (delivery.secret) {
-        headers["X-Webhook-Signature"] = crypto
-          .createHmac("sha256", delivery.secret)
-          .update(body)
-          .digest("hex");
-      }
-      const res = await safeFetch(delivery.url, {
-        method: "POST",
-        headers,
-        body,
-        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-        allowPrivate,
-      });
-      if (res.ok) {
-        await query(
-          `UPDATE webhook_deliveries SET status = 'sent', attempts = attempts + 1,
-             last_error = '', next_attempt_at = NOW()
-           WHERE id = $1`,
-          [delivery.id]
+      const claim = await lockClient.query(
+        `WITH due AS (
+           SELECT d.id FROM webhook_deliveries d
+           WHERE ${where}
+           ORDER BY d.created_at ASC
+           LIMIT $${params.length}
+           FOR UPDATE SKIP LOCKED
+         )
+         UPDATE webhook_deliveries d SET status = 'sending'
+         FROM due WHERE d.id = due.id
+         RETURNING d.id`,
+        params
+      );
+      const ids = claim.rows.map((r) => r.id);
+      if (ids.length > 0) {
+        const detail = await lockClient.query(
+          `SELECT d.id, d.webhook_id, d.site_id, d.event_type, d.payload, d.attempts,
+                  w.url, w.secret
+           FROM webhook_deliveries d
+           JOIN webhooks w ON w.id = d.webhook_id
+           WHERE d.id = ANY($1::int[])`,
+          [ids]
         );
-        delivered++;
-      } else {
-        await recordDeliveryFailure(delivery, `HTTP ${res.status}`);
+        rows = detail.rows;
+      }
+      await lockClient.query("COMMIT");
+    } catch (err) {
+      await lockClient.query("ROLLBACK").catch(() => {});
+      throw err;
+    }
+
+    let delivered = 0;
+    let failed = 0;
+    for (const delivery of rows) {
+      try {
+        // ENRICHMENT: arricchisci il payload con dati completi contatto/opportunità
+        if (shouldEnrich(delivery.event_type)) {
+          await enrichPayload(delivery);
+        }
+
+        const body = JSON.stringify({ event_type: delivery.event_type, payload: delivery.payload });
+        const headers = {
+          "Content-Type": "application/json",
+          "X-Webhook-Event": delivery.event_type,
+        };
+        if (delivery.secret) {
+          headers["X-Webhook-Signature"] = crypto
+            .createHmac("sha256", delivery.secret)
+            .update(body)
+            .digest("hex");
+        }
+        const res = await safeFetch(delivery.url, {
+          method: "POST",
+          headers,
+          body,
+          signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+          allowPrivate,
+        });
+        if (res.ok) {
+          await query(
+            `UPDATE webhook_deliveries SET status = 'sent', attempts = attempts + 1,
+               last_error = '', next_attempt_at = NOW()
+             WHERE id = $1`,
+            [delivery.id]
+          );
+          delivered++;
+        } else {
+          try { await recordDeliveryFailure(delivery, `HTTP ${res.status}`); } catch (e) {}
+          failed++;
+        }
+      } catch (err) {
+        try { await recordDeliveryFailure(delivery, err.message); } catch (e) {}
         failed++;
       }
-    } catch (err) {
-      await recordDeliveryFailure(delivery, err.message);
-      failed++;
     }
+
+    const remainingParams = siteId ? [siteId] : [];
+    const remainingWhere = siteId ? " AND site_id = $1" : "";
+    const remaining = (await query(
+      `SELECT COUNT(*)::int AS n FROM webhook_deliveries
+       WHERE status = 'pending' AND next_attempt_at <= NOW()${remainingWhere}`,
+      remainingParams
+    )).rows[0].n;
+
+    return { delivered, failed, remaining };
+  } finally {
+    if (locked) {
+      try {
+        await lockClient.query("SELECT pg_advisory_unlock($1)", [WEBHOOK_DELIVER_LOCK_KEY]);
+      } catch (err) {
+        logger.error(`webhook deliver: unlock fallito (la connessione verrà chiusa dal pool): ${err.message}`);
+      }
+    }
+    lockClient.release();
   }
-
-  const remainingParams = siteId ? [siteId] : [];
-  const remainingWhere = siteId ? " AND site_id = $1" : "";
-  const remaining = (await query(
-    `SELECT COUNT(*)::int AS n FROM webhook_deliveries
-     WHERE status = 'pending' AND next_attempt_at <= NOW()${remainingWhere}`,
-    remainingParams
-  )).rows[0].n;
-
-  return { delivered, failed, remaining };
 }
 
 // ── IN: ricezione eventi esterni ─────────────────────────────────────────
@@ -504,9 +589,9 @@ async function runInboundAction(siteId, eventType, rule, body, webhookId) {
     switch (action) {
       case "create_contact": {
         if (!email) return 0;
-        await upsertContact(siteId, email);
+        await upsertContact(siteId, email, { origin: "ghl_in" });
         const tags = Array.isArray(config.tags) ? config.tags : (Array.isArray(body.tags) ? body.tags : []);
-        for (const tag of tags) await addContactTag(siteId, email, tag);
+        for (const tag of tags) await addContactTag(siteId, email, tag, { origin: "ghl_in" });
         return 1;
       }
       case "emit_event": {
@@ -516,13 +601,14 @@ async function runInboundAction(siteId, eventType, rule, body, webhookId) {
           siteId,
           email,
           String(config.event_type || "webhook").slice(0, 100),
-          { webhook_id: webhookId, event_type: eventType, ...(body || {}) }
+          { webhook_id: webhookId, event_type: eventType, ...(body || {}) },
+          { origin: "ghl_in" }
         );
         return 1;
       }
       case "add_tag": {
         if (!email || !config.tag) return 0;
-        await addContactTag(siteId, email, config.tag);
+        await addContactTag(siteId, email, config.tag, { origin: "ghl_in" });
         return 1;
       }
       case "create_task": {

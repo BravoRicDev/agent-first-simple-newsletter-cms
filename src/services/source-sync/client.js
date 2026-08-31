@@ -87,7 +87,7 @@ export function createSourceClient(cfg) {
     lastCallAt = Date.now();
   }
 
-  async function request(path, { params = {} } = {}) {
+  async function request(path, { params = {}, method = "GET", body = null } = {}) {
     await throttle();
     await consumeBudget(cfg.site_id, cfg);
 
@@ -106,12 +106,15 @@ export function createSourceClient(cfg) {
     for (;;) {
       attempt++;
       const res = await fetch(url, {
+        method,
         headers: {
           Authorization: `Bearer ${cfg.token}`,
           Version: VERSION_HEADER,
           Accept: "application/json",
+          ...(body !== null && body !== undefined ? { "Content-Type": "application/json" } : {}),
           ...(cfg.location_id ? { "Location-Id": String(cfg.location_id) } : {}),
         },
+        body: body !== null && body !== undefined ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(20000),
       });
       if (res.status === 429 && attempt <= 5) {
@@ -267,7 +270,13 @@ export function createSourceClient(cfg) {
     return { fetched, pages };
   }
 
-  return { get, paginate, paginateOffset, raw: request };
+  // write(): metodo HTTP (POST/PUT/DELETE) con body JSON per il PUSH verso
+  // il CRM sorgente (sync bidirezionale). Stesse auth/throttle/budget.
+  async function write(method, path, body = {}, params = {}) {
+    return request(path, { method, params, body });
+  }
+
+  return { get, paginate, paginateOffset, raw: request, write };
 }
 
 function pathToKey(path) {

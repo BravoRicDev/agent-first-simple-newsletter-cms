@@ -43,6 +43,18 @@ export function extractEmailFromFields(fields, data) {
 // JS come qui.
 const SUBMISSIONS_SCAN_LIMIT = 5000;
 
+// Hook per il PUSH opzionale verso il CRM sorgente (GoHighLevel).
+// Fire-and-forget: l'enqueue non deve MAI bloccare il chiamante (e se il
+// push non è abilitato per il sito, enqueuePush ritorna subito senza fare
+// nulla). `origin` ('cms'|'ghl_in'|'import') implementa l'anti-echo: le
+// mutate arrivate da GHL non vengono rispedite a GHL.
+function pushContact(siteId, email, origin = "cms") {
+  if (!siteId || !email) return;
+  import("./source-sync/push.js")
+    .then(({ enqueuePush }) => enqueuePush(siteId, "contact", { email, origin }))
+    .catch(() => {});
+}
+
 export async function loadEnrichedSubmissions(siteId, { formSlug, limit = SUBMISSIONS_SCAN_LIMIT } = {}) {
   const emailFieldMap = await getEmailFieldMap(siteId);
   const params = [siteId];
@@ -71,13 +83,14 @@ export async function loadEnrichedSubmissions(siteId, { formSlug, limit = SUBMIS
 // sia come backfill di lettura per invii già esistenti prima di questa
 // funzionalità. Usata anche per aggiungere a mano un lead che non è mai
 // passato da un form (es. modulo pipeline vendite).
-export async function upsertContact(siteId, email) {
+export async function upsertContact(siteId, email, options = {}) {
   const normalized = String(email || "").trim().toLowerCase();
   await query(
     `INSERT INTO contacts (site_id, email) VALUES ($1, $2)
      ON CONFLICT (site_id, email) DO NOTHING`,
     [siteId, normalized]
   );
+  pushContact(siteId, normalized, options.origin);
 }
 
 // Solo tag/stato/note/valore, senza scansionare gli invii — per chi deve
@@ -96,7 +109,7 @@ export async function getContactRecord(siteId, email) {
   return row || { tags: [], status: "", notes: "", value_estimate: null, score: 0, pref_whatsapp: false, pref_email: true, pref_phone: true };
 }
 
-export async function setContactFields(siteId, email, { tags, status, notes, value_estimate }) {
+export async function setContactFields(siteId, email, { tags, status, notes, value_estimate }, options = {}) {
   const normalized = String(email || "").trim().toLowerCase();
   await query(
     `INSERT INTO contacts (site_id, email, tags, status, notes, value_estimate)
@@ -105,13 +118,14 @@ export async function setContactFields(siteId, email, { tags, status, notes, val
      DO UPDATE SET tags = $3, status = $4, notes = $5, value_estimate = $6, updated_at = NOW()`,
     [siteId, normalized, tags, status, notes, value_estimate]
   );
+  pushContact(siteId, normalized, options.origin);
 }
 
 // Aggiunge un tag all'array esistente senza duplicati — usata dal submit dei
 // form builder (newsletter_tag_key): un contatto può compilare lo stesso form
 // più volte, il tag non deve comparire due volte. Crea il contatto se manca
 // (stesso comportamento di upsertContact).
-export async function addContactTag(siteId, email, tag) {
+export async function addContactTag(siteId, email, tag, options = {}) {
   const normalized = String(email || "").trim().toLowerCase();
   const cleanTag = String(tag || "").trim().slice(0, 100);
   if (!cleanTag) return;
@@ -127,6 +141,7 @@ export async function addContactTag(siteId, email, tag) {
   import("./events.js").then(({ emitContactEvent }) =>
     emitContactEvent(siteId, normalized, "tag_added", { tag: cleanTag })
   ).catch(() => {});
+  pushContact(siteId, normalized, options.origin);
 }
 
 // Board del modulo pipeline vendite: TUTTI i contatti del sito (non solo
@@ -150,7 +165,7 @@ export async function getPipelineBoard(siteId) {
   return board;
 }
 
-export async function setContactStage(siteId, email, stage) {
+export async function setContactStage(siteId, email, stage, options = {}) {
   const normalized = String(email || "").trim().toLowerCase();
   await query(
     `INSERT INTO contacts (site_id, email, status) VALUES ($1, $2, $3)
@@ -161,6 +176,7 @@ export async function setContactStage(siteId, email, stage) {
   import("./events.js").then(({ emitContactEvent }) =>
     emitContactEvent(siteId, normalized, "stage_changed", { to_stage: stage })
   ).catch(() => {});
+  pushContact(siteId, normalized, options.origin);
 }
 
 export async function listTags(siteId) {

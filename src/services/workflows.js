@@ -194,6 +194,11 @@ async function executeAction(siteId, workflow, action, email, eventType, payload
 }
 
 // Esegue le azioni differite scadute (wait_days) — chiamato dal tick.
+// Claim ATOMICO: la SELECT ... FOR UPDATE SKIP LOCKED + UPDATE a 'running'
+// avviene in una singola UPDATE...FROM. Due esecutori concorrenti — il tick
+// dello scheduler (lock 72700123) e il tick esterno /api/agent/tick (lock
+// 72800123), oltre a run manuali — non possono prendersi la stessa riga:
+// niente azioni differite eseguite due volte (email/tag/campagna duplicati).
 export async function processDelayedActions(siteId = null, { limit = 200 } = {}) {
   const params = [];
   let where = "status = 'pending' AND run_at <= NOW()";
@@ -202,15 +207,22 @@ export async function processDelayedActions(siteId = null, { limit = 200 } = {})
     where += ` AND site_id = $${params.length}`;
   }
   params.push(Math.min(limit, 500));
-  const due = (await query(
-    `SELECT * FROM workflow_delayed_actions WHERE ${where} ORDER BY run_at LIMIT $${params.length}`,
+  const claimed = (await query(
+    `WITH due AS (
+       SELECT id FROM workflow_delayed_actions
+       WHERE ${where}
+       ORDER BY run_at LIMIT $${params.length}
+       FOR UPDATE SKIP LOCKED
+     )
+     UPDATE workflow_delayed_actions d SET status = 'running', executed_at = NOW()
+     FROM due WHERE d.id = due.id
+     RETURNING d.*`,
     params
   )).rows;
 
   let executed = 0;
-  for (const item of due) {
+  for (const item of claimed) {
     try {
-      await query("UPDATE workflow_delayed_actions SET status = 'running' WHERE id = $1", [item.id]);
       // Riexecute action_type/action_config come azione immediata.
       const fakeAction = { action_type: item.action_type, action_config: item.action_config };
       const workflow = { id: item.workflow_id };

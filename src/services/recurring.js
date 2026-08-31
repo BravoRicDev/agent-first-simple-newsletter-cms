@@ -1,5 +1,9 @@
-import { query } from "../db.js";
+import { query, getClient } from "../db.js";
 import { logger } from "./logger.js";
+
+// Chiave base del lock single-executor per checkFollowups
+// (base + siteId, con siteId=0 per il run globale).
+const FOLLOWUP_LOCK_KEY_BASE = 74900001;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Feature 27: Task ricorrenti + follow-up intelligente.
@@ -333,42 +337,68 @@ async function applyFollowupAction(rule, conv) {
 // Esegue tutte le regole follow-up attive. siteId opzionale: se omesso,
 // processa tutti i siti. Ritorna { checked, executed }.
 export async function checkFollowups(siteId = null) {
-  const params = [];
-  let where = "active = true";
-  if (siteId) {
-    params.push(parseInt(siteId, 10));
-    where += ` AND site_id = $${params.length}`;
-  }
-  const rules = (await query(`SELECT * FROM followup_rules WHERE ${where}`, params)).rows;
-
-  let checked = 0;
-  let executed = 0;
-  for (const rule of rules) {
-    checked++;
-    let conversations = [];
-    try {
-      conversations = await findEligibleConversations(rule);
-    } catch (err) {
-      logger.error(`Followup rule #${rule.id} (${rule.name}): scansione fallita: ${err.message}`);
-      continue;
+  // Lock single-executor su connessione dedicata: findEligible+apply NON è
+  // atomico, e le invocazioni concorrenti (endpoint agent + tick dello
+  // scheduler ogni 60s) potevano eseguire lo stesso follow-up due volte.
+  // Chi non prende il lock salta questo giro.
+  const lockKey = FOLLOWUP_LOCK_KEY_BASE + (parseInt(siteId, 10) || 0);
+  const lockClient = await getClient();
+  let locked = false;
+  try {
+    const lockRes = await lockClient.query("SELECT pg_try_advisory_lock($1) AS locked", [lockKey]);
+    if (!lockRes.rows[0].locked) {
+      lockClient.release();
+      lockClient = null;
+      return { checked: 0, executed: 0, skipped: true };
     }
-    for (const conv of conversations) {
+    locked = true;
+
+    const params = [];
+    let where = "active = true";
+    if (siteId) {
+      params.push(parseInt(siteId, 10));
+      where += ` AND site_id = $${params.length}`;
+    }
+    const rules = (await query(`SELECT * FROM followup_rules WHERE ${where}`, params)).rows;
+
+    let checked = 0;
+    let executed = 0;
+    for (const rule of rules) {
+      checked++;
+      let conversations = [];
       try {
-        await applyFollowupAction(rule, conv);
-        executed++;
+        conversations = await findEligibleConversations(rule);
       } catch (err) {
-        logger.error(`Followup rule #${rule.id} (${rule.name}) su conversazione #${conv.conversation_id}: ${err.message}`);
+        logger.error(`Followup rule #${rule.id} (${rule.name}): scansione fallita: ${err.message}`);
+        continue;
+      }
+      for (const conv of conversations) {
         try {
-          await query(
-            `INSERT INTO followup_runs (site_id, rule_id, conversation_id, email, action, status)
-             VALUES ($1, $2, $3, $4, $5, 'error')`,
-            [conv.site_id, rule.id, conv.conversation_id, conv.contact_email, rule.action_type]
-          );
-        } catch { /* log già emesso sopra */ }
+          await applyFollowupAction(rule, conv);
+          executed++;
+        } catch (err) {
+          logger.error(`Followup rule #${rule.id} (${rule.name}) su conversazione #${conv.conversation_id}: ${err.message}`);
+          try {
+            await query(
+              `INSERT INTO followup_runs (site_id, rule_id, conversation_id, email, action, status)
+               VALUES ($1, $2, $3, $4, $5, 'error')`,
+              [conv.site_id, rule.id, conv.conversation_id, conv.contact_email, rule.action_type]
+            );
+          } catch { /* log già emesso sopra */ }
+        }
       }
     }
+    return { checked, executed };
+  } finally {
+    if (locked && lockClient) {
+      try {
+        await lockClient.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+      } catch (err) {
+        logger.error(`followup-check: unlock fallito: ${err.message}`);
+      }
+      lockClient.release();
+    }
   }
-  return { checked, executed };
 }
 
 // ── Log esecuzioni ───────────────────────────────────────────────────────

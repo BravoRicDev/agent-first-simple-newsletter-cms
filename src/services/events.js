@@ -21,7 +21,7 @@ import { logger } from "./logger.js";
 
 const MAX_WORKFLOW_DEPTH = 3;
 
-export async function emitContactEvent(siteId, email, eventType, payload = {}, { depth = 0 } = {}) {
+export async function emitContactEvent(siteId, email, eventType, payload = {}, { depth = 0, origin = "cms" } = {}) {
   const normalized = String(email || "").trim().toLowerCase();
   if (!normalized || !siteId) return;
 
@@ -73,7 +73,7 @@ export async function emitContactEvent(siteId, email, eventType, payload = {}, {
     (async () => {
       try {
         const { enqueueForEvent } = await import("./webhooks.js");
-        await enqueueForEvent(siteId, eventType, payload || {});
+        await enqueueForEvent(siteId, eventType, payload || {}, { origin });
       } catch (err) {
         logger.error(`Webhook out enqueue fallito (site=${siteId}, ${eventType}): ${err.message}`);
       }

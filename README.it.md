@@ -21,6 +21,8 @@ CMS multi-tenant per la gestione di più siti web da un unico pannello di ammini
 - **Token API di lunga durata** (`/admin/api-tokens`) per integrazioni non interattive (n8n, altre automazioni), oltre al login OTP interattivo.
 - **Surface API per integrazioni esterne** (`/v1`): REST API multi-tenant che parla il "dialetto CRM diffuso". Tenant risolto dall'header `Location-Id` (id numerico del sito, dominio, o identificativo esterno della location), API key per-sito con Bearer (salvate come hash), endpoint per custom fields, pipeline, contatti, opportunità, preventivi, segmenti, workflow, prenotazioni, payment link, conversazioni, report, attività, email stats e import. Documentazione OpenAPI interattiva su `/v1/docs` (spec su `/v1/openapi.json`).
 - **App esterne via SSO**: le applicazioni satellite si autenticano con un token CMS verificato (`POST /api/agent/verify-token`) e consumano i dati CRM che gli servono tramite un'API in sola lettura (opportunità, pipeline, contatti, preventivi, agenda, clienti, verdetti chiamate).
+
+> **Sync bidirezionale con il CRM sorgente (opzionale)**: oltre all'import GHL→CMS (source-sync), il CMS può *spingere* le modifiche di contatti/opportunità di ritorno al CRM (GoHighLevel). Attivazione per-sito (`source_sync_config.push_enabled` + `pushDirection`, via agent API). Outbox cluster-safe (`source_push_queue`) con garanzia "single-fire": un solo nodo spara per finestra, mai durante un import in corso o con replica indietro, e le mutate originate da GHL non vengono mai rispedite (niente cascate di automazioni). Vedi [`docs/CLUSTER.it.md`](docs/CLUSTER.it.md) §8bis.
 - **Tracking & Analytics** (`/admin/settings/tracking`): Google Analytics 4, Google Tag Manager, Meta Pixel + Conversions API (lato server), Microsoft Clarity, verifica Search Console — con banner di consenso GDPR (Google Consent Mode v2) generato automaticamente appena configurato qualcosa.
 - **Trasparenza contenuti IA** (AI Act art. 50, opzionale): dicitura configurabile in footer per chi pubblica contenuti IA senza revisione editoriale umana su temi di interesse pubblico.
 
@@ -152,6 +154,12 @@ Le applicazioni esterne possono integrarsi con il CMS come "satelliti":
 Node.js (Express, ESM) + EJS + PostgreSQL, containerizzato con Docker. Autenticazione via magic link + OTP email (nessuna password).
 
 ## Architettura di deploy
+
+> **Setup multi-nodo/ridondante** ("server gemelli", Active/Active con replica
+> streaming PostgreSQL + Patroni e sincronizzazione file bidirezionale Syncthing)
+> documentato in [`docs/CLUSTER.it.md`](docs/CLUSTER.it.md) con il kit pronto
+> in [`infra/cluster/`](infra/cluster/). Il diagramma sotto mostra il layout
+> classico a nodo singolo.
 
 ```
                       ┌──────────────────────────────────┐

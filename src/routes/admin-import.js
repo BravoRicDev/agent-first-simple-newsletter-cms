@@ -2,6 +2,7 @@ import { Router } from "express";
 import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { encryptSecret } from "../services/crypto.js";
+import { assertPublicHttpUrl } from "../services/ssrf.js";
 import { loadConfig } from "../services/source-sync/client.js";
 import { runSync, isRunning } from "../services/source-sync/index.js";
 
@@ -13,23 +14,18 @@ import { runSync, isRunning } from "../services/source-sync/index.js";
 
 const router = Router();
 
-// Valida che base_url sia http(s) per prevenire SSRF (javascript:, ftp:, ecc).
-// Scelta: validazione al save time in admin-import (form HTML) e agent-source-sync
-// (API JSON) — così il client.js può essere minimal e fidato (base_url già validato).
-function validateBaseUrl(baseUrl) {
+// Valida che base_url sia http(s) e RAGGIUNGIBILE solo su IP pubblici: blocca
+// loopback/link-local/private/metadata (es. 169.254.169.254), prevenendo SSRF
+// verso la rete interna. Validazione al save time (form HTML e API agent) così
+// client.js resta minimal e fidato.
+async function validateBaseUrl(baseUrl) {
   const url = String(baseUrl || "").trim();
   if (!url) return { valid: false, error: "base_url richiesto" };
   try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return { valid: false, error: "base_url deve essere http(s)" };
-    }
-    if (!parsed.hostname) {
-      return { valid: false, error: "base_url hostname non valido" };
-    }
+    await assertPublicHttpUrl(url);
     return { valid: true };
   } catch (e) {
-    return { valid: false, error: "base_url malformato" };
+    return { valid: false, error: `base_url non pubblico/invalido: ${e.message}` };
   }
 }
 
@@ -100,7 +96,7 @@ router.post("/admin/import/config", requireAuth, async (req, res, next) => {
 
     // Valida base_url per SSRF
     if (b.base_url && b.base_url.trim().length > 0) {
-      const validation = validateBaseUrl(b.base_url);
+      const validation = await validateBaseUrl(b.base_url);
       if (!validation.valid) {
         return res.status(400).render("error", { message: `base_url: ${validation.error}` });
       }

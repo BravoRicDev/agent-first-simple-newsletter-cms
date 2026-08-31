@@ -4,6 +4,13 @@
   // Vuoto/"native" = comportamento attuale, zero regressioni sui siti che
   // non toccano questa chiave.
   const _consentProvider = (typeof consentProvider !== 'undefined' && consentProvider) || 'native';
+
+  // JSON sicuro dentro <script>: JSON.stringify NON scappa "</script>" e un
+  // valore configurabile (es. consentScriptUrl, leadEventName) contenente
+  // "</script><script>..." verrebbe eseguito su ogni pagina pubblica.
+  // Sostituire "<" con "\u003c" rende innocua qualunque chiusura di tag
+  // (fix XSS persistente tracking, cross-sito e static-export).
+  const _jsonScript = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 %>
 <% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && _consentProvider === 'native') { %>
 <div id="cms-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1f2937;color:#f3f4f6;padding:16px 20px;padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px));font-size:13px;z-index:9999;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
@@ -21,7 +28,7 @@
 <script>
 (function () {
   // trackPageview: override per-pagina (true/false/null). null = eredita da sito (default: traccia PageView su consenso marketing).
-  var TRACK_PAGEVIEW = <%- JSON.stringify(typeof trackPageview !== 'undefined' ? trackPageview : null) %>;
+  var TRACK_PAGEVIEW = <%- _jsonScript(typeof trackPageview !== 'undefined' ? trackPageview : null) %>;
   function getCookie(name) {
     var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
     return m ? decodeURIComponent(m[1]) : null;
@@ -121,14 +128,14 @@
   <% if (typeof consentLibCssUrl !== 'undefined' && consentLibCssUrl) { %>
   var l = document.createElement('link');
   l.rel = 'stylesheet';
-  l.href = <%- JSON.stringify(consentLibCssUrl) %>;
+  l.href = <%- _jsonScript(consentLibCssUrl) %>;
   document.head.appendChild(l);
   <% } %>
   var a = document.createElement('script');
-  a.src = <%- JSON.stringify(consentLibUrl) %>;
+  a.src = <%- _jsonScript(consentLibUrl) %>;
   a.onload = function () {
     var b = document.createElement('script');
-    b.src = <%- JSON.stringify(consentScriptUrl) %>;
+    b.src = <%- _jsonScript(consentScriptUrl) %>;
     document.head.appendChild(b);
   };
   // Fail-safe: se la lib esterna non carica, nessun banner viene mostrato e
@@ -153,9 +160,9 @@
      null/undefined = usa logica standard leadPages (default). -->
 <script>
 (function () {
-  var EVENT_NAME = <%- JSON.stringify(leadEventName) %>;
-  var PAGES = <%- JSON.stringify(leadPages.split(',').map(function (s) { return s.trim(); }).filter(Boolean)) %>;
-  var LEAD_OVERRIDE = <%- JSON.stringify(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
+  var EVENT_NAME = <%- _jsonScript(leadEventName) %>;
+  var PAGES = <%- _jsonScript(leadPages.split(',').map(function (s) { return s.trim(); }).filter(Boolean)) %>;
+  var LEAD_OVERRIDE = <%- _jsonScript(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
   var FLAG_KEY = 'cms_lead_fired_' + EVENT_NAME;
 
   function getCookie(name) {

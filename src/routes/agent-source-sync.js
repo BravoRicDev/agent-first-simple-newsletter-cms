@@ -1,5 +1,6 @@
 import { query } from "../db.js";
 import { encryptSecret } from "../services/crypto.js";
+import { assertPublicHttpUrl } from "../services/ssrf.js";
 import { runSync, isRunning } from "../services/source-sync/index.js";
 import { loadConfig } from "../services/source-sync/client.js";
 import { canAccessSite, requireAgent } from "./agent-helpers.js";
@@ -10,27 +11,27 @@ import { canAccessSite, requireAgent } from "./agent-helpers.js";
 // Docs: docs/SOURCE_SYNC_PLAN.md.
 // ─────────────────────────────────────────────────────────────────────────
 
-// Valida che base_url sia http(s) per prevenire SSRF (javascript:, ftp:, ecc).
-// Scelta: validazione al save time — così client.js è minimal.
-function validateBaseUrl(baseUrl) {
+// Valida che base_url sia http(s) e pubblico (blocca loopback/private/
+// link-local/metadata: previene SSRF verso la rete interna, incluso
+// 169.254.169.254 dei metadati cloud). La validazione avviene al save time
+// — cosí client.js resta minimal.
+async function validateBaseUrl(baseUrl) {
   const url = String(baseUrl || "").trim();
   if (!url) return { valid: false, error: "baseUrl richiesto" };
   try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return { valid: false, error: "baseUrl deve essere http(s)" };
-    }
-    if (!parsed.hostname) {
-      return { valid: false, error: "baseUrl hostname non valido" };
-    }
+    await assertPublicHttpUrl(url);
     return { valid: true };
   } catch (e) {
-    return { valid: false, error: "baseUrl malformato" };
+    return { valid: false, error: `baseUrl non pubblico/invalido: ${e.message}` };
   }
 }
 
 function maskConfig(row) {
   if (!row) return null;
+  let pushEvents = row.push_events;
+  if (typeof pushEvents === "string") {
+    try { pushEvents = JSON.parse(pushEvents); } catch { pushEvents = ["contact", "opportunity"]; }
+  }
   return {
     siteId: row.site_id,
     enabled: row.enabled,
@@ -46,6 +47,10 @@ function maskConfig(row) {
     minIntervalMinutes: row.min_interval_minutes,
     callsDate: row.calls_date,
     callsCount: row.calls_count,
+    // Push bidirezionale (CMS → CRM sorgente, opzionale per sito).
+    pushEnabled: !!row.push_enabled,
+    pushDirection: row.push_direction || "in",
+    pushEvents: Array.isArray(pushEvents) ? pushEvents : ["contact", "opportunity"],
   };
 }
 
@@ -72,7 +77,7 @@ export function registerSourceSyncRoutes(router) {
 
       // Valida base_url per SSRF
       if (b.baseUrl && b.baseUrl.trim().length > 0) {
-        const validation = validateBaseUrl(b.baseUrl);
+        const validation = await validateBaseUrl(b.baseUrl);
         if (!validation.valid) {
           return res.status(400).json({ error: `baseUrl: ${validation.error}` });
         }
@@ -89,11 +94,25 @@ export function registerSourceSyncRoutes(router) {
 
       const val = (k, d) => (b[k] !== undefined ? b[k] : current ? current[d ?? k] : d);
 
+      // Validate push fields (opzionali; default = solo import).
+      let pushEvents = ["contact", "opportunity"];
+      if (b.pushEvents !== undefined) {
+        if (Array.isArray(b.pushEvents) && b.pushEvents.every((e) => ["contact", "opportunity"].includes(String(e)))) {
+          pushEvents = b.pushEvents.map(String);
+        } else {
+          return res.status(400).json({ error: "pushEvents deve essere ['contact','opportunity'] o sottinsieme" });
+        }
+      }
+      const pushDirection = ["in", "out", "bidirectional"].includes(b.pushDirection)
+        ? b.pushDirection
+        : String(val("pushDirection") || "in");
+
       await query(
         `INSERT INTO source_sync_config
            (site_id, enabled, base_url, location_id, company_id, token_enc, match_by_email,
-            handle_deletes, throttle_rps, daily_quota, budget_percent, min_interval_minutes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            handle_deletes, throttle_rps, daily_quota, budget_percent, min_interval_minutes,
+            push_enabled, push_direction, push_events)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          ON CONFLICT (site_id) DO UPDATE SET
            enabled = EXCLUDED.enabled,
            base_url = EXCLUDED.base_url,
@@ -106,6 +125,9 @@ export function registerSourceSyncRoutes(router) {
            daily_quota = EXCLUDED.daily_quota,
            budget_percent = EXCLUDED.budget_percent,
            min_interval_minutes = EXCLUDED.min_interval_minutes,
+           push_enabled = EXCLUDED.push_enabled,
+           push_direction = EXCLUDED.push_direction,
+           push_events = EXCLUDED.push_events,
            updated_at = NOW()`,
         [
           siteId,
@@ -120,6 +142,9 @@ export function registerSourceSyncRoutes(router) {
           Math.max(1000, parseInt(val("dailyQuota"), 10) || 250000),
           Math.min(100, Math.max(1, parseInt(val("budgetPercent"), 10) || 30)),
           Math.max(1, parseInt(val("minIntervalMinutes"), 10) || 15),
+          b.pushEnabled !== undefined ? b.pushEnabled === true : val("pushEnabled") === true,
+          pushDirection,
+          JSON.stringify(pushEvents.slice(0, 10)),
         ]
       );
       const fresh = (
