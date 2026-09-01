@@ -107,21 +107,41 @@ pagina.
 
 ## AUTENTICAZIONE
 
+### Consigliato: token agente longevo (niente OTP)
+
+Il modo più semplice: l'utente genera un token dalla pagina web
+(`/admin/agent`, pulsante "Genera token agente"). Ha la forma `agtok_...`,
+viene mostrato una sola volta e dura 30–365 giorni (default 120).
+
+- Chiedi all'utente di aprire `/admin/agent` e generare un token per te.
+- Autentica OGNI chiamata con l'header: `Authorization: Bearer agtok_...`
+- Il token agisce con i permessi dell'utente che lo ha creato.
+- Alla scadenza l'utente ne genera uno nuovo — niente email, niente OTP.
+
+Verifica con GET /api/agent/me
+  Risposta attesa: { "user": { "role": "...", "site_id": ... } }
+  Se role è "admin" o "collaboratore", site_id è il tuo sito assegnato.
+  Se role è "superadmin", devi chiedere a quale sito lavorare e usare quell'id.
+
+### Fallback: magic link + OTP (due fattori)
+
+Solo se l'utente non vuole usare un token:
+
 Passo 1: POST /api/auth/login — body: { "email": "..." }
   Risposta attesa: { "sent": true }
   Se sent è false: l'email non esiste nel sistema, chiedi di verificarla.
 
-Passo 2: chiedi all'utente il codice OTP ricevuto via email (6 cifre).
+Passo 2: chiedi all'utente ENTRAMBI i valori ricevuti via email:
+  - il codice OTP a 6 cifre, e
+  - il TOKEN (il valore lungo dentro al link di accesso / mostrato sotto "TOKEN").
 
-Passo 3: POST /api/agent/verify-otp — body: { "email": "...", "otp": "..." }
+Passo 3: POST /api/agent/verify-otp — body: { "email": "...", "token": "...", "otp": "..." }
   Risposta attesa: { "token": "...", "user": { ... } }
   Salva il token. Usalo come header: Authorization: Bearer {token}
   Il token dura 7 giorni. Dopo la scadenza ripeti il flusso dall'inizio.
 
 Passo 4: verifica identità con GET /api/agent/me
   Risposta attesa: { "user": { "role": "...", "site_id": ... }, "token_expires_at": "..." }
-  Se role è "admin" o "collaboratore", site_id è il tuo sito assegnato.
-  Se role è "superadmin", devi chiedere a quale sito lavorare e usare quell'id.
 
 ## TROVARE IL SITO E LE PAGINE
 

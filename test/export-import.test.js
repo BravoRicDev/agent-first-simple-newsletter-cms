@@ -80,7 +80,7 @@ describe("crm: export/import completo", () => {
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type"), /text\/csv/);
     const csv = await res.text();
-    const header = "email,name,tags,status,notes,value_estimate,score,utm_source,utm_medium,utm_campaign,created_at";
+    const header = "email,name,tags,status,notes,value_estimate,score,utm_source,utm_medium,utm_campaign,utm_term,utm_content,created_at";
     assert.ok(csv.startsWith(header), "header CSV esatto");
     const lines = csv.split("\r\n");
     assert.ok(lines.some(l => l.startsWith(`${csvEmail},`)), "riga contatto nel CSV");

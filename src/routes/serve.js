@@ -13,6 +13,7 @@ import {
   injectSeoIntoStandalone,
 } from "../services/seo.js";
 import { getCanonicalBaseUrl } from "../services/urls.js";
+import { createApiToken, listApiTokens, revokeApiToken } from "../services/api-tokens.js";
 import config from "../config.js";
 
 const router = Router();
@@ -104,7 +105,43 @@ router.get("/admin/agent", requireAuth, async (req, res, next) => {
        LEFT JOIN users u ON u.id = il.user_id
        ORDER BY il.created_at DESC LIMIT 20`
     )).rows;
-    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog });
+    const tokens = await listApiTokens(req.user.sub);
+    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog, tokens, newToken: null });
+  } catch (err) { next(err); }
+});
+
+// Genera un token API per l'AGENTE direttamente da questa pagina: il token
+// (agtok_...) viene mostrato UNA SOLA VOLTA (come /admin/api-tokens) e l'agente
+// lo usa come "Authorization: Bearer agtok_...". Nessun OTP, nessuna email.
+// Il token agisce con i permessi dell'utente che lo crea.
+const AGENT_TOKEN_DAYS = new Set([30, 60, 90, 120, 180, 365]);
+
+router.post("/admin/agent/token", requireAuth, async (req, res, next) => {
+  if (req.user.role !== "superadmin") return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
+  try {
+    const name = String(req.body.name || "").trim().slice(0, 255) || "Agente AI";
+    const days = AGENT_TOKEN_DAYS.has(parseInt(req.body.expires_days, 10)) ? parseInt(req.body.expires_days, 10) : 120;
+    const created = await createApiToken(req.user.sub, name, days);
+    const tokens = await listApiTokens(req.user.sub);
+    const ingestLog = (await query(
+      `SELECT il.source_url, il.result_type, il.title, il.word_count, il.created_at,
+              s.name AS site_name, u.email AS user_email
+       FROM ingest_log il
+       LEFT JOIN sites s ON s.id = il.site_id
+       LEFT JOIN users u ON u.id = il.user_id
+       ORDER BY il.created_at DESC LIMIT 20`
+    )).rows;
+    // Il token in chiaro è disponibile SOLO in questa risposta (stesso modello
+    // di /admin/api-tokens): dopo il reload non sarà più recuperabile.
+    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog, tokens, newToken: created });
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/agent/token/:id/revoke", requireAuth, async (req, res, next) => {
+  if (req.user.role !== "superadmin") return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
+  try {
+    await revokeApiToken(req.user.sub, req.params.id);
+    res.redirect("/admin/agent");
   } catch (err) { next(err); }
 });
 

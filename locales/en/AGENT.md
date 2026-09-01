@@ -106,21 +106,41 @@ submission → silently discarded). Nothing else is needed on the page side.
 
 ## AUTHENTICATION
 
+### Preferred: long-lived agent token (no OTP)
+
+The simplest way is a token the human creates from the web UI
+(`/admin/agent`, button "Generate agent token"). It looks like
+`agtok_...`, is shown only once, and works for 30–365 days (default 120).
+
+- Ask the user to open `/admin/agent` and generate a token for you.
+- Authenticate EVERY call with the header: `Authorization: Bearer agtok_...`
+- The token acts with the privileges of the user who created it.
+- When it expires, the user generates a new one — no email, no OTP.
+
+Verify with GET /api/agent/me
+  Expected response: { "user": { "role": "...", "site_id": ... } }
+  If role is "admin" or "collaboratore", site_id is your assigned site.
+  If role is "superadmin", you must ask which site to work on and use that id.
+
+### Fallback: magic link + OTP (two factors)
+
+Only if the user does not want to use a token:
+
 Step 1: POST /api/auth/login — body: { "email": "..." }
   Expected response: { "sent": true }
   If sent is false: the email doesn't exist in the system, ask to verify it.
 
-Step 2: ask the user for the OTP code received by email (6 digits).
+Step 2: ask the user for BOTH values received by email:
+  - the 6-digit OTP code, and
+  - the TOKEN (the long value inside the access link / shown under "TOKEN").
 
-Step 3: POST /api/agent/verify-otp — body: { "email": "...", "otp": "..." }
+Step 3: POST /api/agent/verify-otp — body: { "email": "...", "token": "...", "otp": "..." }
   Expected response: { "token": "...", "user": { ... } }
   Save the token. Use it as header: Authorization: Bearer {token}
   The token lasts 7 days. After expiry, repeat the flow from the start.
 
 Step 4: verify identity with GET /api/agent/me
   Expected response: { "user": { "role": "...", "site_id": ... }, "token_expires_at": "..." }
-  If role is "admin" or "collaboratore", site_id is your assigned site.
-  If role is "superadmin", you must ask which site to work on and use that id.
 
 ## FINDING THE SITE AND PAGES
 

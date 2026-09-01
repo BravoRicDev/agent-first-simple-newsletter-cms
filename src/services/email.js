@@ -88,6 +88,8 @@ export async function sendMagicLink(email, token, otp) {
 <p>${t("email.magicLink.orClickLink")}</p>
 <a href="${link}" style="display:inline-block;padding:12px 24px;background:#4f46e5;color:white;text-decoration:none;border-radius:6px;margin:8px 0;">${t("email.magicLink.accessButton")}</a>
 <p style="color:#666;font-size:12px;margin-top:24px;">${t("email.magicLink.footer")}</p>
+<p style="color:#666;font-size:12px;margin-top:8px;">Per i client CLI/agente: oltre al codice OTP servono TUTTI E DUE i valori qui sotto (il token è quello dentro il link):</p>
+<div style="font-family:monospace;font-size:12px;background:#fafafa;border:1px solid #eee;border-radius:6px;padding:10px 14px;word-break:break-all;">CODICE OTP: ${otp}<br>TOKEN: ${token}</div>
 </body></html>`;
   const info = await getTransporter().sendMail({
     from: emailFrom,

@@ -11,13 +11,96 @@
   </div>
 </div>
 
+<%
+  const agentToken = typeof newToken !== 'undefined' && newToken ? newToken.token : null;
+  const tokenName = typeof newToken !== 'undefined' && newToken ? (newToken.name || 'Agente AI') : null;
+  const tokenExpires = typeof newToken !== 'undefined' && newToken && newToken.expiresAt ? new Date(newToken.expiresAt).toLocaleDateString('it-IT') : null;
+%>
+
+<!-- Token agente (modo semplice) -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);border:2px solid #059669;">
+  <h3 style="font-size:15px;margin-bottom:10px;color:#065f46;">🔑 Token agente — il modo più semplice (consigliato)</h3>
+  <% if (agentToken) { %>
+    <p style="font-size:13px;color:#666;margin-bottom:10px;">
+      Token generato per <strong><%= tokenName %></strong> (scade il <%= tokenExpires %>).
+      <strong style="color:#b91c1c;">Viene mostrato UNA SOLA VOLTA: copialo ora</strong>, poi dallo all'agente.
+      Con questo token <strong>non serve alcun OTP</strong>.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+      <code id="agentTokenDisplay" style="flex:1;padding:12px 14px;background:#f5f5f5;border-radius:6px;font-size:14px;border:1px solid #ddd;word-break:break-all;"><%= agentToken %></code>
+      <button class="btn" style="background:#059669;" onclick="copyText('<%= agentToken.replace(/'/g, "\\'") %>')">📋 Copia token</button>
+    </div>
+    <p style="font-size:13px;color:#666;">
+      L'agente userà l'header: <code>Authorization: Bearer &lt;token&gt;</code> su tutte le chiamate.
+    </p>
+  <% } else { %>
+    <p style="font-size:13px;color:#666;margin-bottom:12px;">
+      Genera un token (della forma <code>agtok_…</code>) da dare all'agente: si autenticherà con
+      <code>Authorization: Bearer &lt;token&gt;</code>, senza email né OTP.
+      Il token vale come <strong>permessi dell'utente che lo crea</strong> (superadmin = accesso completo).
+    </p>
+    <form method="POST" action="/admin/agent/token" style="margin-bottom:6px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" name="name" placeholder="Nome (es. Agente Claude Code)" value="Agente AI" style="flex:1;min-width:220px;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+        <select name="expires_days" style="padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+          <option value="30">30 giorni</option>
+          <option value="60">60 giorni</option>
+          <option value="90">90 giorni</option>
+          <option value="120" selected>120 giorni</option>
+          <option value="180">180 giorni</option>
+          <option value="365">365 giorni</option>
+        </select>
+        <button class="btn" style="background:#059669;">🔄 Genera token agente</button>
+      </div>
+    </form>
+  <% } %>
+
+  <% if (typeof tokens !== 'undefined' && tokens && tokens.length > 0) { %>
+    <details style="margin-top:12px;">
+      <summary style="cursor:pointer;color:#4f46e5;font-size:13px;">Gestisci token esistenti (<%= tokens.length %>)</summary>
+      <table style="margin-top:8px;font-size:13px;">
+        <thead><tr><th>Nome</th><th>Token</th><th>Scade</th><th>Ultimo uso</th><th></th></tr></thead>
+        <tbody>
+          <% tokens.forEach(tk => { %>
+          <tr>
+            <td><%= tk.name %></td>
+            <td><code><%= tk.token_prefix %></code></td>
+            <td><%= tk.expires_at ? new Date(tk.expires_at).toLocaleDateString('it-IT') : '—' %></td>
+            <td><%= tk.last_used_at ? new Date(tk.last_used_at).toLocaleString('it-IT') : 'mai' %></td>
+            <td>
+              <% if (!tk.revoked_at) { %>
+                <form method="POST" action="/admin/agent/token/<%= tk.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revocare questo token? L\'agente non potrà più usarlo.');">
+                  <button class="btn btn-sm" style="background:#dc2626;">Revoca</button>
+                </form>
+              <% } else { %>
+                <span style="color:#999;">↩ revocato</span>
+              <% } %>
+            </td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </details>
+  <% } %>
+</div>
+
 <!-- Istruzioni per l'agente -->
 <div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
   <h3 style="font-size:15px;margin-bottom:10px;">🤖 Istruzioni da dare all'agente</h3>
   <p style="font-size:13px;color:#666;margin-bottom:10px;">Copia questo blocco e dallo all'agente AI all'inizio della conversazione. L'agente ti guiderà passo passo.</p>
   <div style="background:#f5f5f5;border-radius:6px;padding:14px;border:1px solid #ddd;font-size:13px;line-height:1.6;white-space:pre-wrap;font-family:monospace;margin-bottom:10px;" id="agentInstructionsBlock">
 Sei un assistente AI che gestisce il CMS <%= app.name %> dell'utente.
-URL base: <%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %>
+URL base: <%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %><% if (agentToken) { %>
+TOKEN AGENTE: <%= agentToken %>
+<% } %>
+
+AUTENTICAZIONE (modo semplice, consigliato):
+- Niente email né OTP: usa SEMPRE l'header
+    Authorization: Bearer &lt;TOKEN AGENTE&gt;
+- <% if (agentToken) { %>Il token sopra è da usare su ogni chiamata.<% } else { %>Chiedi all'utente il "token agente" (agtok_...) generato dalla pagina
+  /admin/agent e usalo come header Authorization: Bearer &lt;token&gt;.<% } %>
+- Quando il token scade (max 365 giorni), l'utente ne genera uno nuovo
+  dalla stessa pagina /admin/agent.
 
 REGOLA 1: Prima di ogni modifica a una pagina o snippet, chiama sempre
 GET {url}/api/agent/sites/{siteId}/pages/{pageId}/versions
@@ -34,14 +117,14 @@ REGOLA 3: Se trovi URL esterni nella pagina, chiama extract-assets.
    NON scaricare file in locale e caricarli manualmente — usa sempre l'API.
    Se trovi base64 inline, usa inline-to-files.
 
-Per autenticarti, segui il flusso interattivo:
-
-1. Chiedi all'utente: "Qual è la tua email?"
-2. Chiama POST /api/auth/login con { "email": "..." } per inviare il codice OTP
-3. Chiedi all'utente: "Qual è il codice OTP che hai ricevuto via email?"
-4. Chiama POST /api/agent/verify-otp con { "email": "...", "otp": "..." }
-5. La risposta contiene "token" e "user". Salva il token.
-6. Usa il token come header "Authorization: Bearer &lt;token&gt;" per tutte le chiamate successive.
+[FALLBACK — SOLO se non vuoi usare il token agente]
+Flusso OTP a due fattori (email + codice):
+1. POST /api/auth/login con { "email": "..." } per inviare la magic-link.
+2. Nell'email trovi: un CODICE OTP a 6 cifre e un link "Accedi".
+   Il link contiene il TOKEN (96 caratteri, dentro l'URL).
+3. Chiedi all'utente di fornirti TUTTI E DUE: il codice OTP e il token.
+4. Chiama POST /api/agent/verify-otp con { "email": "...", "token": "...", "otp": "..." }
+5. La risposta contiene "token": usalo come Authorization: Bearer &lt;token&gt;.
 
 Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
   <button class="btn" onclick="copyInstructions()">📋 Copia istruzioni per l'agente</button>
@@ -55,11 +138,10 @@ Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
       <tr><th style="width:50%;">🤖 L'agente fa questo</th><th style="width:50%;">🧑 Tu fai questo</th></tr>
     </thead>
     <tbody>
-      <tr><td>Ti chiede: "Qual è la tua email?"</td><td>Rispondi con la tua email</td></tr>
-      <tr><td>Chiama <code>/api/auth/login</code> per inviarti l'OTP</td><td>Controlli la posta, ricevi il codice</td></tr>
-      <tr><td>Ti chiede: "Qual è il codice OTP?"</td><td>Leggi l'email e dici il codice</td></tr>
-      <tr><td>Chiama <code>/api/agent/verify-otp</code> e ottiene il token</td><td>✅ Fatto, non devi fare altro</td></tr>
+      <tr><td>1. 🔑 Genera il token agente dal riquadro verde qui sopra</td><td>Copi il token (visto una sola volta) e lo dai all'agente</td></tr>
+      <tr><td>2. 🔐 Si autentica con <code>Authorization: Bearer agtok_…</code></td><td>✅ Fatto — nessun OTP, nessuna email da leggere</td></tr>
       <tr><td style="color:#166534;font-weight:600;">Usa le API per leggere/modificare pagine e snippet</td><td>Controlla il risultato sul sito</td></tr>
+      <tr><td colspan="2" style="font-size:12px;color:#666;">Alternativa senza token: flusso OTP in due fattori (codice OTP + token dal link dell'email) — vedi le istruzioni.</td></tr>
     </tbody>
   </table>
 </div>
@@ -102,8 +184,8 @@ Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
       <tr><td><code>/api/agent/sites/:id/settings/:key</code></td><td>PUT</td><td>Aggiorna impostazione (anche homepage_path)</td></tr>
       <tr><td><code>/api/agent/sites/:id/audit-log</code></td><td>GET</td><td>Registro attività (filtrabile per entity_type)</td></tr>
       <tr><td><code>/api/agent/sites/:id/stats</code></td><td>GET</td><td>Riepilogo di pagine, snippet e media</td></tr>
-      <tr><td><code>/api/auth/login</code></td><td>POST</td><td>Invia OTP via email (usato per login interattivo)</td></tr>
-      <tr><td><code>/api/agent/verify-otp</code></td><td>POST</td><td>Verifica email+OTP, restituisce il token (usato per login interattivo)</td></tr>
+      <tr><td><code>/api/auth/login</code></td><td>POST</td><td>Invia la magic-link via email (codice OTP + link col token — login interattivo di fallback)</td></tr>
+      <tr><td><code>/api/agent/verify-otp</code></td><td>POST</td><td>Verifica email + token + OTP, restituisce il JWT (solo flusso di fallback)</td></tr>
     </tbody>
   </table>
 </div>
