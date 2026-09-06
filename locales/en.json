@@ -162,6 +162,7 @@
   "api.auth.tooManyVerifyAttempts": "Too many verification attempts. Try again in 15 minutes.",
   "api.common.tooManyRequests": "Too many requests. Slow down.",
   "api.common.tooManyAttemptsPerMinute": "Too many attempts. Try again in a minute.",
+  "api.common.tooManyRequestsPerToken": "Too many requests per agent token. Slow down.",
   "api.pages.rewriteTooManyRequests": "Too many rewrite requests. Try again in a few minutes.",
   "api.common.internalError": "Internal error",
   "api.users.invalidRole": "Role not allowed",

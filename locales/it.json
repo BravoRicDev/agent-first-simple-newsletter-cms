@@ -162,6 +162,7 @@
   "api.auth.tooManyVerifyAttempts": "Troppi tentativi di verifica. Riprova tra 15 minuti.",
   "api.common.tooManyRequests": "Troppe richieste. Rallenta.",
   "api.common.tooManyAttemptsPerMinute": "Troppi tentativi. Riprova tra un minuto.",
+  "api.common.tooManyRequestsPerToken": "Troppi richieste per token agente. Rallenta.",
   "api.pages.rewriteTooManyRequests": "Troppe richieste di riscrittura. Riprova tra qualche minuto.",
   "api.common.internalError": "Errore interno",
   "api.users.invalidRole": "Ruolo non consentito",

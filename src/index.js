@@ -117,6 +117,23 @@ const agentLimiter = rateLimit({
   message: (req, res) => ({ error: res.locals.t("api.common.tooManyRequests") }),
 });
 
+const agentPerTokenLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Limite per token agente: usa l'header Authorization come chiave univoca
+  // per evitare che un agente (o un utente compromesso) possa generare troppe
+  // richieste. Il token viene estratto da Authorization: Bearer agtok_...
+  keyGenerator: (req) => {
+    const auth = req.headers.authorization || "";
+    // Estrai solo il prefisso del token (es. agtok_...) per la cache
+    const match = auth.match(/^Bearer\s+([a-zA-Z0-9_-]+)/);
+    return match ? match[1] : req.ip || "unknown";
+  },
+  message: (req, res) => ({ error: res.locals.t("api.common.tooManyRequestsPerToken") }),
+});
+
 const previewLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -193,10 +210,14 @@ async function start() {
     next();
   });
 
-  app.use((req, _res, next) => {
-    const token = req.cookies?.token;
-    if (token) {
-      try { req.user = jwt.verify(token, config.jwtSecret, { algorithms: ["HS256"] }); } catch { req.user = null; }
+  // Caching middleware: add Cache-Control for GET responses
+  // per endpoint agent già gestite individualmente
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (req.path.startsWith("/api/agent")) return next();
+    // Aggiungi Cache-Control solo se non ci sono già header di caching
+    if (!res.get("Cache-Control")) {
+      res.set("Cache-Control", "private, max-age=30");
     }
     next();
   });
@@ -256,6 +277,7 @@ async function start() {
   app.use("/api/agent/verify-otp", verifyLimiter, verifyAccountLimiter);
 
   app.use("/api/agent", agentLimiter);
+  app.use("/api/agent", agentPerTokenLimiter);
   app.use("/api/mcp", agentLimiter);
   app.use(authRoutes);
   app.use(i18nRoutes);

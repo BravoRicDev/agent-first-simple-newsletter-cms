@@ -219,6 +219,83 @@ router.get("/api/agent/me", requireAuth, requireAgent, async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
+// ── Capability Discovery ────────────────────────────────────────────────────
+// Endpoint per scoprire dinamicamente le capacità dell'agente
+router.get("/api/agent/capabilities", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user.role === "superadmin";
+    res.json({
+      version: "1.0",
+      endpoints: {
+        // Me
+        me: "GET /api/agent/me",
+        // Sites
+        sites_list: "GET /api/agent/sites",
+        // Pages
+        pages_list: "GET /api/agent/sites/{siteId}/pages",
+        pages_search: "GET /api/agent/sites/{siteId}/pages/search?q=",
+        pages_scheduled: "GET /api/agent/sites/{siteId}/pages/scheduled",
+        pages_cross_search: "POST /api/agent/pages/search",
+        pages_create: "POST /api/agent/sites/{siteId}/pages",
+        pages_get: "GET /api/agent/sites/{siteId}/pages/{pageId}",
+        pages_update: "PUT /api/agent/sites/{siteId}/pages/{pageId}",
+        pages_publish_toggle: "POST /api/agent/sites/{siteId}/pages/{pageId}/publish-toggle",
+        pages_bulk_publish: "POST /api/agent/sites/{siteId}/pages/bulk-publish",
+        pages_duplicate: "POST /api/agent/sites/{siteId}/pages/{pageId}/duplicate",
+        pages_bulk_duplicate: "POST /api/agent/sites/{siteId}/pages/bulk-duplicate",
+        pages_rename_url: "POST /api/agent/sites/{siteId}/pages/{pageId}/rename-url",
+        pages_find_replace: "POST /api/agent/sites/{siteId}/pages/{pageId}/find-replace",
+        pages_bulk_find_replace: "POST /api/agent/sites/{siteId}/pages/bulk-find-replace",
+        pages_versions: "GET /api/agent/sites/{siteId}/pages/{pageId}/versions",
+        pages_version_restore: "POST /api/agent/sites/{siteId}/pages/{pageId}/versions/{versionId}/restore",
+        pages_snippet_usage: "GET /api/agent/sites/{siteId}/pages/{pageId}/snippet-usage",
+        pages_rendered: "GET /api/agent/sites/{siteId}/pages/{pageId}/rendered",
+        pages_diff: "GET /api/agent/sites/{siteId}/pages/{pageId}/diff/{versionId}",
+        pages_summary: "GET /api/agent/sites/{siteId}/pages/{pageId}/summary",
+        pages_seo_get: "GET /api/agent/sites/{siteId}/pages/{pageId}/seo",
+        pages_seo_put: "PUT /api/agent/sites/{siteId}/pages/{pageId}/seo",
+        // Snippets
+        snippets_list: "GET /api/agent/sites/{siteId}/snippets",
+        snippets_get: "GET /api/agent/sites/{siteId}/snippets/{snippetId}",
+        snippets_create: "POST /api/agent/sites/{siteId}/snippets",
+        snippets_update: "PUT /api/agent/sites/{siteId}/snippets/{snippetId}",
+        snippets_find_replace: "POST /api/agent/sites/{siteId}/snippets/{snippetId}/find-replace",
+        // Media
+        media_list: "GET /api/agent/sites/{siteId}/media",
+        media_upload: "POST /api/agent/sites/{siteId}/media/upload",
+        media_fetch_url: "POST /api/agent/sites/{siteId}/media/fetch-url",
+        media_delete: "DELETE /api/agent/sites/{siteId}/media/{filename}",
+        // Settings
+        settings_get: "GET /api/agent/sites/{siteId}/settings",
+        settings_put: "PUT /api/agent/sites/{siteId}/settings/{key}",
+        // Audit & Stats
+        audit_log: "GET /api/agent/sites/{siteId}/audit-log",
+        stats: "GET /api/agent/sites/{siteId}/stats",
+        // Ingest & Guide
+        ingest: "POST /api/agent/ingest",
+        guide: "GET /api/agent/guide",
+        // Capabilities (this endpoint)
+        capabilities: "GET /api/agent/capabilities",
+        // Validate path
+        validate_path: "GET /api/agent/sites/{siteId}/validate-path?url_path=",
+      },
+      features: {
+        pagination: { default_limit: 50, max_limit: 200 },
+        idempotency: { header: "Idempotency-Key", ttl_hours: 24 },
+        request_id: { header: "X-Request-Id" },
+        rate_limits: { per_ip: 120, per_token: 60, window_minutes: 1 },
+        error_format: "structured",
+        diff_formats: ["unified", "json"],
+      },
+      auth: {
+        token_formats: ["agtok_... (agent token)", "JWT (session cookie)"],
+        recommended: "agtok_... via Authorization: Bearer header",
+      },
+      deprecation: {},
+    });
+  } catch (err) { next(err); }
+});
+
 // ── Siti ───────────────────────────────────────────────────────────────────
 
 router.get("/api/agent/sites", requireAuth, requireAgent, async (req, res, next) => {
@@ -2049,6 +2126,59 @@ router.post("/api/agent/sites/:siteId/snippets/:snippetId/find-replace", require
 
     res.json({ matches, message: res.locals.t("api.snippets.replacedOccurrences", { n: matches, name: snippet.name }) });
     exportPublishedPages({ siteId }).catch(() => {});
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    next(err);
+  }
+});
+
+// ── Bulk Snippet Operations ────────────────────────────────────────────────
+
+const bulkSnippetSchema = z.object({
+  names: z.array(z.object({
+    snippet_id: z.number().int().positive(),
+    new_name: z.string().min(1),
+  })).min(1).max(50),
+});
+
+router.post("/api/agent/sites/:siteId/snippets/bulk-rename", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+
+    const { names } = bulkSnippetSchema.parse(req.body);
+    const updated = [];
+    const errors = [];
+
+    for (const item of names) {
+      try {
+        const snippet = (await query(
+          "SELECT * FROM snippets WHERE id = $1 AND site_id = $2",
+          [item.snippet_id, siteId]
+        )).rows[0];
+        if (!snippet) { errors.push({ snippet_id: item.snippet_id, error: res.locals.t("api.snippets.notFound") }); continue; }
+
+        const result = await query(
+          "UPDATE snippets SET name = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+          [item.new_name, item.snippet_id]
+        );
+        updated.push({ snippet_id: item.snippet_id, new_snippet: result.rows[0] });
+      } catch (e) {
+        errors.push({ snippet_id: item.snippet_id, error: res.locals.t("api.common.internalError") });
+      }
+    }
+
+    if (updated.length > 0) {
+      await auditLog({
+        userId: req.user.sub, siteId,
+        entityType: "snippet", entityId: null,
+        action: "bulk-rename",
+        newData: { updated: updated.map(u => ({ id: u.snippet_id, name: u.new_snippet.name })) },
+        ipAddress: req.ip,
+      });
+    }
+
+    res.json({ updated, errors });
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
     next(err);

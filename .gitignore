@@ -37,6 +37,9 @@ __pycache__/
 # Config locale Claude
 .claude/settings.local.json
 
+# Stato persistente del plugin opencode-goal-plugin (obiettivi/sessioni)
+.opencode/goals/
+
 # Log/OS
 *.log
 .DS_Store
