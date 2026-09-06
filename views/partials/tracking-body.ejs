@@ -102,6 +102,9 @@
         setCookie('consent_marketing', '1', 365);
         applyConsent(true, true);
         banner.style.display = 'none';
+        // Risolviamo il flag di revoca così il banner può riapparire
+        // se l'utente revoca in futuro (dare una seconda chance).
+        if (window.localStorage) window.localStorage.removeItem('cms-banner-revoked-at');
       });
       document.getElementById('cms-consent-reject').addEventListener('click', function () {
         setCookie('consent_analytics', '0', 365);
@@ -123,7 +126,9 @@
   var storedAnalytics = getCookie('consent_analytics');
   var storedMarketing = getCookie('consent_marketing');
   if (storedAnalytics !== null || storedMarketing !== null) {
+    // Ri-applichiamo il consenso (sia grant che revoke)
     applyConsent(storedAnalytics === '1', storedMarketing === '1');
+
     // fbq può essere caricato da uno script ESTERNO (provider external) che
     // arriva DOPO questo script: finché fbq non esiste il grant non parte.
     // Polling breve: appena fbq è disponibile, ri-applichiamo (idempotente,
@@ -139,6 +144,28 @@
           clearInterval(_fbqTimer);
         }
       }, 100);
+    }
+
+    // Se l'utente ha dato un esplicito consenso marketing revocato (0),
+    // mostriamo di nuovo il banner per dargli una seconda chance.
+    // Throttle: mostriamo solo una volta per sessione, dopo un breve delay.
+    if (_consentProvider === 'native' && storedMarketing === '0') {
+      var key = 'cms-banner-revoked-at';
+      var now = Date.now();
+      var lastShown = window.localStorage && window.localStorage.getItem(key);
+      // Mostra se non l'abbiamo già mostrato in questa sessione (dopo ~2s dal load)
+      if (!lastShown && now > 2000) {
+        var delayedShow = setTimeout(function () {
+          // Idempotente: assicuriamoci che il banner non sia già visibile
+          // e che l'utente non abbia già accettato (storedMarketing potrebbe
+          // essere cambiato nel frattempo se l'accettazione è su un'altra tab).
+          var currentMarketing = getCookie('consent_marketing');
+          if (currentMarketing === '0' && banner && banner.style.display !== 'flex') {
+            banner.style.display = 'flex';
+            if (window.localStorage) window.localStorage.setItem(key, String(now));
+          }
+        }, 2000);
+      }
     }
   } else if (<%- _jsonScript(_consentProvider) %> === 'native') {
     // Modalità NATIVE senza consenso salvato → mostra il banner CMS.
