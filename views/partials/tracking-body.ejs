@@ -208,14 +208,31 @@
     if (LEAD_OVERRIDE === false) return false;
     return matchesPage();
   }
-  function fireOnce() {
+   function fireOnce() {
     if (!shouldFireLead()) return;
-    try { if (sessionStorage.getItem(FLAG_KEY)) return; } catch (e) {}
+    
+    // Check if already fired
+    let alreadyFired = false;
+    try {
+      alreadyFired = !!sessionStorage.getItem(FLAG_KEY);
+    } catch (e) {}
+    if (alreadyFired) return;
+    
     if (getCookie('consent_marketing') !== '1') return;
     if (!(window.fbq && typeof window.fbq === 'function')) return;
-    try { sessionStorage.setItem(FLAG_KEY, '1'); } catch (e) {}
+    
+    // Mark as fired
+    try {
+      sessionStorage.setItem(FLAG_KEY, '1');
+    } catch (e) {}
+    
+    // Fire the event
     fbq('track', EVENT_NAME);
-    try { console.log('[Lead] ✓', EVENT_NAME, '→', location.pathname); } catch (e) {}
+    
+    // Log for debugging
+    try {
+      console.log('[Lead] ✓', EVENT_NAME, '→', location.pathname);
+    } catch (e) {}
   }
   // Visitatore di ritorno con consenso già presente, o provider esterno che
   // ha già scritto il cookie prima che questo script giri.
