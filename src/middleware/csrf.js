@@ -17,7 +17,6 @@ export function csrfProtection(req, res, next) {
   if (req.headers.authorization && !req.cookies?.token) return next();
   if (!req.cookies?.token) return next();
 
-  const host = req.get("host");
   const sourceHeader = req.headers.origin || req.headers.referer;
   if (!sourceHeader) {
     // Richiesta state-changing autenticata via cookie senza alcun header di
@@ -36,7 +35,19 @@ export function csrfProtection(req, res, next) {
     sourceHost = null;
   }
 
-  if (sourceHost !== host) {
+  // Usa il baseUrl validato già calcolato dal middleware principale (caduta
+  // back a magicLinkBaseUrl se Host header non valido), invece di confrontare
+  // solo il hostname grezzo che può non corrispondere (es. dietro reverse
+  // proxy, www vs non-www, porta 443 inclusa).
+  const validOriginUrl = res.locals.baseUrl;
+  let validOriginHost;
+  try {
+    validOriginHost = new URL(validOriginUrl).host;
+  } catch {
+    validOriginHost = null;
+  }
+
+  if (sourceHost !== validOriginHost) {
     const message = res.locals.t("api.csrf.invalidOrigin");
     if (req.path.startsWith("/api")) return res.status(403).json({ error: message });
     return res.status(403).render("error", { message });
