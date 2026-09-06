@@ -2626,6 +2626,13 @@ router.put("/api/agent/sites/:siteId/tracking", requireAuth, requireAgent, async
       "ga4Id", "gtmId", "metaPixelId", "metaCapiToken", "metaCapiTestCode", "clarityId", "searchConsoleVerification",
       "consentBannerText", "consentAcceptLabel", "consentRejectLabel", "consentPrivacyUrl",
       "consentProvider", "consentLibUrl", "consentLibCssUrl", "consentScriptUrl",
+      "consentTitle", "consentDescription", "consentPreferencesTitle",
+      "consentAcceptAllLabel", "consentRejectLabelLib", "consentPreferencesLabel",
+      "consentSaveLabel", "consentCloseLabel",
+      "consentNecessaryTitle", "consentNecessaryDesc",
+      "consentAnalyticsTitle", "consentAnalyticsDesc",
+      "consentMarketingTitle", "consentMarketingDesc",
+      "consentPosition", "consentLanguage", "consentRevision",
       "leadEventName", "leadPages",
     ]) {
       if (f in req.body) fields[f] = req.body[f];

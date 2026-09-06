@@ -231,6 +231,24 @@ router.post("/admin/settings/tracking", requireAuth, authorize("settings", "upda
       consentScriptUrl: req.body.consent_script_url,
       leadEventName: req.body.lead_event_name,
       leadPages: req.body.lead_pages,
+      // Campi della modalità "library" (banner a libreria condivisa nel repo).
+      consentTitle: req.body.consent_title,
+      consentDescription: req.body.consent_description,
+      consentPreferencesTitle: req.body.consent_preferences_title,
+      consentAcceptAllLabel: req.body.consent_accept_all_label,
+      consentRejectLabelLib: req.body.consent_reject_label,
+      consentPreferencesLabel: req.body.consent_preferences_label,
+      consentSaveLabel: req.body.consent_save_label,
+      consentCloseLabel: req.body.consent_close_label,
+      consentNecessaryTitle: req.body.consent_necessary_title,
+      consentNecessaryDesc: req.body.consent_necessary_desc,
+      consentAnalyticsTitle: req.body.consent_analytics_title,
+      consentAnalyticsDesc: req.body.consent_analytics_desc,
+      consentMarketingTitle: req.body.consent_marketing_title,
+      consentMarketingDesc: req.body.consent_marketing_desc,
+      consentPosition: req.body.consent_position,
+      consentLanguage: req.body.consent_language,
+      consentRevision: req.body.consent_revision,
     };
     // Il token CAPI non viene mai ripresentato in chiaro nel form (solo
     // mascherato): un campo lasciato vuoto significa "non toccarlo", non

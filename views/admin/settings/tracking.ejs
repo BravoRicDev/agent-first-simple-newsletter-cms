@@ -96,32 +96,106 @@
     </div>
   </div>
 
-  <h2 style="font-size:15px;margin-top:24px;">Provider di consenso esterno (avanzato)</h2>
+  <h2 style="font-size:15px;margin-top:24px;">Provider del banner di consenso</h2>
   <p style="font-size:12px;color:#666;margin-bottom:10px;">
-    Solo per siti che gestiscono il banner cookie con uno script di terze parti (es. un consent manager più ricco) invece del banner CMS sopra. Lascia "CMS integrato" se non sai cosa scegliere: è il comportamento attuale, nessuna modifica.
+    "Libreria" usa la libreria cookieconsent condivisa del CMS (sicura, con fallback automatico al banner integrato): consigliata per un aspetto più ricco, configurabile qui sotto per-sito. "CMS integrato" è il banner semplice di default. Lascialo se non devi cambiare nulla.
   </p>
   <div class="form-group">
     <label>Provider</label>
     <select name="consent_provider">
       <option value="" <%= (!trackingConfig.consentProvider || trackingConfig.consentProvider === 'native') ? 'selected' : '' %>>CMS integrato (default)</option>
-      <option value="external" <%= trackingConfig.consentProvider === 'external' ? 'selected' : '' %>>Esterno (script di terze parti)</option>
+      <option value="library" <%= trackingConfig.consentProvider === 'library' ? 'selected' : '' %>>Libreria condivisa (consigliato)</option>
+      <option value="external" <%= trackingConfig.consentProvider === 'external' ? 'selected' : '' %>>Esterno personalizzato (script di terze parti)</option>
     </select>
   </div>
-  <div class="form-group">
-    <label>URL script libreria consenso (JS)</label>
-    <input type="text" name="consent_lib_url" value="<%= trackingConfig.consentProvider === 'external' ? trackingConfig.consentLibUrl : '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.js">
-  </div>
-  <div class="form-group">
-    <label>URL foglio di stile libreria consenso (CSS, opzionale)</label>
-    <input type="text" name="consent_lib_css_url" value="<%= trackingConfig.consentProvider === 'external' ? trackingConfig.consentLibCssUrl : '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.css">
-  </div>
-  <div class="form-group">
-    <label>URL script di inizializzazione (bridge sui cookie CMS)</label>
-    <input type="text" name="consent_script_url" value="<%= trackingConfig.consentProvider === 'external' ? trackingConfig.consentScriptUrl : '' %>" placeholder="/media/<%= selectedSiteId %>/consent/bridge.js">
-    <div style="font-size:12px;color:#666;margin-top:3px;">
-      Deve scrivere i cookie consent_analytics / consent_marketing ("1"/"0") e chiamare gtag('consent','update',...) / fbq('consent','grant'|'revoke') — sono gli stessi che usa il resto del CMS (CAPI, pixel, evento Lead qui sotto).
+
+  <% if (trackingConfig.consentProvider === 'library') { %>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-bottom:12px;">
+    <p style="font-size:12px;color:#555;margin-bottom:10px;">Testi del banner a libreria (vuoto = default). Posizione e lingua configurabili.</p>
+    <div style="display:flex;gap:15px;">
+      <div class="form-group" style="flex:1;">
+        <label>Posizione</label>
+        <select name="consent_position">
+          <option value="bottom right" <%= trackingConfig.consentPosition === 'bottom right' ? 'selected' : '' %>>In basso a destra (box)</option>
+          <option value="bottom left" <%= trackingConfig.consentPosition === 'bottom left' ? 'selected' : '' %>>In basso a sinistra (box)</option>
+          <option value="bottom center" <%= trackingConfig.consentPosition === 'bottom center' ? 'selected' : '' %>>In basso al centro (bar)</option>
+          <option value="top center" <%= trackingConfig.consentPosition === 'top center' ? 'selected' : '' %>>In alto al centro (bar)</option>
+          <option value="middle" <%= trackingConfig.consentPosition === 'middle' ? 'selected' : '' %>>Centro (dialog)</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Lingua</label>
+        <select name="consent_language">
+          <option value="it" <%= (trackingConfig.consentLanguage || 'it') === 'it' ? 'selected' : '' %>>Italiano</option>
+          <option value="en" <%= trackingConfig.consentLanguage === 'en' ? 'selected' : '' %>>English</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Revisione (per ri-mostrare il banner ai visitatori)</label>
+        <input type="text" name="consent_revision" value="<%= trackingConfig.consentRevision || '' %>" placeholder="0">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Titolo</label>
+      <input type="text" name="consent_title" value="<%= trackingConfig.consentTitle || '' %>" placeholder="Privacy & Cookie">
+    </div>
+    <div class="form-group">
+      <label>Descrizione</label>
+      <textarea name="consent_description" style="min-height:50px;" placeholder="Utilizziamo cookie tecnici e, previo tuo consenso, cookie di analisi e marketing."><%= trackingConfig.consentDescription || '' %></textarea>
+    </div>
+    <div class="form-group">
+      <label>Titolo finestra preferenze</label>
+      <input type="text" name="consent_preferences_title" value="<%= trackingConfig.consentPreferencesTitle || '' %>" placeholder="Preferenze Cookie">
+    </div>
+    <div style="display:flex;gap:15px;">
+      <div class="form-group" style="flex:1;"><label>Pulsante "Accetta tutto"</label><input type="text" name="consent_accept_all_label" value="<%= trackingConfig.consentAcceptAllLabel || '' %>" placeholder="Accetta tutto"></div>
+      <div class="form-group" style="flex:1;"><label>Pulsante "Rifiuta non essenziali"</label><input type="text" name="consent_reject_label" value="<%= trackingConfig.consentRejectLabelLib || '' %>" placeholder="Rifiuta non essenziali"></div>
+    </div>
+    <div style="display:flex;gap:15px;">
+      <div class="form-group" style="flex:1;"><label>Pulsante "Preferenze"</label><input type="text" name="consent_preferences_label" value="<%= trackingConfig.consentPreferencesLabel || '' %>" placeholder="Preferenze"></div>
+      <div class="form-group" style="flex:1;"><label>"Salva preferenze"</label><input type="text" name="consent_save_label" value="<%= trackingConfig.consentSaveLabel || '' %>" placeholder="Salva preferenze"></div>
+    </div>
+    <div class="form-group">
+      <label>Sezione "Necessari"</label>
+      <div style="display:flex;gap:15px;">
+        <input type="text" name="consent_necessary_title" value="<%= trackingConfig.consentNecessaryTitle || '' %>" placeholder="Necessari" style="flex:1;">
+        <input type="text" name="consent_necessary_desc" value="<%= trackingConfig.consentNecessaryDesc || '' %>" placeholder="Cookie strettamente necessari al funzionamento del sito. Sempre attivi." style="flex:2;">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Sezione "Analisi"</label>
+      <div style="display:flex;gap:15px;">
+        <input type="text" name="consent_analytics_title" value="<%= trackingConfig.consentAnalyticsTitle || '' %>" placeholder="Analisi" style="flex:1;">
+        <input type="text" name="consent_analytics_desc" value="<%= trackingConfig.consentAnalyticsDesc || '' %>" placeholder="Ci aiutano a capire come utilizzi il sito (in forma aggregata)." style="flex:2;">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Sezione "Marketing"</label>
+      <div style="display:flex;gap:15px;">
+        <input type="text" name="consent_marketing_title" value="<%= trackingConfig.consentMarketingTitle || '' %>" placeholder="Marketing" style="flex:1;">
+        <input type="text" name="consent_marketing_desc" value="<%= trackingConfig.consentMarketingDesc || '' %>" placeholder="Usati per tracciare e personalizzare annunci pubblicitari." style="flex:2;">
+      </div>
     </div>
   </div>
+  <% } else if (trackingConfig.consentProvider === 'external') { %>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-bottom:12px;">
+    <div class="form-group">
+      <label>URL script libreria consenso (JS)</label>
+      <input type="text" name="consent_lib_url" value="<%= trackingConfig.consentLibUrl || '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.js">
+    </div>
+    <div class="form-group">
+      <label>URL foglio di stile libreria consenso (CSS, opzionale)</label>
+      <input type="text" name="consent_lib_css_url" value="<%= trackingConfig.consentLibCssUrl || '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.css">
+    </div>
+    <div class="form-group">
+      <label>URL script di inizializzazione (bridge sui cookie CMS)</label>
+      <input type="text" name="consent_script_url" value="<%= trackingConfig.consentScriptUrl || '' %>" placeholder="/media/<%= selectedSiteId %>/consent/bridge.js">
+      <div style="font-size:12px;color:#666;margin-top:3px;">
+        Deve scrivere i cookie consent_analytics / consent_marketing ("1"/"0") e chiamare gtag('consent','update',...) / fbq('consent','grant'|'revoke') — sono gli stessi che usa il resto del CMS (CAPI, pixel, evento Lead qui sotto).
+      </div>
+    </div>
+  </div>
+  <% } %>
 
   <h2 style="font-size:15px;margin-top:24px;">Evento Lead automatico su pagine di conversione</h2>
   <p style="font-size:12px;color:#666;margin-bottom:10px;">

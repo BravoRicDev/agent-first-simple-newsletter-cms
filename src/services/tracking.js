@@ -39,10 +39,32 @@ const TRACKING_KEYS = {
   // script che la inizializza/bridgea sui cookie CMS. Tipicamente puntano a
   // asset vendored in media/<site>/... (bind-mount, sopravvivono ai
   // rebuild) ma possono essere qualunque URL assoluto. Usati solo quando
-  // consentProvider === "external".
+  // consentProvider === "external" (o "library" con override).
   consentLibUrl: "tracking_consent_lib_url",
   consentLibCssUrl: "tracking_consent_lib_css_url",
   consentScriptUrl: "tracking_consent_script_url",
+  // ── Provider "library" (banner a libreria condivisa nel repo) ──────────
+  // Testi/posizione/lingua per-sito, usati dal bridge vendored in
+  // public/consent/bridge.js tramite window.__cmsConsentConfig. Nessuna
+  // dipendenza da media/ al volo: la lib (consent.js/consent.css) è servita
+  // staticamente dal repo, il bridge è generico e corretto.
+  consentTitle: "tracking_consent_title",
+  consentDescription: "tracking_consent_description",
+  consentPreferencesTitle: "tracking_consent_preferences_title",
+  consentAcceptAllLabel: "tracking_consent_accept_all_label",
+  consentRejectLabelLib: "tracking_consent_reject_label",
+  consentPreferencesLabel: "tracking_consent_preferences_label",
+  consentSaveLabel: "tracking_consent_save_label",
+  consentCloseLabel: "tracking_consent_close_label",
+  consentNecessaryTitle: "tracking_consent_necessary_title",
+  consentNecessaryDesc: "tracking_consent_necessary_desc",
+  consentAnalyticsTitle: "tracking_consent_analytics_title",
+  consentAnalyticsDesc: "tracking_consent_analytics_desc",
+  consentMarketingTitle: "tracking_consent_marketing_title",
+  consentMarketingDesc: "tracking_consent_marketing_desc",
+  consentPosition: "tracking_consent_position",
+  consentLanguage: "tracking_consent_language",
+  consentRevision: "tracking_consent_revision",
   // Evento Meta Pixel da sparare lato browser su pagine di conversione che
   // non passano da un submit gestito dal CMS (es. form esterni: videoask,
   // altri CRM). Gated SEMPRE su consenso marketing (Consent Mode v2), una
@@ -90,12 +112,20 @@ export async function getSiteTrackingConfig(siteId) {
   // Vuoto = "native" (retrocompatibile: nessuna riga in settings finora
   // significava "banner CMS integrato", e deve continuare a significarlo).
   if (!c.consentProvider) c.consentProvider = "native";
-  // Default degli URL del provider esterno: asset vendored per-sito in
-  // media/<site>/consent/ (bind-mount, sopravvivono ai rebuild). Calcolati
-  // solo se il provider è "external" e non è stato impostato un URL
-  // esplicito — così il caso comune (asset nel percorso convenzionale)
-  // funziona con la sola chiave tracking_consent_provider=external.
-  if (c.consentProvider === "external") {
+  // Normalizzo "library" come provider esterno col default sugli asset del
+  // REPO (public/consent/*), così il vecchio "external" che puntava a
+  // media/<site>/consent/* resta funzionante se l'admin ha lasciato il default
+  // ma vuole la lib condivisa. "library" = SENTIERO NUOVO e consigliato.
+  const libDefault = '/consent/consent.js';
+  const cssDefault = '/consent/consent.css';
+  const bridgeDefault = '/consent/bridge.js';
+  if (c.consentProvider === "library") {
+    c.consentLibUrl = c.consentLibUrl || libDefault;
+    c.consentLibCssUrl = c.consentLibCssUrl || cssDefault;
+    c.consentScriptUrl = c.consentScriptUrl || bridgeDefault;
+  } else if (c.consentProvider === "external") {
+    // Retrocompat: external continua a puntare agli asset vendored per-sito
+    // in media/<site>/consent/ (bind-mount) SOLO se non impostato esplicitamente.
     if (!c.consentLibUrl) c.consentLibUrl = `/media/${siteId}/consent/consent.js`;
     if (!c.consentLibCssUrl) c.consentLibCssUrl = `/media/${siteId}/consent/consent.css`;
     if (!c.consentScriptUrl) c.consentScriptUrl = `/media/${siteId}/consent/bridge.js`;
