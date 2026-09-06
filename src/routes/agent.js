@@ -51,6 +51,33 @@ import { Worker } from "worker_threads";
 
 const REGEX_RUN_TIMEOUT_MS = 1000;
 
+// ── Idempotency cache (in-memory, TTL 24h) ──────────────────────────────
+// Previene duplicati su retry di rete: la chiave è l'header Idempotency-Key,
+// il valore è la risposta JSON serializzata. Scadenza 24h per non accumulare.
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const idempotencyCache = new Map();
+
+function checkIdempotency(key, res) {
+  if (!key) return null;
+  const cached = idempotencyCache.get(key);
+  if (cached && Date.now() - cached.ts < IDEMPOTENCY_TTL_MS) {
+    return cached.data;
+  }
+  return null;
+}
+
+function storeIdempotency(key, data) {
+  if (!key) return;
+  idempotencyCache.set(key, { data, ts: Date.now() });
+  // Cleanup entries scaduti ogni 100 operazioni (prevenzione memory leak)
+  if (idempotencyCache.size > 10000) {
+    const now = Date.now();
+    for (const [k, v] of idempotencyCache) {
+      if (now - v.ts > IDEMPOTENCY_TTL_MS) idempotencyCache.delete(k);
+    }
+  }
+}
+
 // Esegue una regex in un worker thread. Il vecchio withRegexTimeout era
 // finto: fn() era sincrona, quindi durante un backtracking catastrofico
 // l'event loop era bloccato e il setTimeout non poteva MAI scattare — il
@@ -295,11 +322,20 @@ router.get("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (r
       ? req.query.fields.split(",").filter(f => allowedFields.includes(f.trim()))
       : allowedFields;
     if (fields.length === 0) return res.status(400).json({ error: res.locals.t("api.pages.noValidFieldsRequested") });
+
+    // Pagination: limit (max 200) and offset
+    const limit = Math.min(parseIntParam(req.query.limit, 50), 200);
+    const offset = parseIntParam(req.query.offset, 0);
+
+    const countResult = await query("SELECT COUNT(*) FROM pages WHERE site_id = $1", [siteId]);
+    const total = parseInt(countResult.rows[0].count, 10);
+
     const pages = (await query(
-      `SELECT ${fields.join(", ")} FROM pages WHERE site_id = $1 ORDER BY url_path`,
-      [siteId]
+      `SELECT ${fields.join(", ")} FROM pages WHERE site_id = $1 ORDER BY url_path LIMIT $2 OFFSET $3`,
+      [siteId, limit, offset]
     )).rows;
-    res.json({ pages });
+
+    res.json({ pages, pagination: { total, limit, offset, has_more: offset + limit < total } });
   } catch (err) { next(err); }
 });
 
@@ -431,6 +467,12 @@ router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (
     if (!await canAccessSite(req.user, siteId)) {
       return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
     }
+    // Idempotency Key: previene duplicati su retry di rete
+    const idempotencyKey = req.headers["idempotency-key"];
+    const cached = checkIdempotency(idempotencyKey, res);
+    if (cached) {
+      return res.json(cached);
+    }
     const data = agentPageSchema.parse(req.body);
     data.url_path = normalizeUrlPath(data.url_path);
 
@@ -461,7 +503,11 @@ router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (
       ipAddress: req.ip,
     });
 
-    res.status(201).json({ page });
+    // Cache the response under the idempotency key
+    const responseData = { page };
+    storeIdempotency(idempotencyKey, responseData);
+
+    res.status(201).json(responseData);
     exportPublishedPages({ siteId, pageIds: [page.id] }).catch(() => {});
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
@@ -1824,11 +1870,25 @@ router.get("/api/agent/sites/:siteId/snippets", requireAuth, requireAgent, async
     if (!await canAccessSite(req.user, siteId)) {
       return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
     }
+    const allowedFields = ["id", "name", "description", "content", "created_at", "updated_at"];
+    const fields = req.query.fields
+      ? req.query.fields.split(",").filter(f => allowedFields.includes(f.trim()))
+      : allowedFields;
+    if (fields.length === 0) return res.status(400).json({ error: res.locals.t("api.snippets.noValidFieldsRequested") });
+
+    // Pagination: limit (max 200) and offset
+    const limit = Math.min(parseIntParam(req.query.limit, 50), 200);
+    const offset = parseIntParam(req.query.offset, 0);
+
+    const countResult = await query("SELECT COUNT(*) FROM snippets WHERE site_id = $1", [siteId]);
+    const total = parseInt(countResult.rows[0].count, 10);
+
     const snippets = (await query(
-      "SELECT id, name, description, content, created_at, updated_at FROM snippets WHERE site_id = $1 ORDER BY name",
-      [siteId]
+      `SELECT ${fields.join(", ")} FROM snippets WHERE site_id = $1 ORDER BY name LIMIT $2 OFFSET $3`,
+      [siteId, limit, offset]
     )).rows;
-    res.json({ snippets });
+
+    res.json({ snippets, pagination: { total, limit, offset, has_more: offset + limit < total } });
   } catch (err) { next(err); }
 });
 

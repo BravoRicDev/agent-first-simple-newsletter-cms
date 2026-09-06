@@ -168,6 +168,11 @@ async function start() {
   }));
   app.use(cookieParser());
   app.use(requestId);
+  // Propaga X-Request-ID nelle risposte per tracciabilità cross-servizio
+  app.use((req, res, next) => {
+    res.setHeader("X-Request-Id", req.requestId);
+    next();
+  });
   // i18n PRIMA di csrfProtection: il middleware CSRF usa res.locals.t nei
   // percorsi di errore — montato dopo, una violazione CSRF esplodeva in
   // TypeError → 500 al posto del 403 previsto (index.js:139 montava csrf
