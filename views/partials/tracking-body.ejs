@@ -51,6 +51,10 @@
     document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/; SameSite=Lax'
                       + (domain ? '; Domain=' + domain : '') + secure;
   }
+  // Guardia ANTI-DOPPIO PageView: condivisa col bridge esterno/vendored
+  // (window.__cmsPageViewFired). Anche se applyConsent viene chiamato più
+  // volte (template a ogni load + bridge al ritorno + eventi banner), il
+  // PageView parte UNA SOLA volta per page load.
   function applyConsent(analytics, marketing) {
     if (window.gtag) { try { gtag('consent', 'update', {
       'analytics_storage': analytics ? 'granted' : 'denied',
@@ -62,11 +66,17 @@
       window.__cmsMarketingGranted = true;
       if (window.fbq && typeof window.fbq === 'function') {
         fbq('consent', 'grant');
-        if (TRACK_PAGEVIEW !== false) { fbq('track', 'PageView'); }
+        if (TRACK_PAGEVIEW !== false && !window.__cmsPageViewFired) {
+          window.__cmsPageViewFired = true;
+          fbq('track', 'PageView');
+        }
       }
       try { window.dispatchEvent(new Event('cms:marketing-granted')); } catch (e) {}
-    } else if (window.fbq && typeof window.fbq === 'function') {
-      fbq('consent', 'revoke');
+    } else {
+      window.__cmsMarketingGranted = false;
+      if (window.fbq && typeof window.fbq === 'function') {
+        fbq('consent', 'revoke');
+      }
     }
     <% if (typeof clarityId !== 'undefined' && clarityId) { %>
     if (analytics && !window.clarity) {
@@ -76,6 +86,10 @@
     }
     <% } %>
   }
+  // Esposto globalmente: il bridge (public/consent/bridge.js) lo riusa così
+  // il re-apply è SEMPRE quello del CMS (guardia anti-doppio inclusa), anche
+  // in modalità external con bridge vecchio che non riapplica da solo.
+  window.__cmsApplyConsent = applyConsent;
 
   var banner = document.getElementById('cms-consent-banner');
 
@@ -100,15 +114,104 @@
   }
   window.__cmsNativeConsentShow = showNativeBanner;
 
-  // Modalità NATIVE: comportamento originale (mostra se non c'è consenso).
-  if (<%- _jsonScript(_consentProvider) %> === 'native') {
-    var storedAnalytics = getCookie('consent_analytics');
-    var storedMarketing = getCookie('consent_marketing');
-    if (storedAnalytics !== null) {
-      applyConsent(storedAnalytics === '1', storedMarketing === '1');
-    } else {
-      showNativeBanner();
+  // ── Re-apply del consenso a OGNI page load (tutte le modalità) ─────────
+  // Questo è il fix "pixel morto al ritorno". In passato il re-apply avveniva
+  // SOLO in modalità native, e in external/library dipendeva dal bridge
+  // esterno (che se vecchio fa `return` prematuro e non riapplica MAI).
+  // Ora il CMS riapplica SEMPRE il consenso salvato (cookies) a ogni load,
+  // in native/external/library; idempotente grazie a __cmsPageViewFired.
+  var storedAnalytics = getCookie('consent_analytics');
+  var storedMarketing = getCookie('consent_marketing');
+  if (storedAnalytics !== null || storedMarketing !== null) {
+    applyConsent(storedAnalytics === '1', storedMarketing === '1');
+    // fbq può essere caricato da uno script ESTERNO (provider external) che
+    // arriva DOPO questo script: finché fbq non esiste il grant non parte.
+    // Polling breve: appena fbq è disponibile, ri-applichiamo (idempotente,
+    // PageView una sola volta). Copre anche bridge esterni che non riapplicano.
+    if (storedMarketing === '1') {
+      var _fbqTries = 0;
+      var _fbqTimer = setInterval(function () {
+        _fbqTries++;
+        if (window.fbq && typeof window.fbq === 'function') {
+          clearInterval(_fbqTimer);
+          applyConsent(storedAnalytics === '1', storedMarketing === '1');
+        } else if (_fbqTries > 30) { // ~3s max, poi basta
+          clearInterval(_fbqTimer);
+        }
+      }, 100);
     }
+  } else if (<%- _jsonScript(_consentProvider) %> === 'native') {
+    // Modalità NATIVE senza consenso salvato → mostra il banner CMS.
+    showNativeBanner();
+  }
+  // NB: in external/library senza consenso salvato il banner lo mostra la
+  // libreria esterna; il fallback nativo (__cmsNativeConsentShow) resta
+  // attivo se la libreria non parte (vedi blocco sotto).
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof leadEventName !== 'undefined' && leadEventName && (typeof leadPages !== 'undefined' && leadPages || typeof leadOverride !== 'undefined' && leadOverride)) { %>
+<!-- Evento Meta Pixel su pagine di conversione (leadEventName + leadPages).
+     Sparato SOLO con consenso marketing (Consent Mode v2), UNA volta per
+     sessione. Provider-agnostico: funziona sia con banner nativo sia esterno
+     perché entrambi scrivono lo stesso cookie consent_marketing e perché
+     l'evento è agganciato a 'cms:marketing-granted' (emesso dal re-apply a
+     ogni page load). leadOverride: true = forza anche fuori leadPages,
+     false = non sparare mai qui. -->
+<script>
+(function () {
+  var EVENT_NAME = <%- _jsonScript(leadEventName) %>;
+  var PAGES = <%- _jsonScript((typeof leadPages !== 'undefined' && leadPages ? String(leadPages).split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [])) %>;
+  var LEAD_OVERRIDE = <%- _jsonScript(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
+  var FLAG_KEY = 'cms_lead_fired_' + EVENT_NAME;
+
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function matchesPage() {
+    var target = (location.pathname + location.search).toLowerCase();
+    for (var i = 0; i < PAGES.length; i++) {
+      if (PAGES[i] && target.indexOf(PAGES[i].toLowerCase()) > -1) return true;
+    }
+    return false;
+  }
+  function shouldFireLead() {
+    if (LEAD_OVERRIDE === true) return true;
+    if (LEAD_OVERRIDE === false) return false;
+    return matchesPage();
+  }
+  function fireOnce() {
+    if (!shouldFireLead()) return;
+    try { if (sessionStorage.getItem(FLAG_KEY)) return; } catch (e) {}
+    if (getCookie('consent_marketing') !== '1') return;
+    if (!(window.fbq && typeof window.fbq === 'function')) return;
+    try { sessionStorage.setItem(FLAG_KEY, '1'); } catch (e) {}
+    fbq('track', EVENT_NAME);
+    try { console.log('[Lead] ✓', EVENT_NAME, '→', location.pathname); } catch (e) {}
+  }
+  // Visitatore di ritorno con consenso già presente, o provider esterno che
+  // ha già scritto il cookie prima che questo script giri.
+  fireOnce();
+  // Consenso concesso durante QUESTA visita (banner nativo o bridge esterno).
+  // Il re-apply del template a ogni page load emette questo evento anche al
+  // ritorno (e di nuovo appena fbq diventa disponibile), quindi copre anche
+  // i casi in cui il pixel arriva in ritardo da uno script esterno.
+  window.addEventListener('cms:marketing-granted', fireOnce);
+  // Retry autonomo: se il consenso marketing è già attivo ma fbq (caricato
+  // da uno script esterno) non è ancora pronto al load, riproviamo per ~3s.
+  // fireOnce è idempotente (flag di sessione), quindi nessun doppio Invio.
+  if (shouldFireLead() && getCookie('consent_marketing') === '1' && !(window.fbq && typeof window.fbq === 'function')) {
+    var _leadTries = 0;
+    var _leadTimer = setInterval(function () {
+      _leadTries++;
+      if (window.fbq && typeof window.fbq === 'function') {
+        clearInterval(_leadTimer);
+        fireOnce();
+      } else if (_leadTries > 30) {
+        clearInterval(_leadTimer);
+      }
+    }, 100);
   }
 })();
 </script>

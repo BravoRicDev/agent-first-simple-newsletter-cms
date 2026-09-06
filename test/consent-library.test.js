@@ -92,6 +92,53 @@ describe("consent: provider library per-sito (asset repo + fallback nativo)", ()
     assert.match(html, /\/media\/22\/consent\/consent\.js/, "external legacy ancora supportato");
   });
 
+  test("re-apply consenso a ogni page load in TUTTE le modalità (fix pixel morto al ritorno)", async () => {
+    // In native, external e library il blocco di re-apply dai cookies deve
+    // esserci SEMPRE: il CMS non deve dipendere dal bridge esterno per
+    // riapplicare il consenso (i bridge vecchi fanno return prematuro).
+    for (const provider of ["native", "external", "library"]) {
+      const html = await renderBody({
+        consentProvider: provider,
+        consentLibUrl: provider === "library" ? "/consent/consent.js" : "/media/22/consent/consent.js",
+        consentLibCssUrl: provider === "library" ? "/consent/consent.css" : "/media/22/consent/consent.css",
+        consentScriptUrl: provider === "library" ? "/consent/bridge.js" : "/media/22/consent/bridge.js",
+      });
+      assert.match(html, /storedAnalytics !== null \|\| storedMarketing !== null/, `${provider}: re-apply dai cookies presente`);
+      assert.match(html, /applyConsent\(storedAnalytics === '1', storedMarketing === '1'\)/, `${provider}: riapplica il consenso salvato`);
+      assert.match(html, /__cmsApplyConsent/, `${provider}: helper condiviso esposto globalmente`);
+      assert.match(html, /_fbqTimer/, `${provider}: polling anti-pixel-in-ritardo presente`);
+    }
+  });
+
+  test("blocco Lead client-side: presente solo se leadEventName+leadPages/override configurati", async () => {
+    const senza = await renderBody({ consentProvider: "native" });
+    assert.doesNotMatch(senza, /cms_lead_fired_/, "senza config Lead il blocco non c'è (nessuna regressione)");
+
+    const con = await renderBody({
+      consentProvider: "external",
+      consentLibUrl: "/media/22/consent/consent.js",
+      consentScriptUrl: "/media/22/consent/bridge.js",
+      leadEventName: "Lead",
+      leadPages: "/1/thank-you, /grazie",
+      leadOverride: null,
+    });
+    assert.match(con, /cms_lead_fired_/, "blocco Lead presente");
+    assert.match(con, /var EVENT_NAME = "Lead"/, "nome evento iniettato");
+    assert.match(con, /\/1\/thank-you/, "pagine lead iniettate");
+    assert.match(con, /cms:marketing-granted/, "agganciato al consenso marketing");
+    assert.match(con, /_leadTimer/, "retry fbq in ritardo presente");
+
+    const overrideFalse = await renderBody({
+      consentProvider: "library",
+      consentLibUrl: "/consent/consent.js",
+      consentScriptUrl: "/consent/bridge.js",
+      leadEventName: "Lead",
+      leadPages: "",
+      leadOverride: true,
+    });
+    assert.match(overrideFalse, /LEAD_OVERRIDE = true/, "override true forzato anche fuori leadPages");
+  });
+
   test("XSS-safe: un testo contenente </script> non rompe il blocco", async () => {
     const html = await renderBody({
       consentProvider: "library",

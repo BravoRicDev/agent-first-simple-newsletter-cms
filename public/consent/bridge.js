@@ -53,27 +53,34 @@
   }
 
   // ── Consent Mode v2 + Pixel ──────────────────────────────────────────────
-  function applyConsent(analytics, marketing) {
-    if (window.gtag) {
-      try {
-        gtag('consent', 'update', {
-          'analytics_storage': analytics ? 'granted' : 'denied',
-          'ad_storage': marketing ? 'granted' : 'denied',
-          'ad_user_data': marketing ? 'granted' : 'denied',
-          'ad_personalization': marketing ? 'granted' : 'denied'
-        });
-      } catch (e) {}
-    }
-    try {
-      if (marketing) {
-        if (window.fbq) { fbq('consent', 'grant'); fbq('track', 'PageView'); }
-        window.__cmsMarketingGranted = true;
-        window.dispatchEvent(new Event('cms:marketing-granted'));
-      } else if (window.fbq) {
-        fbq('consent', 'revoke');
-      }
-    } catch (e) {}
-  }
+  // Riusa window.__cmsApplyConsent (esposto dal template CMS a ogni page
+  // load). Così il re-apply qui usa la guardia anti-doppio PageView
+  // (__cmsPageViewFired) e rispetta trackPageview: se il template ha già
+  // ri-applicato il consenso al load, il bridge NON spara un secondo
+  // PageView. Fallback locale di sicurezza se il template non l'ha esposto.
+  var applyConsent = (typeof window.__cmsApplyConsent === 'function')
+    ? window.__cmsApplyConsent
+    : function (analytics, marketing) {
+        if (window.gtag) {
+          try {
+            gtag('consent', 'update', {
+              'analytics_storage': analytics ? 'granted' : 'denied',
+              'ad_storage': marketing ? 'granted' : 'denied',
+              'ad_user_data': marketing ? 'granted' : 'denied',
+              'ad_personalization': marketing ? 'granted' : 'denied'
+            });
+          } catch (e) {}
+        }
+        try {
+          if (marketing) {
+            if (window.fbq) { fbq('consent', 'grant'); fbq('track', 'PageView'); }
+            window.__cmsMarketingGranted = true;
+            window.dispatchEvent(new Event('cms:marketing-granted'));
+          } else if (window.fbq) {
+            fbq('consent', 'revoke');
+          }
+        } catch (e) {}
+      };
 
   // Converte le categorie della lib nei cookie che il resto del CMS legge.
   function bridge(cookie) {
