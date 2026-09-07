@@ -37,6 +37,32 @@ gtag('consent', 'default', {
      pixelEnabled === false (override per-pagina) salta completamente l'init. -->
 <script>
 !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+// Dedup PageView a livello di fbq stesso, indipendente da CHI lo chiama:
+// il CMS (applyConsent, guardia window.__cmsPageViewFired) o un bridge di
+// consenso esterno/vendored per-sito (media/<site>/consent/bridge.js) che
+// non riusa window.__cmsApplyConsent e riapplica il consenso da solo.
+// Senza questa rete di sicurezza, un bridge vendored "vecchio stile" può
+// rifare fbq('track','PageView') sulla stessa pagina, duplicando le
+// conversioni in Meta. Con questa guardia, chiunque chiami per primo vince
+// e i chiamanti successivi nello stesso page-load vengono ignorati.
+// NB: usa un flag TUTTO SUO (__fbqPageViewSent), diverso da
+// window.__cmsPageViewFired: quest'ultimo viene impostato dal CMS PRIMA di
+// chiamare fbq(...), quindi se il wrapper leggesse lo stesso flag lo
+// troverebbe già a true e scarterebbe anche il primissimo invio legittimo
+// (bug verificato e corretto durante lo sviluppo di questa guardia).
+(function () {
+  var _fbqStub = window.fbq;
+  window.fbq = function (action, name) {
+    if (action === 'track' && name === 'PageView') {
+      if (window.__fbqPageViewSent) return;
+      window.__fbqPageViewSent = true;
+    }
+    return _fbqStub.apply(this, arguments);
+  };
+  for (var k in _fbqStub) {
+    if (Object.prototype.hasOwnProperty.call(_fbqStub, k)) window.fbq[k] = _fbqStub[k];
+  }
+})();
 fbq('init', '<%= metaPixelId %>');
 fbq('consent', 'revoke');
 window.__cmsMarketingGranted = false;
