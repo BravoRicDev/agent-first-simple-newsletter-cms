@@ -226,6 +226,21 @@ export function registerCrmRoutes(router) {
     } catch (err) { next(err); }
   });
 
+  // Toggle attivo/disattivo di un workflow (utile per agent che abilitano una
+  // automazione dopo averla creata/testata).
+  router.post("/api/agent/sites/:siteId/workflows/:workflowId/toggle", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      const workflowId = parseInt(req.params.workflowId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const current = (await query("SELECT active FROM workflows WHERE id = $1 AND site_id = $2", [workflowId, siteId])).rows[0];
+      if (!current) return res.status(404).json({ error: "Workflow non trovato" });
+      const active = req.body.active !== undefined ? !!req.body.active : !current.active;
+      await query("UPDATE workflows SET active = $1, updated_at = NOW() WHERE id = $2", [active, workflowId]);
+      res.json({ workflow: { id: workflowId, active } });
+    } catch (err) { next(err); }
+  });
+
   router.get("/api/agent/sites/:siteId/workflows/:workflowId/runs", requireAgent, async (req, res, next) => {
     try {
       const siteId = parseInt(req.params.siteId, 10);

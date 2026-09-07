@@ -2,8 +2,9 @@ import { query } from "../db.js";
 import { canAccessSite, requireAgent } from "./agent-helpers.js";
 import {
   listWebhooks, getWebhook, createWebhook, updateWebhook, deleteWebhook,
-  deliverPending,
+  deliverPending, sendWebhookPayload,
 } from "../services/webhooks.js";
+import { WEBHOOK_EVENTS, FILTERABLE_FIELDS } from "../constants/webhook-events.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Feature 35 — Webhook IN/OUT (collegamento n8n). Route agent per gestire
@@ -15,6 +16,11 @@ import {
 export function registerWebhooksRoutes(router) {
   // ── Delivery (statiche PRIMA di /webhooks/:webhookId? no: path diverso,
   //    ma l'ordine resta: run → list → CRUD per chiarezza) ───────────────
+
+  // Catalogo eventi disponibili (source of truth per UI e agent).
+  router.get("/api/agent/webhook-events", requireAgent, async (req, res) => {
+    res.json({ events: WEBHOOK_EVENTS, filterable_fields: FILTERABLE_FIELDS });
+  });
 
   // Esegue subito le delivery pending del sito (backoff/retry).
   router.post("/api/agent/sites/:siteId/webhook-deliveries/run", requireAgent, async (req, res, next) => {
@@ -87,6 +93,44 @@ export function registerWebhooksRoutes(router) {
       if (err.status) return res.status(err.status).json({ error: err.message });
       next(err);
     }
+  });
+
+  router.post("/api/agent/sites/:siteId/webhooks/:webhookId/test", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      const webhookId = parseInt(req.params.webhookId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const webhook = await getWebhook(siteId, webhookId);
+      if (!webhook) return res.status(404).json({ error: "Webhook non trovato" });
+      if (webhook.direction !== "out") return res.status(400).json({ error: "Il test è disponibile solo per webhook out" });
+
+      const eventType = String(req.body?.event_type || webhook.events?.[0] || "test").slice(0, 100);
+      const result = await sendWebhookPayload({
+        url: webhook.url,
+        secret: webhook.secret,
+        eventType,
+        payload: { test: true, at: new Date().toISOString(), ...(req.body?.payload || {}) },
+      });
+      res.json({ ok: result.ok, status: result.status, error: result.error || null });
+    } catch (err) { next(err); }
+  });
+
+  router.post("/api/agent/sites/:siteId/webhook-deliveries/:deliveryId/retry", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      const deliveryId = parseInt(req.params.deliveryId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const updated = (await query(
+        `UPDATE webhook_deliveries SET status = 'pending', attempts = 0, last_error = '',
+           next_attempt_at = NOW()
+         WHERE id = $1 AND site_id = $2 RETURNING id, status`,
+        [deliveryId, siteId]
+      )).rows[0];
+      if (!updated) return res.status(404).json({ error: "Delivery non trovata" });
+      // Prova l'invio subito
+      const result = await deliverPending(5, { siteId });
+      res.json({ retried: deliveryId, deliver: result });
+    } catch (err) { next(err); }
   });
 
   router.delete("/api/agent/sites/:siteId/webhooks/:webhookId", requireAgent, async (req, res, next) => {

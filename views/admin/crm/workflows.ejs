@@ -1,4 +1,5 @@
 <h1>Automazioni (workflow) — <%= site ? site.name : '' %></h1>
+<p style="color:#666;font-size:14px;margin-bottom:20px;">Un workflow parte quando accade un <strong>evento</strong> (form, quiz, email, chiamata, stadio...) ed esegue <strong>azioni in sequenza</strong>: tag, stadio, email, task, notifica, oppure <strong>spara un webhook a n8n</strong> per le automazioni complesse.</p>
 
 <% if (isSuperadmin && sites.length > 0) { %>
 <form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
@@ -21,21 +22,27 @@
   <div style="flex:1;min-width:300px;">
     <h2 style="font-size:16px;">Workflow esistenti</h2>
     <% if (workflows.length === 0) { %>
-      <p style="color:#999;font-size:14px;">Nessuna automazione. Un workflow parte quando accade un evento (form, quiz, email, chiamata...) ed esegue azioni (tag, stadio, email, task, notifica).</p>
+      <p style="color:#999;font-size:14px;">Nessuna automazione. Clicca "Nuovo workflow" per crearne una.</p>
     <% } else { %>
     <table>
       <thead><tr><th>Nome</th><th>Trigger</th><th>Azioni</th><th>Stato</th><th></th></tr></thead>
       <tbody>
         <% workflows.forEach(w => { %>
         <tr>
-          <td><%= w.name %></td>
-          <td><code><%= w.trigger_type %></code><br><span style="font-size:11px;color:#666;"><%= JSON.stringify(w.trigger_config) %></span></td>
+          <td><strong><%= w.name %></strong></td>
+          <td><code><%= w.trigger_type %></code><br><span style="font-size:11px;color:#666;"><%= Object.keys(w.trigger_config||{}).length ? JSON.stringify(w.trigger_config) : 'tutti' %></span></td>
           <td><%= w.action_count %></td>
-          <td><% if (w.active) { %><span class="badge badge-active">Attivo</span><% } else { %><span class="badge badge-disabled">Off</span><% } %></td>
+          <td>
+            <form method="POST" action="/admin/workflows/<%= w.id %>/toggle" style="display:inline;">
+              <input type="hidden" name="site_id" value="<%= siteId %>">
+              <input type="hidden" name="active" value="<%= w.active ? 0 : 1 %>">
+              <% if (w.active) { %><button class="btn btn-sm" style="background:#d1fae5;color:#065f46;" title="Clicca per disattivare">● Attivo</button><% } else { %><button class="btn btn-sm" style="background:#f3f4f6;color:#6b7280;" title="Clicca per attivare">○ Off</button><% } %>
+            </form>
+          </td>
           <td>
             <form method="POST" action="/admin/workflows/<%= w.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare il workflow?');">
               <input type="hidden" name="site_id" value="<%= siteId %>">
-              <button class="btn btn-sm btn-danger">Elimina</button>
+              <button class="btn btn-sm" style="background:#dc2626;">Elimina</button>
             </form>
           </td>
         </tr>
@@ -53,34 +60,41 @@
       <input type="hidden" name="actions_json" id="actions_json" value="[]">
       <div class="form-group">
         <label>Nome</label>
-        <input type="text" name="name" required placeholder="Es. Quiz alto → tag + task">
+        <input type="text" name="name" required placeholder="Es. Quiz alto → webhook n8n">
       </div>
       <div class="form-group">
-        <label>Trigger</label>
+        <label>Trigger (evento)</label>
         <select name="trigger_type" id="trigger_type">
-          <option value="form_submitted">Form inviato</option>
-          <option value="quiz_completed">Quiz completato</option>
-          <option value="email_opened">Email aperta</option>
-          <option value="email_clicked">Email cliccata</option>
-          <option value="call_booked">Chiamata prenotata</option>
-          <option value="call_status_changed">Stato chiamata cambiato</option>
-          <option value="stage_changed">Stadio pipeline cambiato</option>
-          <option value="tag_added">Tag aggiunto</option>
-          <option value="score_threshold">Punteggio soglia</option>
-          <option value="segment_entered">Entrato in segmento</option>
-          <option value="contact_created">Contatto creato</option>
-          <option value="manual">Manuale</option>
+          <option value="form_submitted">📝 Form inviato</option>
+          <option value="quiz_completed">🎯 Quiz completato</option>
+          <option value="contact_created">👤 Contatto creato</option>
+          <option value="email_opened">📧 Email aperta</option>
+          <option value="email_clicked">🔗 Email cliccata</option>
+          <option value="call_booked">📞 Chiamata prenotata</option>
+          <option value="call_status_changed">📞 Stato chiamata cambiato</option>
+          <option value="stage_changed">🔄 Stadio pipeline cambiato</option>
+          <option value="tag_added">🏷️ Tag aggiunto</option>
+          <option value="score_threshold">📈 Punteggio soglia</option>
+          <option value="segment_entered">🗂️ Entrato in segmento</option>
+          <option value="note_added">📝 Nota aggiunta</option>
+          <option value="conversation_message">💬 Messaggio conversazione</option>
+          <option value="opportunity_stage_changed">💰 Stadio opportunità cambiato</option>
+          <option value="quote_signed">✍️ Preventivo firmato</option>
+          <option value="manual">🖐️ Manuale</option>
         </select>
       </div>
       <div class="form-group">
-        <label>Config trigger (JSON, opzionale — es. {"quiz_slug":"qualifica-lead","min_score":8})</label>
+        <label>Config trigger (JSON opzionale — es. {"quiz_slug":"qualifica-lead","min_score":8})</label>
         <input type="text" id="trigger_config_text" style="font-family:monospace;font-size:12px;" placeholder='{"quiz_slug":"qualifica-lead","min_score":8}'>
       </div>
       <div class="form-group">
-        <label>Azioni (una per riga, formato: <code>tipo|chiave|valore</code>)</label>
-        <textarea id="actions_text" style="min-height:120px;font-family:monospace;font-size:12px;" placeholder="add_tag|tag|lead-caldo&#10;set_stage|stage|chiamata_fissata&#10;create_task|title|Chiama il lead&#10;create_task|due_in_days|1&#10;notify_email|to|vendi@dominio.it&#10;wait_days|days|2"></textarea>
-        <div style="font-size:11px;color:#999;margin-top:4px;">
-          Tipi: add_tag (tag), remove_tag (tag), set_stage (stage), create_task (title, due_in_days), notify_email (to, subject, body), wait_days (days), send_campaign (campaign_id), send_sequence (step_id)
+        <label>Azioni (in sequenza)</label>
+        <div id="actions_list"></div>
+        <button type="button" class="btn btn-sm" onclick="addActionRow()" style="margin-top:6px;">+ Aggiungi azione</button>
+        <div style="font-size:11px;color:#999;margin-top:6px;">
+          <strong>send_webhook</strong>: importa {url, secret, event_type, payload} — ponte per n8n.<br>
+          <strong>emit_event</strong>: {event_type} — ri-emette un evento nel bus (altri workflow/webhook lo inoltrano).<br>
+          <strong>add_note</strong>: {note} — aggiunge una nota al contatto.
         </div>
       </div>
       <button class="btn">Salva workflow</button>
@@ -89,21 +103,57 @@
 </div>
 
 <script>
+// Tipi di azione con descrizione e campi JSON tipici
+const ACTION_HELP = {
+  add_tag: { help: '{ "tag": "lead-caldo" }' },
+  remove_tag: { help: '{ "tag": "vecchio-tag" }' },
+  set_stage: { help: '{ "stage": "chiamata_fissata" }' },
+  create_task: { help: '{ "title": "Chiama il lead", "due_in_days": 1 }' },
+  notify_email: { help: '{ "to": "vendi@dominio.it", "subject": "...", "body": "..." }' },
+  wait_days: { help: '{ "days": 2 }' },
+  send_campaign: { help: '{ "campaign_id": 3 }' },
+  send_sequence: { help: '{ "step_id": 5 }' },
+  send_webhook: { help: '{ "url": "https://hook.n8n.cloud/...", "secret": "...", "event_type": "lead.generated" }' },
+  emit_event: { help: '{ "event_type": "lead_qualified" }' },
+  add_note: { help: '{ "note": "Compilato il quiz" }' },
+};
+
+function addActionRow(type = 'add_tag', cfgText = '') {
+  const list = document.getElementById('actions_list');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;';
+  row.innerHTML = `
+    <select class="action-type" onchange="updateActionHelp(this)" style="flex:0 0 140px;">
+      ${Object.keys(ACTION_HELP).map(t => `<option value="${t}" ${t === type ? 'selected' : ''}>${t}</option>`).join('')}
+    </select>
+    <input type="text" class="action-cfg" placeholder="Config JSON" value="${cfgText}" style="flex:1;font-family:monospace;font-size:12px;">
+    <button type="button" class="btn btn-sm" style="background:#dc2626;" onclick="this.parentElement.remove()">✕</button>
+  `;
+  list.appendChild(row);
+}
+
+function updateActionHelp(sel) {
+  const row = sel.closest('div');
+  const cfg = row.querySelector('.action-cfg');
+  const type = sel.value;
+  if (ACTION_HELP[type] && !cfg.value.trim()) cfg.placeholder = ACTION_HELP[type].help;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  addActionRow();
   const form = document.querySelector('form[action="/admin/workflows"]');
   form.addEventListener('submit', () => {
     const tc = document.getElementById('trigger_config_text').value.trim();
     try { document.getElementById('trigger_config_json').value = tc ? JSON.stringify(JSON.parse(tc)) : '{}'; }
     catch { document.getElementById('trigger_config_json').value = '{}'; }
 
-    const actions = document.getElementById('actions_text').value.split('\n').map(s => s.trim()).filter(Boolean).map(line => {
-      const parts = line.split('|').map(s => s.trim());
-      const type = parts[0];
-      const cfg = {};
-      for (let i = 1; i < parts.length; i += 2) {
-        if (parts[i] && parts[i + 1] !== undefined) cfg[parts[i]] = parts[i + 1];
-      }
-      return { action_type: type, action_config: cfg };
+    const actions = [];
+    document.querySelectorAll('#actions_list > div').forEach(row => {
+      const type = row.querySelector('.action-type').value;
+      const cfg = row.querySelector('.action-cfg').value.trim();
+      let parsed = {};
+      if (cfg) { try { parsed = JSON.parse(cfg); } catch { parsed = {}; } }
+      actions.push({ action_type: type, action_config: parsed });
     });
     document.getElementById('actions_json').value = JSON.stringify(actions);
   });

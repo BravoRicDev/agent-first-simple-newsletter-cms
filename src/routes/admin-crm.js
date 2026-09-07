@@ -4,6 +4,10 @@ import { requireAuth } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { sanitizeSegmentRules } from "../services/segments.js";
 import { sanitizeWorkflow } from "../services/workflows.js";
+import {
+  listWebhooks, getWebhook, createWebhook, updateWebhook, deleteWebhook,
+} from "../services/webhooks.js";
+import { WEBHOOK_EVENTS, FILTERABLE_FIELDS } from "../constants/webhook-events.js";
 import { sanitizeScoringRule, sanitizeScoringThreshold } from "../services/scoring.js";
 import { listTasks, createTask, updateTask, deleteTask, getFunnel } from "../services/tasks.js";
 import {
@@ -139,6 +143,101 @@ router.post("/admin/workflows/:id/delete", requireAuth, authorize("forms", "dele
     const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
     await query("DELETE FROM workflows WHERE id = $1 AND site_id = $2", [parseInt(req.params.id, 10), siteId]);
     res.redirect(`/admin/workflows?site_id=${siteId}`);
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/workflows/:id/toggle", requireAuth, authorize("forms", "update"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    const active = req.body.active === "1";
+    await query(
+      "UPDATE workflows SET active = $1, updated_at = NOW() WHERE id = $2 AND site_id = $3",
+      [active, parseInt(req.params.id, 10), siteId]
+    );
+    res.redirect(`/admin/workflows?site_id=${siteId}`);
+  } catch (err) { next(err); }
+});
+
+// ── Webhook IN/OUT (n8n e automazioni esterne) ─────────────────────────────
+
+router.get("/admin/webhooks", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user.role === "superadmin";
+    const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];
+    let siteId = isSuperadmin && req.query.site_id ? parseInt(req.query.site_id, 10) : req.user.site_id;
+    if (!siteId && isSuperadmin && sites.length > 0) siteId = sites[0].id;
+    if (!siteId) return res.status(400).render("error", { message: "Sito non specificato" });
+
+    const webhooks = await listWebhooks(siteId);
+    // delivery recenti per lo stato
+    const deliveries = (await query(
+      `SELECT d.status, COUNT(*)::int AS n FROM webhook_deliveries d
+       WHERE d.site_id = $1 GROUP BY d.status`,
+      [siteId]
+    )).rows;
+    const recentDeliveries = (await query(
+      `SELECT d.id, d.event_type, d.status, d.attempts, d.last_error, d.created_at,
+              w.name AS webhook_name
+       FROM webhook_deliveries d
+       LEFT JOIN webhooks w ON w.id = d.webhook_id
+       WHERE d.site_id = $1
+       ORDER BY d.created_at DESC LIMIT 15`,
+      [siteId]
+    )).rows;
+    const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
+    res.render("admin/crm/webhooks", {
+      webhooks, deliveries, recentDeliveries, site, sites, siteId, isSuperadmin,
+      saved: req.query.saved === "1", events: WEBHOOK_EVENTS, filterableFields: FILTERABLE_FIELDS,
+    });
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/webhooks", requireAuth, authorize("forms", "update"), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user.role === "superadmin";
+    const siteId = isSuperadmin && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    const parsed = {
+      name: req.body.name,
+      direction: req.body.direction || "out",
+      url: req.body.url,
+      secret: req.body.secret,
+      events: JSON.parse(req.body.events_json || "[]"),
+      filter: JSON.parse(req.body.filter_json || "{}"),
+      active: req.body.active !== "off",
+    };
+    if (parsed.name && siteId) {
+      await createWebhook(siteId, parsed);
+    }
+    res.redirect(`/admin/webhooks?site_id=${siteId}&saved=1`);
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/webhooks/:id/update", requireAuth, authorize("forms", "update"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    const id = parseInt(req.params.id, 10);
+    const parsed = {
+      name: req.body.name,
+      url: req.body.url,
+      secret: req.body.secret,
+      events: JSON.parse(req.body.events_json || "[]"),
+      filter: JSON.parse(req.body.filter_json || "{}"),
+      active: req.body.active !== "off",
+    };
+    const current = await getWebhook(siteId, id);
+    if (current) {
+      parsed.direction = current.direction;
+      await updateWebhook(siteId, id, parsed);
+    }
+    res.redirect(`/admin/webhooks?site_id=${siteId}&saved=1`);
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/webhooks/:id/delete", requireAuth, authorize("forms", "delete"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    await deleteWebhook(siteId, parseInt(req.params.id, 10));
+    res.redirect(`/admin/webhooks?site_id=${siteId}`);
   } catch (err) { next(err); }
 });
 

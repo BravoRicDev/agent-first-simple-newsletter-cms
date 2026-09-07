@@ -26,7 +26,8 @@ const TRIGGER_TYPES = new Set([
 
 const ACTION_TYPES = new Set([
   "add_tag", "remove_tag", "set_stage", "send_campaign", "send_sequence",
-  "create_task", "notify_email", "wait_days",
+  "create_task", "notify_email", "wait_days", "send_webhook", "emit_event",
+  "add_note",
 ]);
 
 export async function applyWorkflows(siteId, email, eventType, payload = {}, { depth = 0 } = {}) {
@@ -205,6 +206,49 @@ async function executeAction(siteId, workflow, action, email, eventType, payload
          JSON.stringify(cfg.next_action_config || { tag: "followup" }),
          new Date(Date.now() + days * 24 * 3600 * 1000)]
       );
+      break;
+    }
+    case "send_webhook": {
+      // Ponte verso n8n/automazioni esterne: spara il payload corrente
+      // verso l'URL configurato. url e secret sono in action_config.
+      const { sendWebhookPayload } = await import("./webhooks.js");
+      const url = String(cfg.url || "").trim();
+      if (!url) break;
+      const eventType = String(cfg.event_type || eventType || "workflow").slice(0, 100);
+      const extra = cfg.payload && typeof cfg.payload === "object" ? cfg.payload : {};
+      const result = await sendWebhookPayload({
+        url,
+        secret: String(cfg.secret || ""),
+        eventType,
+        payload: { ...(payload || {}), workflow: workflow.id, ...extra, email },
+        allowPrivate: false,
+      });
+      if (!result.ok) {
+        throw new Error(`Webhook ${eventType} verso ${url} fallito: ${result.error}`);
+      }
+      break;
+    }
+    case "add_note": {
+      const note = String(cfg.note || "").trim().slice(0, 2000);
+      if (!note) break;
+      const contact = (await query(
+        "SELECT id FROM contacts WHERE site_id = $1 AND LOWER(email) = $2",
+        [siteId, String(email).toLowerCase()]
+      )).rows[0];
+      if (!contact) break;
+      const notes = (await query("SELECT notes FROM contacts WHERE id = $1", [contact.id])).rows[0]?.notes || "";
+      const newNotes = notes ? `${notes}\n${note}` : note;
+      await query("UPDATE contacts SET notes = $1, updated_at = NOW() WHERE id = $2", [newNotes, contact.id]);
+      break;
+    }
+    case "emit_event": {
+      // Ri-emette un evento nel bus interno: permette di "tradurre" un
+      // trigger (es. form_submitted con tal slug) in un evento domain
+      // (es. lead_qualified) che altri workflow/webhook OUT possono inoltrare.
+      const { emitContactEvent } = await import("./events.js");
+      const newType = String(cfg.event_type || "").trim().slice(0, 100);
+      if (!newType) break;
+      await emitContactEvent(siteId, email, newType, { ...(payload || {}), workflow: workflow.id }, { origin: "cms" });
       break;
     }
     default:

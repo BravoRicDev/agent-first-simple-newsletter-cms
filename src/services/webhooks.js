@@ -91,7 +91,17 @@ function sanitizeWebhookData(siteId, data = {}) {
     throw httpError(400, "Almeno un evento da inoltrare");
   }
 
-  return { site_id: siteId, direction, name, url, secret, events, active: data.active !== false };
+  let filter = {};
+  if (data.filter && typeof data.filter === "object" && !Array.isArray(data.filter)) {
+    filter = Object.fromEntries(
+      Object.entries(data.filter)
+        .slice(0, 20)
+        .filter(([, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => [String(k).slice(0, 100), typeof v === "object" ? JSON.stringify(v) : String(v).slice(0, 500)])
+    );
+  }
+
+  return { site_id: siteId, direction, name, url, secret, events, filter, active: data.active !== false };
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────
@@ -121,9 +131,9 @@ export async function getWebhook(siteId, id) {
 export async function createWebhook(siteId, data) {
   const clean = sanitizeWebhookData(siteId, data);
   const result = await query(
-    `INSERT INTO webhooks (site_id, name, direction, url, secret, events, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [clean.site_id, clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), clean.active]
+    `INSERT INTO webhooks (site_id, name, direction, url, secret, events, filter, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [clean.site_id, clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), clean.active]
   );
   return result.rows[0];
 }
@@ -134,9 +144,9 @@ export async function updateWebhook(siteId, id, data) {
   const clean = sanitizeWebhookData(siteId, { ...current, ...data });
   const result = await query(
     `UPDATE webhooks SET name = $1, direction = $2, url = $3, secret = $4,
-       events = $5, active = $6, updated_at = NOW()
-     WHERE id = $7 AND site_id = $8 RETURNING *`,
-    [clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), clean.active, id, siteId]
+       events = $5, filter = $6, active = $7, updated_at = NOW()
+     WHERE id = $8 AND site_id = $9 RETURNING *`,
+    [clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), clean.active, id, siteId]
   );
   return result.rows[0];
 }
@@ -151,6 +161,32 @@ export async function deleteWebhook(siteId, id) {
 
 // ── OUT: accodamento + delivery ──────────────────────────────────────────
 
+// Verifica che un payload soddisfi le condizioni del filtro del webhook.
+// Semantica AND: ogni chiave del filtro deve matchare il payload.
+// Valore con prefisso '!' → il payload NON deve essere uguale.
+// Le chiavi possono essere dot-path (es. "contact.email", "payload.to_stage").
+function matchesFilter(filter, payload) {
+  if (!filter || typeof filter !== "object" || Object.keys(filter).length === 0) return true;
+  const getPath = (obj, path) => {
+    const parts = String(path).split(".");
+    let cur = obj;
+    for (const p of parts) {
+      if (cur === null || cur === undefined) return undefined;
+      cur = cur[p];
+    }
+    return cur;
+  };
+  for (const [key, expected] of Object.entries(filter)) {
+    const negative = String(expected).startsWith("!");
+    const value = negative ? String(expected).slice(1) : String(expected);
+    const actual = getPath(payload, key);
+    const matches = String(actual === undefined || actual === null ? "" : actual) === value;
+    if (negative && matches) return false;
+    if (!negative && !matches) return false;
+  }
+  return true;
+}
+
 // Accoda una delivery per ogni webhook OUT attivo del sito che inoltra
 // `eventType`. Fire-and-forget: le INSERT sono isolate, un errore non
 // blocca mai il chiamante (che è comunque il flusso eventi).
@@ -160,7 +196,7 @@ export async function enqueueForEvent(siteId, eventType, payload = {}, options =
   if (!siteId || !eventType) return { queued: 0 };
   const origin = VALID_ORIGINS.has(options.origin) ? options.origin : "cms";
   const rows = (await query(
-    `SELECT id FROM webhooks
+    `SELECT id, filter FROM webhooks
      WHERE site_id = $1 AND direction = 'out' AND active = true
        AND events @> $2::jsonb`,
     [siteId, JSON.stringify([String(eventType)])]
@@ -168,7 +204,10 @@ export async function enqueueForEvent(siteId, eventType, payload = {}, options =
   if (rows.length === 0) return { queued: 0 };
 
   let queued = 0;
+  let filtered = 0;
   for (const w of rows) {
+    // Filtro condizioni payload: se non matcha, la delivery NON parte.
+    if (!matchesFilter(w.filter, payload)) { filtered++; continue; }
     try {
       await query(
         `INSERT INTO webhook_deliveries (webhook_id, site_id, event_type, payload, origin)
@@ -180,7 +219,7 @@ export async function enqueueForEvent(siteId, eventType, payload = {}, options =
       logger.error(`webhook enqueue fallito (webhook=${w.id}, ${eventType}): ${err.message}`);
     }
   }
-  return { queued };
+  return { queued, filtered };
 }
 
 async function recordDeliveryFailure(delivery, error) {
@@ -556,6 +595,40 @@ export async function deliverPending(limit = 50, { siteId = null, allowPrivate =
       }
     }
     lockClient.release();
+  }
+}
+
+// ── Invio diretto di un payload verso un URL esterno ────────────────────
+// Usato dall'azione workflow `send_webhook` e dal ping/test dei webhook OUT:
+// firma HMAC-SHA256 (X-Webhook-Signature), header X-Webhook-Event, timeout
+// 10s. NON scrive in webhook_deliveries (niente retry): per il retry con
+// backoff restano i webhook OUT configurati, che passano da deliverPending().
+export async function sendWebhookPayload({ url, secret = "", eventType = "webhook", payload = {}, allowPrivate = false } = {}) {
+  if (!/^https?:\/\//i.test(String(url || ""))) {
+    return { ok: false, status: 0, error: "URL http/https obbligatorio" };
+  }
+  const body = JSON.stringify({ event_type: eventType, payload });
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Webhook-Event": String(eventType).slice(0, 100),
+  };
+  if (secret) {
+    headers["X-Webhook-Signature"] = crypto
+      .createHmac("sha256", String(secret))
+      .update(body)
+      .digest("hex");
+  }
+  try {
+    const res = await safeFetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+      allowPrivate,
+    });
+    return { ok: res.ok, status: res.status, error: res.ok ? "" : `HTTP ${res.status}`, webhook: { url } };
+  } catch (err) {
+    return { ok: false, status: 0, error: err.message, webhook: { url } };
   }
 }
 

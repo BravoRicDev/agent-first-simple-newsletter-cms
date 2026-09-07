@@ -949,16 +949,25 @@ GET    /api/agent/sites/:id/segments/preview        ← dry-run without saving
 "If event → actions" rules. `trigger_type`: `form_submitted`,
 `quiz_completed`, `email_opened`, `email_clicked`, `call_booked`,
 `call_status_changed`, `stage_changed`, `tag_added`, `contact_created`,
-`score_threshold`, `segment_entered`, `manual`. `trigger_config` filters
-(e.g. `{"quiz_slug":"qualifica-lead","min_score":8}`). Ordered actions:
-`add_tag`, `remove_tag`, `set_stage`, `send_campaign`, `send_sequence`,
-`create_task`, `notify_email`, `wait_days` (delayed queue in the tick).
+`score_threshold`, `segment_entered`, `manual`, `note_added`,
+`conversation_message`, `opportunity_stage_changed`, `quote_signed`.
+`trigger_config` filters (e.g. `{"quiz_slug":"qualifica-lead","min_score":8}`).
+Ordered actions: `add_tag`, `remove_tag`, `set_stage`, `send_campaign`,
+`send_sequence`, `create_task`, `notify_email`, `wait_days` (delayed queue in
+the tick), **`send_webhook`**, **`emit_event`**, **`add_note`**.
+- `send_webhook` fires the payload to an external URL (n8n) with HMAC
+  signature: `{ url, secret, event_type, payload }` — the bridge for complex
+  automations that live in n8n.
+- `emit_event` re-emits a domain event (`{ event_type }`) into the event bus:
+  other workflows or OUT webhooks can then forward it.
+- `add_note` appends a note to the contact (`{ note }`).
 Idempotent: the same campaign is never re-sent to the same contact.
 ```text
 GET    /api/agent/sites/:id/workflows               ← list
 POST   /api/agent/sites/:id/workflows               ← create { name, trigger_type, trigger_config?, actions:[{action_type, action_config}] }
 PUT    /api/agent/sites/:id/workflows/:workflowId   ← update (actions replaces all)
 DELETE /api/agent/sites/:id/workflows/:workflowId   ← delete
+POST   /api/agent/sites/:id/workflows/:workflowId/toggle ← { active?: bool } (default: invert)
 GET    /api/agent/sites/:id/workflows/:workflowId/runs ← run log
 POST   /api/agent/sites/:id/workflows/:workflowId/test ← dry-run (lists actions, executes nothing)
 ```
@@ -1353,7 +1362,25 @@ agent routes + MCP tools (301 total tools). Overview:
 - **35 — Webhooks in/out**: public endpoint `/webhooks/in/:siteId/:token`
   (event mapping → actions), outbound webhooks with HMAC signature,
   `webhook-deliveries` queue with retry/backoff (hooked into
-  `emitContactEvent`).
+  `emitContactEvent`). OUT webhooks support a `filter` object
+  (e.g. `{"form_slug":"qualifica-lead"}` or `{"!tag":"spam"}`): only
+  deliveries whose payload matches (AND, dot-paths, `!` = not-equal) fire.
+  Agent endpoints:
+  ```text
+  GET    /api/agent/webhook-events                      ← event catalog (28) + filterable fields
+  GET    /api/agent/sites/:id/webhooks                 ← list (?direction=in|out)
+  POST   /api/agent/sites/:id/webhooks                 ← create { name, direction, url?, secret, events, filter?, active }
+  PUT    /api/agent/sites/:id/webhooks/:webhookId      ← update
+  DELETE /api/agent/sites/:id/webhooks/:webhookId      ← delete
+  POST   /api/agent/sites/:id/webhooks/:webhookId/test ← send test payload (OUT only)
+  GET    /api/agent/sites/:id/webhook-deliveries       ← delivery log (?status= sent|pending|failed)
+  POST   /api/agent/sites/:id/webhook-deliveries/run   ← flush pending now
+  POST   /api/agent/sites/:id/webhook-deliveries/:deliveryId/retry ← reset+retry one
+  ```
+  COMBO n8n flow: `workflow(send_webhook)` fires a webhook to n8n with the
+  full payload; n8n does the complex logic/conditions; if it needs to write
+  back, it POSTs to `/webhooks/in/:siteId/:token` (mapping
+  `{"lead.qualified":{"action":"create_contact"}}`).
 - **36 — Google OAuth**: `oauth-apps` + authorization code flow
   (auth-url/exchange/refresh/disconnect), `/oauth/callback/:provider`.
 - **37 — Bidirectional calendar sync**: `calendar-sync-configs`

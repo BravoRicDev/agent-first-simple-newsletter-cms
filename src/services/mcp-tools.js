@@ -655,7 +655,7 @@ const TOOL_META = {
   },
   "POST /api/agent/sites/:siteId/workflows": {
     name: "workflows_create",
-    description: { en: "Creates an automation workflow. trigger_type: form_submitted|quiz_completed|email_opened|email_clicked|call_booked|call_status_changed|stage_changed|tag_added|contact_created|score_threshold|segment_entered|manual. trigger_config filters (form_slug/quiz_slug/to_stage/tag/min_score/segment_id). actions: [{action_type: add_tag|remove_tag|set_stage|send_campaign|send_sequence|create_task|notify_email|wait_days, action_config}] executed in order.", it: "Crea un workflow di automazione. trigger_type: form_submitted|quiz_completed|email_opened|email_clicked|call_booked|call_status_changed|stage_changed|tag_added|contact_created|score_threshold|segment_entered|manual. trigger_config filtra (form_slug/quiz_slug/to_stage/tag/min_score/segment_id). actions: [{action_type: add_tag|remove_tag|set_stage|send_campaign|send_sequence|create_task|notify_email|wait_days, action_config}] eseguite in ordine." },
+    description: { en: "Creates an automation workflow. trigger_type: form_submitted|quiz_completed|email_opened|email_clicked|call_booked|call_status_changed|stage_changed|tag_added|contact_created|score_threshold|segment_entered|manual|note_added|conversation_message|opportunity_stage_changed|quote_signed. trigger_config filters (form_slug/quiz_slug/to_stage/tag/min_score/segment_id). actions: [{action_type: add_tag|remove_tag|set_stage|send_campaign|send_sequence|create_task|notify_email|wait_days|send_webhook|emit_event|add_note, action_config}] executed in order. send_webhook fires a webhook to an external URL (n8n) with HMAC signature: {url, secret, event_type, payload}. emit_event re-emits a domain event: {event_type}. add_note appends a note: {note}.", it: "Crea un workflow di automazione. trigger_type: form_submitted|quiz_completed|email_opened|email_clicked|call_booked|call_status_changed|stage_changed|tag_added|contact_created|score_threshold|segment_entered|manual|note_added|conversation_message|opportunity_stage_changed|quote_signed. trigger_config filtra (form_slug/quiz_slug/to_stage/tag/min_score/segment_id). actions: [{action_type: add_tag|remove_tag|set_stage|send_campaign|send_sequence|create_task|notify_email|wait_days|send_webhook|emit_event|add_note, action_config}] eseguite in ordine. send_webhook spara un webhook verso un URL esterno (n8n) con firma HMAC: {url, secret, event_type, payload}. emit_event ri-emette un evento di dominio: {event_type}. add_note aggiunge una nota: {note}." },
     inputSchema: {
       site_id: z.number(), name: z.string(),
       trigger_type: z.string(), trigger_config: z.record(z.any()).optional(),
@@ -1487,6 +1487,31 @@ const TOOL_META = {
     name: "webhook_deliveries_run",
     description: { en: "Runs pending outbound deliveries now (with retry/backoff).", it: "Esegue subito le consegne in uscita pendenti (con retry/backoff)." },
     inputSchema: { site_id: z.number(), limit: z.number().optional() },
+  },
+  "POST /api/agent/sites/:siteId/webhooks/:webhookId/test": {
+    name: "webhook_test",
+    description: { en: "Sends a test payload to an OUT webhook to verify the endpoint (n8n) is reachable and the HMAC signature works.", it: "Invia un payload di test a un webhook OUT per verificare che l'endpoint (n8n) sia raggiungibile e la firma HMAC funzioni." },
+    inputSchema: { site_id: z.number(), webhook_id: z.number(), event_type: z.string().optional(), payload: z.record(z.any()).optional() },
+  },
+  "POST /api/agent/sites/:siteId/webhook-deliveries/:deliveryId/retry": {
+    name: "webhook_delivery_retry",
+    description: { en: "Resets a failed/pending delivery and retries it immediately.", it: "Azzera una delivery fallita/pendente e la ritenta subito." },
+    inputSchema: { site_id: z.number(), delivery_id: z.number() },
+  },
+  "GET /api/agent/webhook-events": {
+    name: "webhook_events_list",
+    description: { en: "Lists all available webhook event types (for OUT) and filterable payload fields.", it: "Elenca tutti gli eventi disponibili per i webhook (OUT) e i campi filtrabili del payload." },
+    inputSchema: {},
+  },
+  "POST /api/agent/sites/:siteId/workflows/:workflowId/toggle": {
+    name: "workflows_toggle",
+    description: { en: "Activates or deactivates a workflow (no body: toggles; body {active:true|false}: sets explicitly).", it: "Attiva o disattiva un workflow (senza body: inverte; con body {active:true|false}: imposta esplicitamente)." },
+    inputSchema: { site_id: z.number(), workflow_id: z.number(), active: z.boolean().optional() },
+  },
+  "POST /api/agent/sites/:siteId/workflows/:workflowId/test": {
+    name: "workflows_test",
+    description: { en: "Dry-run: lists the actions that would run for an email without executing them.", it: "Dry-run: elenca le azioni che partirebbero per una email senza eseguirle." },
+    inputSchema: { site_id: z.number(), workflow_id: z.number(), email: z.string() },
   },
 
   // ── OAuth Google (Advanced features) ──────────────────────────────────────────
