@@ -2,6 +2,7 @@ import { query, getClient } from "../../db.js";
 import { logger } from "../logger.js";
 import { loadConfig, createSourceClient, SourceBudgetError } from "./client.js";
 import * as contactsMapper from "./mappers/contacts.js";
+import { emitContactEvent } from "../events.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Orchestratore source-sync (docs/SOURCE_SYNC_PLAN.md).
@@ -214,6 +215,26 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
           JSON.stringify(error ? [{ error }] : []),
         ]
       );
+
+      // ── Bridging webhook OUT ──────────────────────────────────────────
+      // Emette un evento source_sync_completed nel bus così i webhook OUT/
+      // workflow configurati per quel trigger possono propagare l'esito a
+      // sistemi esterni (es. n8n per campagne cross-channel post-sync).
+      if (status === "ok" && ctx && !dryRun) {
+        try {
+          const contactCount = ctx.stats?.contacts?.upserted || 0;
+          await emitContactEvent(siteId, "", "source_sync_completed", {
+            sync_id: runRow.id,
+            status,
+            mode: mode || "full",
+            resources: requested,
+            stats: ctx.stats,
+            contact_count: contactCount,
+          }, { origin: "import" }).catch(() => {});
+        } catch (err) {
+          logger.error(`source-sync: emit source_sync_completed fallito (site ${siteId}): ${err.message}`);
+        }
+      }
     }
 
     return { ok: status === "ok" || status === "budget_exhausted", status, stats: ctx?.stats || {}, error };

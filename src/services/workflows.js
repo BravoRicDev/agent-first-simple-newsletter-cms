@@ -22,14 +22,67 @@ const TRIGGER_TYPES = new Set([
   "note_added", "conversation_message", "conversation_status_changed",
   "opportunity_stage_changed", "opportunity_status_changed",
   "quote_sent", "quote_viewed", "quote_signed",
+  "agent_runtime", "agent_handoff", "conversation_started",
 ]);
 
 const ACTION_TYPES = new Set([
   "add_tag", "remove_tag", "set_stage", "send_campaign", "send_sequence",
   "create_task", "notify_email", "wait_days", "send_webhook", "emit_event",
-  "add_note",
+  "add_note", "if", "delay",
 ]);
 
+// ── Brancing condizionale ────────────────────────────────────────────────
+// Ogni azione può avere una `condition` (JSONB) per il branching if/else:
+//   { "field": "contact.email", "op": "!=", "value": "test@test.com" }
+//   { "field": "payload.amount", "op": ">", "value": 1000 }
+//   { "field": "payload.tag", "op": "contains", "value": "hot" }
+//   { "field": "payload.segment_id", "op": "exists", "value": true }
+// Con `event` (true) azione eseguita se condizione VERA;
+// con `event` (false) azione eseguita se condizione FALSA (else).
+function getPathVal(obj, path) {
+  if (!path || !obj) return undefined;
+  return String(path).split(".").reduce((cur, p) => (cur === null || cur === undefined ? undefined : cur[p]), obj);
+}
+
+export function evalCondition(cond, context) {
+  if (!cond || typeof cond !== "object" || Object.keys(cond).length === 0) return true;
+  const field = String(cond.field || "");
+  if (!field) return true;
+  const actual = getPathVal(context, field);
+  const expected = cond.value;
+  const op = String(cond.op || "==");
+  switch (op) {
+    case "exists":
+      return expected !== false ? actual !== undefined && actual !== null : actual === undefined || actual === null;
+    case "!=":
+      return String(actual ?? "") !== String(expected ?? "");
+    case ">":
+      return Number(actual) > Number(expected);
+    case "<":
+      return Number(actual) < Number(expected);
+    case ">=":
+      return Number(actual) >= Number(expected);
+    case "<=":
+      return Number(actual) <= Number(expected);
+    case "contains": {
+      const a = String(actual ?? "");
+      const v = String(expected ?? "");
+      return a.includes(v);
+    }
+    case "starts":
+      return String(actual ?? "").startsWith(String(expected ?? ""));
+    case "matches": {
+      try { return new RegExp(expected).test(String(actual ?? "")); } catch { return false; }
+    }
+    case "==":
+    default:
+      return String(actual ?? "") === String(expected ?? "");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Applica i workflow attivi che matchano l'eventType per l'email data.
+// ─────────────────────────────────────────────────────────────────────────
 export async function applyWorkflows(siteId, email, eventType, payload = {}, { depth = 0 } = {}) {
   const normalized = String(email || "").trim().toLowerCase();
   if (!normalized || !siteId || !TRIGGER_TYPES.has(eventType)) return;
@@ -52,6 +105,123 @@ export async function applyWorkflows(siteId, email, eventType, payload = {}, { d
   }
 }
 
+// Esegue le azioni del workflow rispettando le condizioni (if/else).
+async function executeActionsWithConditions(siteId, workflow, actions, email, eventType, payload, { depth } = {}) {
+  const context = { ...(payload || {}), email, event: eventType };
+  for (const action of actions) {
+    const cond = action.condition || {};
+    const expected = cond.expected !== false;
+    const outcome = evalCondition(cond, context);
+    const shouldRun = cond.expected === false ? !outcome : outcome;
+    // Se condizione `event:false` invertita, run con outcome opposto
+    if (!shouldRun) {
+      logger.info(`Workflow #${workflow.id} azione ${action.action_type} saltata (condizione non matchata per ${email})`);
+      continue;
+    }
+    try {
+      await executeAction(siteId, workflow, action, email, eventType, payload, { depth });
+    } catch (err) {
+      logger.error(`Workflow #${workflow.id} azione ${action.action_type} fallita (${email}): ${err.message}`);
+      await logRun(workflow.id, siteId, email, eventType, "error", err.message);
+    }
+  }
+}
+
+async function runWorkflow(siteId, workflow, email, eventType, payload, { depth } = {}) {
+  const startTime = Date.now();
+  const actions = (await query(
+    `SELECT id, action_type, action_config, condition FROM workflow_actions
+     WHERE workflow_id = $1 ORDER BY action_order`,
+    [workflow.id]
+  )).rows;
+
+  let runStatus = "ok";
+  let runError = null;
+  for (const action of actions) {
+    if (action.action_type === "if") {
+      // Action "if" pura: valuta condizione e regola il branching senza eseguire.
+      continue;
+    }
+    try {
+      await executeAction(siteId, workflow, action, email, eventType, payload, { depth });
+    } catch (err) {
+      logger.error(`Workflow #${workflow.id} azione ${action.action_type} fallita (${email}): ${err.message}`);
+      runStatus = "error";
+      runError = err.message;
+      // Continua con le azioni successive (un'azione rotta non blocca le altre).
+    }
+  }
+  const durationMs = Date.now() - startTime;
+  await logRun(workflow.id, siteId, email, eventType, runStatus, runError, durationMs);
+}
+
+// ── Analytics & SLA workflow ─────────────────────────────────────────────
+// Statistiche run: success rate, tempi medi/P95, conteggi per workflow e
+// per trigger. Usato dall'admin e dall'endpoint agent.
+export async function getWorkflowAnalytics(siteId, { workflowId = null, from = null, to = null } = {}) {
+  const params = [siteId];
+  let where = "r.site_id = $1";
+  if (workflowId) {
+    params.push(workflowId);
+    where += ` AND r.workflow_id = $${params.length}`;
+  }
+  if (from) {
+    params.push(from);
+    where += ` AND r.created_at >= $${params.length}`;
+  }
+  if (to) {
+    params.push(to);
+    where += ` AND r.created_at <= $${params.length}`;
+  }
+
+  const totals = (await query(
+    `SELECT
+       COUNT(*)::int                          AS total_runs,
+       COUNT(*) FILTER (WHERE r.status = 'ok')::int   AS ok_runs,
+       COUNT(*) FILTER (WHERE r.status = 'error')::int AS error_runs,
+       COALESCE(ROUND(AVG(r.duration_ms)), 0)::int    AS avg_duration_ms,
+       COALESCE(MAX(r.duration_ms), 0)::int           AS max_duration_ms,
+       COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.duration_ms), 0)::int AS p95_duration_ms
+     FROM workflow_runs r
+     WHERE ${where}`,
+    params
+  )).rows[0];
+
+  const perWorkflow = (await query(
+    `SELECT r.workflow_id, w.name,
+       COUNT(*)::int AS runs,
+       COUNT(*) FILTER (WHERE r.status = 'ok')::int AS ok,
+       COUNT(*) FILTER (WHERE r.status = 'error')::int AS errors,
+       COALESCE(ROUND(AVG(r.duration_ms)), 0)::int AS avg_duration_ms
+     FROM workflow_runs r
+     LEFT JOIN workflows w ON w.id = r.workflow_id
+     WHERE ${where}
+     GROUP BY r.workflow_id, w.name
+     ORDER BY runs DESC
+     LIMIT 50`,
+    params
+  )).rows;
+
+  const perTrigger = (await query(
+    `SELECT r.trigger_type,
+       COUNT(*)::int AS runs,
+       COUNT(*) FILTER (WHERE r.status = 'ok')::int AS ok,
+       COUNT(*) FILTER (WHERE r.status = 'error')::int AS errors
+     FROM workflow_runs r
+     WHERE ${where}
+     GROUP BY r.trigger_type
+     ORDER BY runs DESC
+     LIMIT 30`,
+    params
+  )).rows;
+
+  return {
+    totals: totals || { total_runs: 0, ok_runs: 0, error_runs: 0, avg_duration_ms: 0, max_duration_ms: 0, p95_duration_ms: 0 },
+    per_workflow: perWorkflow,
+    per_trigger: perTrigger,
+  };
+}
+
 function matchTriggerConfig(config, eventType, payload, siteId, email) {
   if (!config || typeof config !== "object") return true;
   if (config.form_slug && payload.form_slug !== config.form_slug) return false;
@@ -61,6 +231,13 @@ function matchTriggerConfig(config, eventType, payload, siteId, email) {
   if (config.tag && payload.tag !== config.tag) return false;
   if (config.status && payload.status !== config.status) return false;
   if (config.min_score !== undefined && config.min_score !== null && Number(payload.points || 0) < Number(config.min_score)) return false;
+  // agent_runtime specific: match by runtime_id or trigger_key
+  if (eventType === "agent_runtime" && config.runtime_id !== undefined && config.runtime_id !== null) {
+    if (Number(payload.runtime_id || 0) !== Number(config.runtime_id)) return false;
+  }
+  if (eventType === "agent_runtime" && config.trigger_key) {
+    if (payload.trigger_key !== config.trigger_key) return false;
+  }
   // segment_id: il contatto deve essere membro del segmento.
   if (config.segment_id) {
     // match sincrono non possibile qui; verificato dal chiamante quando
@@ -69,25 +246,6 @@ function matchTriggerConfig(config, eventType, payload, siteId, email) {
     return true;
   }
   return true;
-}
-
-async function runWorkflow(siteId, workflow, email, eventType, payload, { depth } = {}) {
-  const actions = (await query(
-    `SELECT id, action_type, action_config FROM workflow_actions
-     WHERE workflow_id = $1 ORDER BY action_order`,
-    [workflow.id]
-  )).rows;
-
-  for (const action of actions) {
-    try {
-      await executeAction(siteId, workflow, action, email, eventType, payload, { depth });
-    } catch (err) {
-      logger.error(`Workflow #${workflow.id} azione ${action.action_type} fallita (${email}): ${err.message}`);
-      await logRun(workflow.id, siteId, email, eventType, "error", err.message);
-      // Continua con le azioni successive (un'azione rotta non blocca le altre).
-    }
-  }
-  await logRun(workflow.id, siteId, email, eventType, "ok");
 }
 
 async function executeAction(siteId, workflow, action, email, eventType, payload, { depth } = {}) {
@@ -306,16 +464,31 @@ export async function processDelayedActions(siteId = null, { limit = 200 } = {})
   return { executed };
 }
 
-async function logRun(workflowId, siteId, email, triggerType, status, error = null) {
+async function logRun(workflowId, siteId, email, triggerType, status, error = null, durationMs = 0) {
   try {
     await query(
-      `INSERT INTO workflow_runs (workflow_id, site_id, email, trigger_type, status, error)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [workflowId, siteId, email, triggerType, status, error ? String(error).slice(0, 2000) : null]
+      `INSERT INTO workflow_runs (workflow_id, site_id, email, trigger_type, status, error, duration_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [workflowId, siteId, email, triggerType, status, error ? String(error).slice(0, 2000) : null, durationMs]
     );
   } catch (err) {
     logger.error(`workflow_runs log fallito: ${err.message}`);
   }
+}
+
+export async function listDelayedActions(siteId, { status = null, limit = 200 } = {}) {
+  const params = [siteId];
+  let where = "site_id = $1";
+  if (status) {
+    params.push(status);
+    where += ` AND status = $${params.length}`;
+  }
+  params.push(Math.min(limit, 500));
+  const rows = (await query(
+    `SELECT * FROM workflow_delayed_actions WHERE ${where} ORDER BY run_at LIMIT $${params.length}`,
+    params
+  )).rows;
+  return rows;
 }
 
 // Dry-run: elenca le azioni che partirebbero senza eseguirle.

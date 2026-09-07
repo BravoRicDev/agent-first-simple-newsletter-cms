@@ -113,15 +113,33 @@ async function executeThresholdAction(siteId, email, th, { depth } = {}) {
 // pattern riusato di tracking.js/site-seo.js — nessuna tabella dedicata).
 // scoring_decay_rate: fattore di moltiplicazione per periodo (0<rate<1).
 // scoring_decay_days: lunghezza del periodo in giorni senza eventi.
-async function getScoringDecayConfig(siteId) {
+async function getScoringDecayConfig(siteId, pipelineId) {
   if (!siteId) return { rate: 0.95, days: 1 };
-  const rows = (await query(
-    "SELECT key, value FROM settings WHERE site_id = $1 AND key = ANY($2)",
-    [siteId, ["scoring_decay_rate", "scoring_decay_days"]]
-  )).rows;
-  const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  const rate = Number(map.scoring_decay_rate);
-  const days = Number(map.scoring_decay_days);
+
+  // Controlla prima la configurazione per pipeline, poi cade su quella globale per sito
+  let rate = 0.95;
+  let days = 1;
+
+  if (pipelineId) {
+    const pRow = (await query(
+      `SELECT decay_rate, decay_days FROM pipelines WHERE id = $1 AND site_id = $2`,
+      [pipelineId, siteId]
+    )).rows[0];
+    if (pRow && pRow.decay_rate !== undefined) rate = Number(pRow.decay_rate);
+    if (pRow && pRow.decay_days !== undefined) days = Number(pRow.decay_days);
+  }
+
+  // Se la pipeline non ha config, recupera da settings per sito
+  if (rate === 0.95 && days === 1) {
+    const rows = (await query(
+      "SELECT key, value FROM settings WHERE site_id = $1 AND key = ANY($2)",
+      [siteId, ["scoring_decay_rate", "scoring_decay_days"]]
+    )).rows;
+    const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    if (map.scoring_decay_rate !== undefined) rate = Number(map.scoring_decay_rate);
+    if (map.scoring_decay_days !== undefined) days = Number(map.scoring_decay_days);
+  }
+
   return {
     rate: Number.isFinite(rate) && rate > 0 && rate < 1 ? rate : 0.95,
     days: Number.isFinite(days) && days > 0 ? days : 1,
@@ -151,17 +169,25 @@ async function checkDecayThresholds(siteId, email, oldScore, newScore, { depth =
 }
 
 // Decadimento periodico: score * rate^periodi senza eventi (default
-// rate=0.95, periodo=1 giorno; configurabile per sito via settings
+// rate=0.95, periodo=1 giorno; configurabile per pipeline via
+// pipelines.decay_rate/scoring_decay_days, altrimenti settings globali
 // scoring_decay_rate/scoring_decay_days). Chiamato dal tick scheduler.
-async function applyScoreDecayForSite(siteId) {
-  const { rate, days: decayDays } = await getScoringDecayConfig(siteId);
+async function applyScoreDecayForSite(siteId, pipelineId = null) {
+  const { rate, days: decayDays } = await getScoringDecayConfig(siteId, pipelineId);
+  const params = [siteId];
+  let where = "site_id = $1 AND score != 0 AND score_updated_at IS NOT NULL AND score_updated_at < NOW() - ($2 || ' days')::interval";
+  params.push(String(decayDays));
+  if (pipelineId) {
+    params.push(pipelineId);
+    where += ` AND pipeline_id = $${params.length}`;
+  }
+  params.push(5000);
   const rows = (await query(
     `SELECT id, email, score, score_updated_at
      FROM contacts
-     WHERE site_id = $1 AND score != 0 AND score_updated_at IS NOT NULL
-       AND score_updated_at < NOW() - ($2 || ' days')::interval
-     LIMIT 5000`,
-    [siteId, String(decayDays)]
+     WHERE ${where}
+     LIMIT $${params.length}`,
+    params
   )).rows;
 
   let decayed = 0;
@@ -170,9 +196,6 @@ async function applyScoreDecayForSite(siteId) {
     const periods = Math.floor(elapsedDays / decayDays);
     if (periods <= 0) continue;
     const oldScore = Number(row.score);
-    // Calcolo diretto: round(score * rate^periodi). Un loop periodo-per-
-    // periodo con Math.round resta fermo su score piccoli (es. 10*0.95=9.5
-    // → round=10 → loop infinito senza cambiare nulla).
     const newScore = Math.round(oldScore * Math.pow(rate, periods));
     if (newScore === oldScore) continue;
     await query(
@@ -186,14 +209,15 @@ async function applyScoreDecayForSite(siteId) {
 }
 
 // siteId=null → decadimento su tutti i siti con contatti "scorati".
-export async function applyScoreDecay(siteId = null) {
-  if (siteId) return applyScoreDecayForSite(siteId);
+// pipelineId opzionale per limitare a una pipeline specifica.
+export async function applyScoreDecay(siteId = null, pipelineId = null) {
+  if (siteId) return applyScoreDecayForSite(siteId, pipelineId);
   const sites = (await query(
     "SELECT DISTINCT site_id FROM contacts WHERE score != 0"
   )).rows;
   let decayed = 0;
   for (const row of sites) {
-    const r = await applyScoreDecayForSite(row.site_id);
+    const r = await applyScoreDecayForSite(row.site_id, pipelineId);
     decayed += r.decayed;
   }
   return { decayed };

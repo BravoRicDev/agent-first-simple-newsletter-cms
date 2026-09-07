@@ -8,11 +8,12 @@ ALTER TABLE workflow_actions ADD COLUMN IF NOT EXISTS condition JSONB NOT NULL D
 
 -- 2. pipelines.decay_rate / decay_days: scoring decay configurabile per pipeline
 --    Se nulle, il valore globale (settings) viene usato.
-ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS decay_rate NUMERIC(5,4) NOT NULL DEFAULT NULL;
-ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS decay_days INTEGER NOT NULL DEFAULT NULL;
+ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS decay_rate NUMERIC(5,4) DEFAULT NULL;
+ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS decay_days INTEGER DEFAULT NULL;
 
 -- Aggiorna le pipeline esistenti con i valori di default (lasciare NULL per usare globale)
 UPDATE pipelines SET decay_rate = 0.95 WHERE decay_rate IS NULL;
+UPDATE pipelines SET decay_days = 1 WHERE decay_days IS NULL;
 
 -- 3. workflow_runs.duration_ms: tempo di esecuzione in ms per analytics/SLA
 ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0;

@@ -112,7 +112,25 @@ function sanitizeWebhookData(siteId, data = {}) {
   // Chiave di verifica HMAC (solo IN): separata dal token del path.
   const verify_secret = String(data.verify_secret ?? "").slice(0, 255);
 
-  return { site_id: siteId, direction, name, url, secret, events, filter, allowed_ips, verify_secret, active: data.active !== false };
+  // Template payload OUT (mustache-like) per personalizzare il body inviato.
+  let payload_template = {};
+  if (data.payload_template && typeof data.payload_template === "object" && !Array.isArray(data.payload_template)) {
+    payload_template = Object.fromEntries(
+      Object.entries(data.payload_template)
+        .slice(0, 50)
+        .map(([k, v]) => [String(k).slice(0, 100), v])
+    );
+  } else if (typeof data.payload_template === "string" && data.payload_template.trim()) {
+    // Accetta anche un JSON string per comodità da UI/agent.
+    try {
+      const parsed = JSON.parse(data.payload_template);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload_template = parsed;
+    } catch {
+      payload_template = {};
+    }
+  }
+
+  return { site_id: siteId, direction, name, url, secret, events, filter, allowed_ips, verify_secret, payload_template, active: data.active !== false };
 }
 
 // ── Sicurezza INBOUND ───────────────────────────────────────────────────────
@@ -216,9 +234,9 @@ export async function getWebhook(siteId, id) {
 export async function createWebhook(siteId, data) {
   const clean = sanitizeWebhookData(siteId, data);
   const result = await query(
-    `INSERT INTO webhooks (site_id, name, direction, url, secret, events, filter, allowed_ips, verify_secret, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-    [clean.site_id, clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), JSON.stringify(clean.allowed_ips), clean.verify_secret, clean.active]
+    `INSERT INTO webhooks (site_id, name, direction, url, secret, events, filter, allowed_ips, verify_secret, payload_template, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    [clean.site_id, clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), JSON.stringify(clean.allowed_ips), clean.verify_secret, JSON.stringify(clean.payload_template), clean.active]
   );
   return result.rows[0];
 }
@@ -229,9 +247,9 @@ export async function updateWebhook(siteId, id, data) {
   const clean = sanitizeWebhookData(siteId, { ...current, ...data });
   const result = await query(
     `UPDATE webhooks SET name = $1, direction = $2, url = $3, secret = $4,
-       events = $5, filter = $6, allowed_ips = $7, verify_secret = $8, active = $9, updated_at = NOW()
-     WHERE id = $10 AND site_id = $11 RETURNING *`,
-    [clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), JSON.stringify(clean.allowed_ips), clean.verify_secret, clean.active, id, siteId]
+       events = $5, filter = $6, allowed_ips = $7, verify_secret = $8, payload_template = $9, active = $10, updated_at = NOW()
+     WHERE id = $11 AND site_id = $12 RETURNING *`,
+    [clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), JSON.stringify(clean.allowed_ips), clean.verify_secret, JSON.stringify(clean.payload_template), clean.active, id, siteId]
   );
   return result.rows[0];
 }
@@ -270,6 +288,48 @@ export function matchesFilter(filter, payload) {
     if (!negative && !matches) return false;
   }
   return true;
+}
+
+// ── Payload templating ──────────────────────────────────────────────────
+// Semplice motore di template mustache-like: {{field.path}} viene sostituito
+// col valore corrispondente nell'oggetto dati (dot-notation).
+// Es. template '{"name": "{{contact.name}}", "stage": "{{opportunity.stage}}"}'
+//     data = { contact: {name: "Mario"}, opportunity: {stage: "qualified"} }
+//     → '{"name": "Mario", "stage": "qualified"}'
+export function renderTemplate(template, data) {
+  if (!template || typeof template !== "object" || Object.keys(template).length === 0) return template;
+  if (typeof template === "string") {
+    // Template string: sostituisci {{path}} con valore da data
+    return template.replace(/\{\{([^}]+)\}\}/g, (_, path) => {
+      const parts = path.trim().split(".");
+      let val = data;
+      for (const p of parts) {
+        if (val === null || val === undefined) return "";
+        val = val[p];
+      }
+      return val === undefined || val === null ? "" : String(val);
+    });
+  }
+  // Template object: renderizza ricorsivamente i valori stringa
+  const rendered = {};
+  for (const [key, value] of Object.entries(template)) {
+    if (typeof value === "string") {
+      rendered[key] = value.replace(/\{\{([^}]+)\}\}/g, (_, path) => {
+        const parts = path.trim().split(".");
+        let val = data;
+        for (const p of parts) {
+          if (val === null || val === undefined) return "";
+          val = val[p];
+        }
+        return val === undefined || val === null ? "" : String(val);
+      });
+    } else if (value && typeof value === "object") {
+      rendered[key] = renderTemplate(value, data);
+    } else {
+      rendered[key] = value;
+    }
+  }
+  return rendered;
 }
 
 // Accoda una delivery per ogni webhook OUT attivo del sito che inoltra
@@ -600,10 +660,10 @@ export async function deliverPending(limit = 50, { siteId = null, allowPrivate =
         params
       );
       const ids = claim.rows.map((r) => r.id);
-      if (ids.length > 0) {
+if (ids.length > 0) {
         const detail = await lockClient.query(
           `SELECT d.id, d.webhook_id, d.site_id, d.event_type, d.payload, d.attempts,
-                  w.url, w.secret
+                  w.url, w.secret, w.payload_template
            FROM webhook_deliveries d
            JOIN webhooks w ON w.id = d.webhook_id
            WHERE d.id = ANY($1::int[])`,
@@ -624,6 +684,11 @@ export async function deliverPending(limit = 50, { siteId = null, allowPrivate =
         // ENRICHMENT: arricchisci il payload con dati completi contatto/opportunità
         if (shouldEnrich(delivery.event_type)) {
           await enrichPayload(delivery);
+        }
+
+        // TEMPLATE: applica il payload_template se configurato nel webhook
+        if (delivery.payload_template && typeof delivery.payload_template === "object" && Object.keys(delivery.payload_template).length > 0) {
+          delivery.payload = renderTemplate(delivery.payload_template, delivery.payload);
         }
 
         const body = JSON.stringify({ event_type: delivery.event_type, payload: delivery.payload });

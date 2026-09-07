@@ -3,7 +3,7 @@ import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { sanitizeSegmentRules } from "../services/segments.js";
-import { sanitizeWorkflow } from "../services/workflows.js";
+import { sanitizeWorkflow, listDelayedActions, getWorkflowAnalytics } from "../services/workflows.js";
 import {
   listWebhooks, getWebhook, createWebhook, updateWebhook, deleteWebhook,
 } from "../services/webhooks.js";
@@ -27,6 +27,18 @@ function safeBack(v, fallback) {
     return s;
   }
   return fallback;
+}
+
+// Parsa il campo template payload da testo (UI) a oggetto JSONB.
+function parseTemplate(text) {
+  if (!text || !text.trim()) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // fallback: testo semplice da form non sarà valido JSON, tornare {}
+  }
+  return {};
 }
 
 // ── Admin CRM: segmenti, workflow, task, funnel ──────────────────────────
@@ -107,6 +119,49 @@ router.get("/admin/workflows", requireAuth, authorize("forms", "read"), async (r
     )).rows;
     const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
     res.render("admin/crm/workflows", { workflows, site, sites, siteId, isSuperadmin, saved: req.query.saved === "1" });
+  } catch (err) { next(err); }
+});
+
+router.get("/admin/workflows/delayed-actions", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user.role === "superadmin";
+    const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];
+    let siteId = isSuperadmin && req.query.site_id ? parseInt(req.query.site_id, 10) : req.user.site_id;
+    if (!siteId && isSuperadmin && sites.length > 0) siteId = sites[0].id;
+    if (!siteId) return res.status(400).render("error", { message: "Sito non specificato" });
+
+    const status = req.query.status || null;
+    const delayed = await listDelayedActions(siteId, { status, limit: parseInt(req.query.limit) || 200 });
+    const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
+    res.render("admin/crm/workflows", {
+      workflows: [],
+      site, sites, siteId, isSuperadmin,
+      saved: req.query.saved === "1",
+      delayedActions: delayed,
+      showDelayed: true
+    });
+  } catch (err) { next(err); }
+});
+
+router.get("/admin/workflows/analytics", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user.role === "superadmin";
+    const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];
+    let siteId = isSuperadmin && req.query.site_id ? parseInt(req.query.site_id, 10) : req.user.site_id;
+    if (!siteId && isSuperadmin && sites.length > 0) siteId = sites[0].id;
+    if (!siteId) return res.status(400).render("error", { message: "Sito non specificato" });
+
+    const from = req.query.from ? new Date(req.query.from) : null;
+    const to = req.query.to ? new Date(req.query.to) : null;
+    const analytics = await getWorkflowAnalytics(siteId, { workflowId: req.query.workflow_id, from, to });
+    const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
+    res.render("admin/crm/workflows", {
+      workflows: [],
+      site, sites, siteId, isSuperadmin,
+      saved: req.query.saved === "1",
+      workflowAnalytics: analytics,
+      showAnalytics: true
+    });
   } catch (err) { next(err); }
 });
 
@@ -215,6 +270,7 @@ router.post("/admin/webhooks", requireAuth, authorize("forms", "update"), async 
       filter: JSON.parse(req.body.filter_json || "{}"),
       allowed_ips: (req.body.allowed_ips || "").split(",").map(s => s.trim()).filter(Boolean),
       verify_secret: req.body.verify_secret || "",
+      payload_template: parseTemplate(req.body.payload_template_text),
       active: req.body.active !== "off",
     };
     if (parsed.name && siteId) {
@@ -236,6 +292,7 @@ router.post("/admin/webhooks/:id/update", requireAuth, authorize("forms", "updat
       filter: JSON.parse(req.body.filter_json || "{}"),
       allowed_ips: (req.body.allowed_ips || "").split(",").map(s => s.trim()).filter(Boolean),
       verify_secret: req.body.verify_secret || "",
+      payload_template: parseTemplate(req.body.payload_template_text),
       active: req.body.active !== "off",
     };
     const current = await getWebhook(siteId, id);
@@ -259,6 +316,115 @@ router.post("/admin/webhooks/:id/rotate-token", requireAuth, authorize("forms", 
       [newSecret, id, siteId]
     );
     res.redirect(`/admin/webhooks?site_id=${siteId}&saved=1`);
+  } catch (err) { next(err); }
+});
+
+// ── Webhook OUT retry dashboard ────────────────────────────────────────────
+// Elenca le delivery fallite per sito, con bottone per resettarle in stato 'pending'
+// per un nuovo tentativo da parte di deliverPending().
+router.get("/admin/webhooks/deliveries-failed", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user.role === "superadmin";
+    const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];
+    let siteId = isSuperadmin && req.query.site_id ? parseInt(req.query.site_id, 10) : req.user.site_id;
+    if (!siteId && isSuperadmin && sites.length > 0) siteId = sites[0].id;
+    if (!siteId) return res.status(400).render("error", { message: "Sito non specificato" });
+
+    const failedDeliveries = (await query(
+      `SELECT d.id, d.event_type, d.status, d.attempts, d.last_error, d.created_at,
+              w.name AS webhook_name, w.url
+       FROM webhook_deliveries d
+       LEFT JOIN webhooks w ON w.id = d.webhook_id
+       WHERE d.site_id = $1 AND d.status = 'failed'
+       ORDER BY d.created_at DESC LIMIT 50`,
+      [siteId]
+    )).rows;
+    const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
+    res.render("admin/crm/webhooks", {
+      webhooks: [], deliveries: [], recentDeliveries: [], inboundLog: [],
+      site, sites, siteId, isSuperadmin,
+      saved: req.query.saved === "1",
+      failedDeliveries: failedDeliveries,
+      showFailedDeliveries: true
+    });
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/webhooks/:deliveryId/resend", requireAuth, authorize("forms", "update"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    const deliveryId = parseInt(req.params.deliveryId, 10);
+    // Resetta la delivery a 'pending' per un nuovo tentativo
+    await query(
+      `UPDATE webhook_deliveries SET status = 'pending', attempts = 0, last_error = '' WHERE id = $1 AND site_id = $2`,
+      [deliveryId, siteId]
+    );
+    res.redirect(`/admin/webhooks/deliveries-failed?site_id=${siteId}&saved=1`);
+  } catch (err) { next(err); }
+});
+
+// ── Inbound webhook mapping preview ─────────────────────────────────────────
+// POST: simula un payload in ingresso contro il webhook IN scelto e mostra
+// quali azioni verrebbero eseguite (senza eseguirle davvero). Riusa
+// matchesFilter per la valutazione del filtro payload.
+router.post("/api/admin/webhooks/preview", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && (req.body.site_id || req.query.site_id) ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    const webhookId = parseInt(req.body.webhook_id, 10);
+    let payload = {};
+    try { payload = JSON.parse(req.body.payload || "{}"); } catch (err) {
+      return res.status(400).json({ ok: false, error: "Payload non valido (deve essere JSON)" });
+    }
+    const webhook = await getWebhook(siteId, webhookId);
+    if (!webhook) return res.status(404).json({ ok: false, error: "Webhook non trovato" });
+
+    const { matchesFilter } = await import("../services/webhooks.js");
+    const { ipInAllowedList, verifyHmacSignature } = await import("../services/webhooks.js");
+
+    const ip = String(req.body.ip || "").trim();
+    const sig = String(req.body.signature || "").trim();
+    const checks = {};
+
+    // 1. IP allowlist
+    if (webhook.allowed_ips && webhook.allowed_ips.length > 0) {
+      checks.ip_allowed = ip ? ipInAllowedList(ip, webhook.allowed_ips) : false;
+    } else {
+      checks.ip_allowed = true;
+    }
+
+    // 2. HMAC verify
+    if (webhook.verify_secret) {
+      const bodyStr = typeof payload === "string" ? payload : JSON.stringify(payload);
+      checks.signature_valid = sig ? verifyHmacSignature(webhook.verify_secret, bodyStr, sig) : false;
+    } else {
+      checks.signature_valid = null; // non richiesta
+    }
+
+    // 3. Filter payload
+    if (webhook.filter && Object.keys(webhook.filter).length > 0) {
+      checks.filter_match = matchesFilter(webhook.filter, payload.payload || payload);
+    } else {
+      checks.filter_match = true;
+    }
+
+    // 4. Mapping: se il payload ha event_type, mostra l'azione che partirebbe
+    let would_execute = null;
+    const mapping = webhook.events && typeof webhook.events === "object" && !Array.isArray(webhook.events) ? webhook.events : {};
+    const eventType = String(payload.event_type || payload.type || "").trim();
+    if (eventType && mapping[eventType]) {
+      would_execute = { event_type: eventType, action: mapping[eventType] };
+    } else if (Object.keys(mapping).length > 0) {
+      const firstKey = Object.keys(mapping)[0];
+      would_execute = { event_type: firstKey, action: mapping[firstKey] };
+    }
+
+    res.json({
+      ok: true,
+      webhook_id: webhookId,
+      checks,
+      would_execute,
+      all_ok: (checks.ip_allowed !== false) && (checks.signature_valid !== false) && (checks.filter_match !== false),
+    });
   } catch (err) { next(err); }
 });
 

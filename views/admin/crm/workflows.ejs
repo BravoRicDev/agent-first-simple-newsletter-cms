@@ -52,6 +52,101 @@
     <% } %>
   </div>
 
+  <% if (showDelayed && delayedActions && delayedActions.length > 0) { %>
+  <div style="flex:1;min-width:340px;background:#e2e8f0;border-left:4px solid #63b3ed;padding:16px;margin-left:30px;border-radius:6px;">
+    <h2 style="font-size:16px;margin-bottom:12px;">Azioni differite in attesa</h2>
+    <% const pending = delayedActions.filter(a => a.status === 'pending'); %>
+    <% if (pending.length > 0) { %>
+    <p style="font-size:12px;color:#666;margin-bottom:12px;">Totale azioni differite: <%= delayedActions.length %> (in attesa: <%= pending.length %>)</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr><th>Email</th><th>Azioni</th><th>Run at</th><th>Stato</th></tr></thead>
+      <tbody>
+        <% pending.forEach(a => { %>
+        <tr style="background:<%= a.executed_at ? '#f3f4f6' : '#ffffff' %>;">
+          <td style="padding:6px 8px;"><%= a.email %></td>
+          <td style="padding:6px 8px;"><%= a.action_type %>: <%= JSON.stringify(a.action_config).slice(0,80) %></td>
+          <td style="padding:6px 8px;"><%= a.run_at.toLocaleString() %></td>
+          <td style="padding:6px 8px;color:#65a30d;"><%= a.status %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } else { %>
+    <p style="color:#666;font-size:13px;margin:10px 0;">Nessuna azione in attesa scadente in questo momento.</p>
+    <% } %>
+    <% delayedActions.forEach(a => { %>
+    <% if (a.status !== 'pending') { %>
+    <p style="font-size:11px;color:#b91c1c;margin:6px 0;">ID <%= a.id %>: <%= a.action_type %> per <%= a.email %> - scaduto il <%= a.run_at.toLocaleString() %> - <%= a.status %> <%= a.executed_at ? '(eseguita)' : '' %></p>
+    <% } <% }) %>
+  </div>
+  <% } %>
+
+  <% if (showAnalytics && workflowAnalytics) { %>
+  <div style="flex:1;min-width:340px;background:#eef2ff;border-left:4px solid #6366f1;padding:16px;margin-left:30px;border-radius:6px;">
+    <h2 style="font-size:16px;margin-bottom:12px;">📊 Analytics workflow</h2>
+    <p style="font-size:12px;color:#666;margin-bottom:12px;">Success rate, tempi di esecuzione e SLA per le automazioni.</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+      <div style="background:#fff;border-radius:6px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;"><%= workflowAnalytics.totals.total_runs %></div>
+        <div style="font-size:11px;color:#666;">Run totali</div>
+      </div>
+      <div style="background:#fff;border-radius:6px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;color:#16a34a;"><%= workflowAnalytics.totals.ok_runs %></div>
+        <div style="font-size:11px;color:#666;">OK</div>
+      </div>
+      <div style="background:#fff;border-radius:6px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;color:#dc2626;"><%= workflowAnalytics.totals.error_runs %></div>
+        <div style="font-size:11px;color:#666;">Errori</div>
+      </div>
+      <div style="background:#fff;border-radius:6px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;"><%= workflowAnalytics.totals.avg_duration_ms %>ms</div>
+        <div style="font-size:11px;color:#666;">Media</div>
+      </div>
+      <div style="background:#fff;border-radius:6px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:700;"><%= workflowAnalytics.totals.p95_duration_ms %>ms</div>
+        <div style="font-size:11px;color:#666;">P95 (SLA)</div>
+      </div>
+    </div>
+    <h3 style="font-size:13px;margin:0 0 8px 0;">Per workflow</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff;border-radius:6px;">
+      <thead><tr><th>Workflow</th><th>Run</th><th>OK</th><th>Err</th><th>Media</th></tr></thead>
+      <tbody>
+        <% if (workflowAnalytics.per_workflow.length === 0) { %>
+        <tr><td colspan="5" style="text-align:center;color:#999;padding:8px;">Nessun dato</td></tr>
+        <% } else { %>
+        <% workflowAnalytics.per_workflow.forEach(pw => { %>
+        <tr>
+          <td style="padding:4px 6px;"><%= pw.name || ('#'+pw.workflow_id) %></td>
+          <td style="padding:4px 6px;"><%= pw.runs %></td>
+          <td style="padding:4px 6px;color:#16a34a;"><%= pw.ok %></td>
+          <td style="padding:4px 6px;color:#dc2626;"><%= pw.errors %></td>
+          <td style="padding:4px 6px;"><%= pw.avg_duration_ms %>ms</td>
+        </tr>
+        <% }) %>
+        <% } %>
+      </tbody>
+    </table>
+    <h3 style="font-size:13px;margin:12px 0 8px 0;">Per trigger</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff;border-radius:6px;">
+      <thead><tr><th>Trigger</th><th>Run</th><th>OK</th><th>Err</th></tr></thead>
+      <tbody>
+        <% if (workflowAnalytics.per_trigger.length === 0) { %>
+        <tr><td colspan="4" style="text-align:center;color:#999;padding:8px;">Nessun dato</td></tr>
+        <% } else { %>
+        <% workflowAnalytics.per_trigger.forEach(pt => { %>
+        <tr>
+          <td style="padding:4px 6px;"><code><%= pt.trigger_type %></code></td>
+          <td style="padding:4px 6px;"><%= pt.runs %></td>
+          <td style="padding:4px 6px;color:#16a34a;"><%= pt.ok %></td>
+          <td style="padding:4px 6px;color:#dc2626;"><%= pt.errors %></td>
+        </tr>
+        <% }) %>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+  <% } %>
+
   <div style="flex:1;min-width:340px;">
     <h2 style="font-size:16px;">Nuovo workflow</h2>
     <form method="POST" action="/admin/workflows">
@@ -81,6 +176,9 @@
           <option value="opportunity_stage_changed">💰 Stadio opportunità cambiato</option>
           <option value="quote_signed">✍️ Preventivo firmato</option>
           <option value="manual">🖐️ Manuale</option>
+          <option value="agent_runtime">🤖 Runtime agente</option>
+          <option value="agent_handoff">🤝 Hand-off agente</option>
+          <option value="conversation_started">💬 Conversazione avviata</option>
         </select>
       </div>
       <div class="form-group">
