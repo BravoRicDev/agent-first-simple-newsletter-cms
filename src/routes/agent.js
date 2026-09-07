@@ -47,6 +47,43 @@ const execFileAsync = promisify(execFile);
 
 const router = Router();
 
+// ── API Versioning / Deprecation ───────────────────────────────────────────
+// Supporta il content negotiation via Accept header (application/vnd.cms.agent.v1+json)
+// e fornisce header Deprecation/Sunset per identificare endpoint deprecated.
+const AGENT_API_VERSION = "1.0";
+const DEPRECATED_ENDPOINTS = new Map([
+  // Esempio: ["/api/agent/deprecated-path", { sunset: "2027-01-01", replacement: "/api/agent/new-path" }],
+]);
+
+router.use("/api/agent", (req, res, next) => {
+  // Header di versione per la risposta
+  res.setHeader("X-Agent-Api-Version", AGENT_API_VERSION);
+
+  // Verifica deprecazione
+  const deprecation = DEPRECATED_ENDPOINTS.get(req.path);
+  if (deprecation) {
+    res.setHeader("Deprecation", "true");
+    if (deprecation.sunset) res.setHeader("Sunset", deprecation.sunset);
+    if (deprecation.replacement) res.setHeader("Link", `<${deprecation.replacement}>; rel="successor"`);
+  }
+
+  // Content negotiation: se il client richiede una versione specifica non supportata, rispondi 406
+  const accept = req.get("Accept") || "";
+  const versionMatch = accept.match(/application\/vnd\.cms\.agent\.v(\d+)\+json/);
+  if (versionMatch) {
+    const requestedVersion = parseInt(versionMatch[1], 10);
+    if (requestedVersion !== 1) {
+      return res.status(406).json({
+        error: "unsupported_version",
+        code: "unsupported_version",
+        supported_versions: [1],
+        message: `API version ${requestedVersion} not supported. Supported: v1`,
+      });
+    }
+  }
+  next();
+});
+
 import { Worker } from "worker_threads";
 
 const REGEX_RUN_TIMEOUT_MS = 1000;
@@ -151,6 +188,36 @@ async function canAccessSite(user, siteId) {
 // Sanitizzazione definizioni quiz (stessa logica di routes/quizzes.js ma
 // senza dipendenza circolare): domande con opzioni label/punti, soglie
 // ordinate per min.
+// Standardizza le risposte di errore Zod con dettagli per campo, così un
+// agente può correggere automaticamente l'input invece di dover interrogare
+// la documentazione. Formato: { error, code, fields: [{ path, message, code }] }
+function sendValidationError(res, err) {
+  const fields = (err.errors || []).map(e => ({
+    path: e.path && e.path.length > 0 ? e.path.join(".") : "body",
+    message: e.message,
+    code: e.code || "invalid_type",
+  }));
+  return res.status(400).json({
+    error: "validation_failed",
+    code: "validation_failed",
+    fields,
+  });
+}
+
+// Gestore comune per gli errori Zod/SQL delle route agent: evita di ripetere
+// il pattern try/catch in ogni endpoint. Ritorna il messaggio generic-consistent
+// per 404/409 e structured per validation.
+function handleAgentError(err, req, res, next) {
+  if (err instanceof z.ZodError) return sendValidationError(res, err);
+  if (err.message === "URL non valido") {
+    return res.status(400).json({ error: "invalid_url", code: "invalid_url" });
+  }
+  if (err.code === "23505") {
+    return res.status(409).json({ error: "conflict", code: "conflict" });
+  }
+  next(err);
+}
+
 function sanitizeQuizQuestions(raw) {
   if (!Array.isArray(raw)) return [];
   const used = new Set();
@@ -379,7 +446,7 @@ router.post("/api/agent/sites/:siteId/pages/bulk-publish", requireAuth, requireA
     res.json({ updated: result.rows, count: result.rowCount });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -587,7 +654,7 @@ router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (
     res.status(201).json(responseData);
     exportPublishedPages({ siteId, pageIds: [page.id] }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.message === "URL non valido") return res.status(400).json({ error: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -645,7 +712,7 @@ router.put("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, 
     res.json({ page: updatedPage });
     exportPublishedPages({ siteId, pageIds: [existing.id] }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.message === "URL non valido") return res.status(400).json({ error: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -737,7 +804,7 @@ router.post("/api/agent/sites/:siteId/pages/bulk-duplicate", requireAuth, requir
 
     res.json({ created, errors });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -774,7 +841,7 @@ router.post("/api/agent/sites/:siteId/pages/:pageId/duplicate", requireAuth, req
     res.status(201).json({ page: result.rows[0] });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.message === "URL non valido") return res.status(400).json({ error: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -823,7 +890,7 @@ router.post("/api/agent/sites/:siteId/pages/:pageId/rename-url", requireAuth, re
     deleteStaticPage(siteId, page.url_path).catch(() => {});
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.message === "URL non valido") return res.status(400).json({ error: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -896,7 +963,7 @@ router.post("/api/agent/sites/:siteId/pages/:pageId/find-replace", requireAuth, 
     res.json({ matches, message: res.locals.t("api.pages.replacedOccurrences", { n: matches }), saved_version_id: versionResult.rows[0]?.id });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -959,7 +1026,7 @@ router.post("/api/agent/pages/search", requireAuth, requireAgent, async (req, re
 
     res.json({ results: allResults, total: allResults.length, query: q });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -1038,7 +1105,7 @@ router.post("/api/agent/sites/:siteId/pages/bulk-find-replace", requireAuth, req
 
     res.json({ pages_affected: results.length, total_matches: totalMatches, results, dry_run });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -1292,23 +1359,20 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/diff/:versionId", requireAuth
     const currentLines = page.content.split("\n");
     const versionLines = version.content.split("\n");
 
-    const currentCount = {};
-    const versionCount = {};
-    currentLines.forEach(l => { currentCount[l] = (currentCount[l] || 0) + 1; });
-    versionLines.forEach(l => { versionCount[l] = (versionCount[l] || 0) + 1; });
+    const format = (req.query.format || "unified").toString().trim();
+    let diffResult;
 
-    let added = 0, removed = 0;
-    const allLines = new Set([...currentLines, ...versionLines]);
-    for (const l of allLines) {
-      const c = currentCount[l] || 0;
-      const v = versionCount[l] || 0;
-      if (c > v) added += c - v;
-      if (v > c) removed += v - c;
+    if (format === "json") {
+      diffResult = diffLines(currentLines, versionLines, { object: true });
+    } else {
+      // Default unified format
+      diffResult = diffLines(currentLines, versionLines);
     }
 
     res.json({
       page_id: page.id,
       version_id: version.id,
+      format,
       current_updated_at: page.updated_at,
       version_created_at: version.created_at,
       current_chars: page.content.length,
@@ -1316,8 +1380,7 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/diff/:versionId", requireAuth
       delta_chars: page.content.length - version.content.length,
       current_lines: currentLines.length,
       version_lines: versionLines.length,
-      lines_added: added,
-      lines_removed: removed,
+      diff: diffResult,
     });
   } catch (err) { next(err); }
 });
@@ -1939,6 +2002,41 @@ router.post("/api/agent/sites/:siteId/pages/:pageId/validate", requireAuth, requ
   } catch (err) { next(err); }
 });
 
+// ── URL Path Validation ────────────────────────────────────────────────────
+// Permette all'agente di verificare se un path URL è valido e disponibile
+// PRIMA di creare una pagina (evita 409 su retry)
+router.get("/api/agent/sites/:siteId/validate-path", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) {
+      return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    }
+    const rawPath = req.query.url_path || req.query.path;
+    if (!rawPath || typeof rawPath !== "string") {
+      return res.status(400).json({ error: "url_path_required", code: "url_path_required", fields: [{ path: "url_path", message: "url_path query parameter is required", code: "required" }] });
+    }
+    const normalized = normalizeUrlPath(rawPath);
+
+    // Check conflitti: esiste già una pagina con questo path?
+    const existing = (await query(
+      "SELECT id, url_path, title FROM pages WHERE site_id = $1 AND url_path = $2",
+      [siteId, normalized]
+    )).rows[0];
+
+    // Validazione formato
+    const isValidFormat = normalized === rawPath && /^\/[a-z0-9/_-]+$/i.test(normalized);
+
+    res.json({
+      valid: !existing && isValidFormat,
+      normalized_path: normalized,
+      original_path: rawPath,
+      conflicts: existing ? [{ type: "duplicate_url", page: { id: existing.id, url_path: existing.url_path, title: existing.title } }] : [],
+      format_valid: isValidFormat,
+      message: existing ? "Path già in uso" : (isValidFormat ? "Path valido" : "Path non valido: usa solo lettere, numeri, /, _, -"),
+    });
+  } catch (err) { next(err); }
+});
+
 // ── Snippet ────────────────────────────────────────────────────────────────
 
 router.get("/api/agent/sites/:siteId/snippets", requireAuth, requireAgent, async (req, res, next) => {
@@ -2004,7 +2102,7 @@ router.post("/api/agent/sites/:siteId/snippets", requireAuth, requireAgent, asyn
     res.status(201).json({ snippet: result.rows[0] });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.snippets.nameExists") });
     next(err);
   }
@@ -2065,7 +2163,7 @@ router.put("/api/agent/sites/:siteId/snippets/:snippetId", requireAuth, requireA
     });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.snippets.nameExists") });
     next(err);
   }
@@ -2127,7 +2225,7 @@ router.post("/api/agent/sites/:siteId/snippets/:snippetId/find-replace", require
     res.json({ matches, message: res.locals.t("api.snippets.replacedOccurrences", { n: matches, name: snippet.name }) });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -2180,7 +2278,7 @@ router.post("/api/agent/sites/:siteId/snippets/bulk-rename", requireAuth, requir
 
     res.json({ updated, errors });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -2242,14 +2340,45 @@ router.get("/api/agent/sites/:siteId/media", requireAuth, requireAgent, async (r
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
     const dir = getSiteDir(siteId);
+    const q = (req.query.q || "").toString().trim();
+    const type = req.query.type || "";
+    const limit = Math.min(parseIntParam(req.query.limit, 50), 200);
+    const offset = parseIntParam(req.query.offset, 0);
+
     let files = [];
+    let total = 0;
     if (fs.existsSync(dir)) {
-      files = fs.readdirSync(dir).map(name => {
+      let allFiles = fs.readdirSync(dir).map(name => {
         const stat = fs.statSync(path.join(dir, name));
         return { name, size: stat.size, size_formatted: formatBytes(stat.size), mtime: stat.mtime, url: `/media/${siteId}/${name}` };
       }).sort((a, b) => b.mtime - a.mtime);
+
+      // Filtro per query (nome o tipo)
+      if (q) {
+        const ql = q.toLowerCase();
+        allFiles = allFiles.filter(f => f.name.toLowerCase().includes(ql) || f.url.toLowerCase().includes(ql));
+      }
+
+      // Filtro per tipo MIME
+      if (type) {
+        const allowedTypes = ["image", "video", "audio", "pdf", "doc"];
+        if (allowedTypes.includes(type)) {
+          allFiles = allFiles.filter(f => {
+            const ext = f.name.split(".").pop().toLowerCase();
+            return (type === "image" && ["jpg","jpeg","png","webp","gif","svg"].includes(ext))
+              || (type === "video" && ["mp4","webm","mov","avi"].includes(ext))
+              || (type === "audio" && ["mp3","wav","ogg","m4a"].includes(ext))
+              || (type === "pdf" && ext === "pdf")
+              || (type === "doc" && ["doc","docx","txt","odt"].includes(ext));
+          });
+        }
+      }
+
+      total = allFiles.length;
+      files = allFiles.slice(offset, offset + limit);
     }
-    res.json({ files });
+
+    res.json({ files, pagination: { total, limit, offset, has_more: offset + limit < total } });
   } catch (err) { next(err); }
 });
 
@@ -2467,7 +2596,7 @@ router.put("/api/agent/sites/:siteId/settings/:key", requireAuth, requireAgent, 
     );
     res.json({ key, value });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -2941,7 +3070,7 @@ router.post("/api/agent/ingest", requireAuth, requireAgent, async (req, res, nex
 
     res.json(result);
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidUrl"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3079,7 +3208,7 @@ router.post("/api/agent/sites/:siteId/templates", requireAuth, requireAgent, asy
     );
     res.status(201).json({ template: result.rows[0] });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.templates.nameExists") });
     next(err);
   }
@@ -3140,7 +3269,7 @@ router.post("/api/agent/sites/:siteId/templates/:templateId/instantiate", requir
     res.status(201).json({ page: result.rows[0], template_used: template.name });
     if (data.published) exportPublishedPages({ siteId, pageIds: [result.rows[0].id] }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.message === "URL non valido") return res.status(400).json({ error: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -3219,7 +3348,7 @@ router.patch("/api/agent/sites/:siteId/pages/:pageId/sections/:sectionName", req
     res.json({ page_id: page.id, section_updated: req.params.sectionName, updated_at: result.rows[0].updated_at });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3276,7 +3405,7 @@ router.put("/api/agent/sites/:siteId/variables/bulk", requireAuth, requireAgent,
 
     res.json({ updated, errors });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3320,7 +3449,7 @@ router.put("/api/agent/sites/:siteId/variables/:key", requireAuth, requireAgent,
     res.json({ variable: result.rows[0] });
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3429,7 +3558,7 @@ router.post("/api/agent/sites/:siteId/redirects", requireAuth, requireAgent, asy
     );
     res.status(201).json({ redirect: result.rows[0] });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     if (err.message === "URL non valido") return res.status(400).json({ error: res.locals.t("api.common.invalidUrl") });
     next(err);
   }
@@ -3857,7 +3986,7 @@ router.post("/api/agent/sites/:siteId/deploy", requireAuth, requireAgent, async 
       message: hasErrors ? `Deploy completato con ${results.errors.length} avviso/i` : "Deploy completato con successo",
     });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3898,7 +4027,7 @@ router.post("/api/agent/sites/bulk-import", requireAuth, requireAgent, async (re
     }
     res.json({ created: results.filter(r => r.status === "created").length, errors: results.filter(r => r.status === "error").length, results });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3917,7 +4046,7 @@ router.post("/api/agent/rewrite", requireAuth, requireAgent, async (req, res, ne
     const rewritten = await rewriteText(text, action);
     res.json({ original: text, rewritten });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -3947,7 +4076,7 @@ router.post("/api/agent/sites/:siteId/social-posts", requireAuth, requireAgent, 
     );
     res.status(201).json({ post: result.rows[0] });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: res.locals.t("api.common.invalidData"), details: err.errors });
+    return handleAgentError(err, req, res, next);
     next(err);
   }
 });
@@ -4803,3 +4932,39 @@ registerGhlPushRoutes(router);
 registerAccessGrantsRoutes(router);
 
 export default router;
+
+// ── Server-Sent Events ─────────────────────────────────────────────────────
+// Endpoint SSE per notifiche in tempo reale su modifiche a pagine, snippet e media.
+router.get("/api/agent/sites/:siteId/events", requireAuth, requireAgent, async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  let sent = 0;
+
+  // Invia un heartbeat ogni 30 secondi per mantenere la connessione viva
+  const heartbeat = setInterval(() => {
+    if (sent === 0) {
+      res.write(`event: heartbeat\ndata: {"status": "ok"}\n\n`);
+      sent = 1;
+    }
+  }, 30000);
+
+  // Cancel the heartbeat when the connection closes
+  res.on("close", () => {
+    clearInterval(heartbeat);
+  });
+
+  // Invia evento iniziale
+  res.write(`event: connected\ndata: {"siteId": ${req.params.siteId}, "status": "connected"}\n\n`);
+
+  // Qui potremmo ascoltare eventi reali dal database o dal bus eventi.
+  // Per ora, il client riceve solo l'evento di connessione e gli heartbeat.
+  // Per implementazione completa, ascoltare i cambiamenti nel DB (es. via pg listen/notify
+  // o una coda Kafka/RabbitMQ) e inviare:
+  //   event: page.created
+  //   data: { page_id, url_path, title, site_id }
+  // oppure
+  //   event: snippet.updated
+  //   data: { snippet_id, name, site_id }
+});
