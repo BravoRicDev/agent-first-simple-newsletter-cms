@@ -196,18 +196,19 @@
 <% } %>
 <% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof leadEventName !== 'undefined' && leadEventName && (typeof leadPages !== 'undefined' && leadPages || typeof leadOverride !== 'undefined' && leadOverride)) { %>
 <!-- Evento Meta Pixel su pagine di conversione (leadEventName + leadPages).
-     Sparato SOLO con consenso marketing (Consent Mode v2), UNA volta per
-     sessione. Provider-agnostico: funziona sia con banner nativo sia esterno
-     perché entrambi scrivono lo stesso cookie consent_marketing e perché
-     l'evento è agganciato a 'cms:marketing-granted' (emesso dal re-apply a
-     ogni page load). leadOverride: true = forza anche fuori leadPages,
-     false = non sparare mai qui. -->
+     Sparato SOLO con consenso marketing (Consent Mode v2), una volta per
+     PAGE LOAD (non per sessione: decisione esplicita del cliente, vedi
+     commento su window.__cmsLeadFired sotto). Provider-agnostico: funziona
+     sia con banner nativo sia esterno perché entrambi scrivono lo stesso
+     cookie consent_marketing e perché l'evento è agganciato a
+     'cms:marketing-granted' (emesso dal re-apply a ogni page load).
+     leadOverride: true = forza anche fuori leadPages, false = non sparare
+     mai qui. -->
 <script>
 (function () {
   var EVENT_NAME = <%- _jsonScript(leadEventName) %>;
   var PAGES = <%- _jsonScript((typeof leadPages !== 'undefined' && leadPages ? String(leadPages).split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [])) %>;
   var LEAD_OVERRIDE = <%- _jsonScript(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
-  var FLAG_KEY = 'cms_lead_fired_' + EVENT_NAME;
 
   function getCookie(name) {
     var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
@@ -227,25 +228,27 @@
   }
    function fireOnce() {
     if (!shouldFireLead()) return;
-    
-    // Check if already fired
-    let alreadyFired = false;
-    try {
-      alreadyFired = !!sessionStorage.getItem(FLAG_KEY);
-    } catch (e) {}
-    if (alreadyFired) return;
-    
+
+    // Guardia SOLO per-page-load (come il PageView, window.__cmsPageViewFired):
+    // evita il doppio/triplo sparo nello stesso caricamento, dato che
+    // fireOnce() viene invocato dalla chiamata diretta + dal listener
+    // cms:marketing-granted + dal retry di polling. NESSUNA memoria di
+    // sessione: ogni visita/reload della pagina thank-you spara un Lead.
+    // Scelta esplicita del cliente: preferisce un eventuale Lead duplicato
+    // (es. reload della thank-you) alla fragilità della guardia precedente
+    // (flag in sessionStorage impostato PRIMA della consegna effettiva: se
+    // qualcosa a valle falliva, il Lead risultava "già sparato" ma non era
+    // mai arrivato a Meta, soppresso per il resto della sessione).
+    if (window.__cmsLeadFired) return;
+
     if (getCookie('consent_marketing') !== '1') return;
     if (!(window.fbq && typeof window.fbq === 'function')) return;
-    
-    // Mark as fired
-    try {
-      sessionStorage.setItem(FLAG_KEY, '1');
-    } catch (e) {}
-    
+
+    window.__cmsLeadFired = true;
+
     // Fire the event
     fbq('track', EVENT_NAME);
-    
+
     // Log for debugging
     try {
       console.log('[Lead] ✓', EVENT_NAME, '→', location.pathname);

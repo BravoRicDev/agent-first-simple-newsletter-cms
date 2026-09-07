@@ -116,7 +116,7 @@ describe("consent: provider library per-sito (asset repo + fallback nativo)", ()
 
   test("blocco Lead client-side: presente solo se leadEventName+leadPages/override configurati", async () => {
     const senza = await renderBody({ consentProvider: "native" });
-    assert.doesNotMatch(senza, /cms_lead_fired_/, "senza config Lead il blocco non c'è (nessuna regressione)");
+    assert.doesNotMatch(senza, /__cmsLeadFired/, "senza config Lead il blocco non c'è (nessuna regressione)");
 
     const con = await renderBody({
       consentProvider: "external",
@@ -126,7 +126,7 @@ describe("consent: provider library per-sito (asset repo + fallback nativo)", ()
       leadPages: "/1/thank-you, /grazie",
       leadOverride: null,
     });
-    assert.match(con, /cms_lead_fired_/, "blocco Lead presente");
+    assert.match(con, /__cmsLeadFired/, "blocco Lead presente (guardia per-page-load, non per-sessione)");
     assert.match(con, /var EVENT_NAME = "Lead"/, "nome evento iniettato");
     assert.match(con, /\/1\/thank-you/, "pagine lead iniettate");
     assert.match(con, /cms:marketing-granted/, "agganciato al consenso marketing");
