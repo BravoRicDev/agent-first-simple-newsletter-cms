@@ -82,14 +82,18 @@ describe("consent: provider library per-sito (asset repo + fallback nativo)", ()
     assert.doesNotMatch(html, /consent\.js/, "niente libreria esterna in modalità native");
   });
 
-  test("render provce external legacy: usa ancora /media/<site>/consent (retro)", async () => {
+  test("render diretto con consentProvider='external' (sinonimo difensivo, non più raggiungibile da UI/getSiteTrackingConfig)", async () => {
+    // getSiteTrackingConfig normalizza sempre external → library (vedi test
+    // dedicato in tracking.test.js): questo test copre solo il fallback
+    // difensivo nel template, per chi chiamasse renderBody direttamente
+    // con un valore "external" residuo salvato in passato.
     const html = await renderBody({
       consentProvider: "external",
       consentLibUrl: "/media/22/consent/consent.js",
       consentLibCssUrl: "/media/22/consent/consent.css",
       consentScriptUrl: "/media/22/consent/bridge.js",
     });
-    assert.match(html, /\/media\/22\/consent\/consent\.js/, "external legacy ancora supportato");
+    assert.match(html, /\/media\/22\/consent\/consent\.js/, "il template tratta ancora 'external' come sinonimo di 'library'");
   });
 
   test("re-apply consenso a ogni page load in TUTTE le modalità (fix pixel morto al ritorno)", async () => {

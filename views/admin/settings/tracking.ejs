@@ -98,14 +98,14 @@
 
   <h2 style="font-size:15px;margin-top:24px;">Provider del banner di consenso</h2>
   <p style="font-size:12px;color:#666;margin-bottom:10px;">
-    "Libreria" usa la libreria cookieconsent condivisa del CMS (sicura, con fallback automatico al banner integrato): consigliata per un aspetto più ricco, configurabile qui sotto per-sito. "CMS integrato" è il banner semplice di default. Lascialo se non devi cambiare nulla.
+    "Libreria" usa la libreria cookieconsent condivisa del CMS (sicura, con fallback automatico al banner integrato): consigliata per un aspetto più ricco, configurabile qui sotto per-sito (testi, posizione, lingua). "CMS integrato" è il banner semplice di default. Lascialo se non devi cambiare nulla.
+    Non è più possibile collegare uno script di consenso completamente esterno/personalizzato per-sito: un bridge scritto fuori dal CMS può duplicare o perdere eventi Meta (PageView/Lead) perché non conosce le sue guardie anti-doppio invio.
   </p>
   <div class="form-group">
     <label>Provider</label>
     <select name="consent_provider">
       <option value="" <%= (!trackingConfig.consentProvider || trackingConfig.consentProvider === 'native') ? 'selected' : '' %>>CMS integrato (default)</option>
       <option value="library" <%= trackingConfig.consentProvider === 'library' ? 'selected' : '' %>>Libreria condivisa (consigliato)</option>
-      <option value="external" <%= trackingConfig.consentProvider === 'external' ? 'selected' : '' %>>Esterno personalizzato (script di terze parti)</option>
     </select>
   </div>
 
@@ -174,24 +174,6 @@
       <div style="display:flex;gap:15px;">
         <input type="text" name="consent_marketing_title" value="<%= trackingConfig.consentMarketingTitle || '' %>" placeholder="Marketing" style="flex:1;">
         <input type="text" name="consent_marketing_desc" value="<%= trackingConfig.consentMarketingDesc || '' %>" placeholder="Usati per tracciare e personalizzare annunci pubblicitari." style="flex:2;">
-      </div>
-    </div>
-  </div>
-  <% } else if (trackingConfig.consentProvider === 'external') { %>
-  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-bottom:12px;">
-    <div class="form-group">
-      <label>URL script libreria consenso (JS)</label>
-      <input type="text" name="consent_lib_url" value="<%= trackingConfig.consentLibUrl || '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.js">
-    </div>
-    <div class="form-group">
-      <label>URL foglio di stile libreria consenso (CSS, opzionale)</label>
-      <input type="text" name="consent_lib_css_url" value="<%= trackingConfig.consentLibCssUrl || '' %>" placeholder="/media/<%= selectedSiteId %>/consent/consent.css">
-    </div>
-    <div class="form-group">
-      <label>URL script di inizializzazione (bridge sui cookie CMS)</label>
-      <input type="text" name="consent_script_url" value="<%= trackingConfig.consentScriptUrl || '' %>" placeholder="/media/<%= selectedSiteId %>/consent/bridge.js">
-      <div style="font-size:12px;color:#666;margin-top:3px;">
-        Deve scrivere i cookie consent_analytics / consent_marketing ("1"/"0") e chiamare gtag('consent','update',...) / fbq('consent','grant'|'revoke') — sono gli stessi che usa il resto del CMS (CAPI, pixel, evento Lead qui sotto).
       </div>
     </div>
   </div>

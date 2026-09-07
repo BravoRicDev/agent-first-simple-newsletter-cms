@@ -27,19 +27,20 @@ const TRACKING_KEYS = {
   consentRejectLabel: "tracking_consent_reject_label",
   consentPrivacyUrl: "tracking_consent_privacy_url",
   // Provider del banner di consenso: "native" (banner CMS integrato,
-  // default — vuoto = native, retrocompatibile) oppure "external" (un
-  // banner di terze parti gestito fuori dal CMS, es. per siti con un lead
-  // form esterno che vogliono un consent manager più ricco). Quando è
-  // "external" il banner nativo NON viene renderizzato: sta al sito
-  // scrivere gli stessi cookie consent_analytics/consent_marketing letti
-  // dal resto del CMS (CAPI, pixel, ecc.) — vedi consentLibUrl/
-  // consentScriptUrl sotto per un provider vendored servito da media/.
+  // default — vuoto = native, retrocompatibile) oppure "library" (libreria
+  // condivisa mantenuta in questo repo, public/consent/*, personalizzabile
+  // per-sito solo su testi/CSS/posizione/lingua — vedi sotto).
+  // "external" (banner completamente arbitrario, vendored per-sito fuori
+  // dal repo in media/<site>/consent/) NON è più selezionabile dall'admin:
+  // un bridge scritto ad hoc, fuori dal nostro controllo, poteva riapplicare
+  // il consenso senza le guardie anti-doppio-evento del CMS (PageView/Lead
+  // duplicati). Un valore "external" salvato in passato viene normalizzato
+  // automaticamente a "library" in getSiteTrackingConfig, sotto.
   consentProvider: "tracking_consent_provider",
-  // URL della libreria di consenso esterna (JS) e del relativo CSS, e dello
-  // script che la inizializza/bridgea sui cookie CMS. Tipicamente puntano a
-  // asset vendored in media/<site>/... (bind-mount, sopravvivono ai
-  // rebuild) ma possono essere qualunque URL assoluto. Usati solo quando
-  // consentProvider === "external" (o "library" con override).
+  // URL della libreria di consenso (JS) e del relativo CSS, e dello script
+  // che la inizializza/bridgea sui cookie CMS. Con provider "library"
+  // puntano di default agli asset condivisi del repo (public/consent/*);
+  // un override esplicito resta possibile ma non più esposto in UI.
   consentLibUrl: "tracking_consent_lib_url",
   consentLibCssUrl: "tracking_consent_lib_css_url",
   consentScriptUrl: "tracking_consent_script_url",
@@ -112,23 +113,16 @@ export async function getSiteTrackingConfig(siteId) {
   // Vuoto = "native" (retrocompatibile: nessuna riga in settings finora
   // significava "banner CMS integrato", e deve continuare a significarlo).
   if (!c.consentProvider) c.consentProvider = "native";
-  // Normalizzo "library" come provider esterno col default sugli asset del
-  // REPO (public/consent/*), così il vecchio "external" che puntava a
-  // media/<site>/consent/* resta funzionante se l'admin ha lasciato il default
-  // ma vuole la lib condivisa. "library" = SENTIERO NUOVO e consigliato.
-  const libDefault = '/consent/consent.js';
-  const cssDefault = '/consent/consent.css';
-  const bridgeDefault = '/consent/bridge.js';
+  // "external" non è più selezionabile dall'admin (vedi commento su
+  // TRACKING_KEYS.consentProvider): un sito configurato in passato viene
+  // migrato in automatico su "library", che usa lo stesso meccanismo ma con
+  // codice che controlliamo (nessuna azione richiesta lato admin/sito).
+  if (c.consentProvider === "external") c.consentProvider = "library";
+  // "library" usa di default gli asset condivisi del REPO (public/consent/*).
   if (c.consentProvider === "library") {
-    c.consentLibUrl = c.consentLibUrl || libDefault;
-    c.consentLibCssUrl = c.consentLibCssUrl || cssDefault;
-    c.consentScriptUrl = c.consentScriptUrl || bridgeDefault;
-  } else if (c.consentProvider === "external") {
-    // Retrocompat: external continua a puntare agli asset vendored per-sito
-    // in media/<site>/consent/ (bind-mount) SOLO se non impostato esplicitamente.
-    if (!c.consentLibUrl) c.consentLibUrl = `/media/${siteId}/consent/consent.js`;
-    if (!c.consentLibCssUrl) c.consentLibCssUrl = `/media/${siteId}/consent/consent.css`;
-    if (!c.consentScriptUrl) c.consentScriptUrl = `/media/${siteId}/consent/bridge.js`;
+    c.consentLibUrl = c.consentLibUrl || '/consent/consent.js';
+    c.consentLibCssUrl = c.consentLibCssUrl || '/consent/consent.css';
+    c.consentScriptUrl = c.consentScriptUrl || '/consent/bridge.js';
   }
   return c;
 }

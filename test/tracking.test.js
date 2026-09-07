@@ -47,6 +47,20 @@ describe("tracking: config per sito, mascheramento token, Conversions API", () =
     assert.equal(full.metaCapiToken, "SEGRETO_XYZ", "la versione non mascherata deve comunque avere il valore reale, per l'invio server-side");
   });
 
+  test("consentProvider='external' (non più selezionabile da UI) viene migrato in automatico a 'library'", async () => {
+    // Un bridge di consenso completamente esterno/vendored per-sito poteva
+    // duplicare o perdere eventi Meta (non conosce le guardie anti-doppio
+    // del CMS). getSiteTrackingConfig normalizza qualunque valore residuo
+    // "external" salvato in passato su "library" (stesso meccanismo, ma
+    // codice che controlliamo), usando gli asset condivisi del repo.
+    await setSiteTrackingConfig(site.id, { consentProvider: "external", consentLibUrl: "", consentLibCssUrl: "", consentScriptUrl: "" });
+    const c = await getSiteTrackingConfig(site.id);
+    assert.equal(c.consentProvider, "library", "external viene sempre riletto come library");
+    assert.equal(c.consentLibUrl, "/consent/consent.js", "usa gli asset condivisi del repo, non media/<site>/consent");
+    assert.equal(c.consentLibCssUrl, "/consent/consent.css");
+    assert.equal(c.consentScriptUrl, "/consent/bridge.js");
+  });
+
   test("sendMetaCapiEvent: senza consenso non tenta nemmeno la chiamata di rete", async () => {
     let called = false;
     const realFetch = global.fetch;

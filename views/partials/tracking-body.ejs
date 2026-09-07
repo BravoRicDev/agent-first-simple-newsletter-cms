@@ -1,8 +1,12 @@
 <%
   // Provider del banner di consenso (settings tracking_consent_provider):
   //   "native"   → banner CMS integrato (default, retrocompatibile)
-  //   "external" → libreria esterna vendored in media/<site>/consent (retro)
-  //   "library"  → libreria condivisa nel repo (public/consent/*) — nuovo default
+  //   "library"  → libreria condivisa nel repo (public/consent/*)
+  // Un vecchio valore "external" (banner vendored per-sito, non più
+  // selezionabile dall'admin) arriva già normalizzato a "library" da
+  // getSiteTrackingConfig (src/services/tracking.js); il controllo qui
+  // sotto lo accetta comunque come sinonimo, per sicurezza in caso di
+  // chiamata diretta di questo partial con dati non passati da lì.
   const _consentProvider = (typeof consentProvider !== 'undefined' && consentProvider) || 'native';
 
   // JSON sicuro dentro <script>: JSON.stringify NON scappa "</script>" e un
@@ -260,12 +264,15 @@
 })();
 </script>
 <% } %>
-<% if ((_consentProvider === 'external' || _consentProvider === 'library') && typeof consentLibUrl !== 'undefined' && consentLibUrl && typeof consentScriptUrl !== 'undefined' && consentScriptUrl) { %>
-<!-- Provider di consenso esterno (settings tracking_consent_provider=external|library).
-     Il markup del banner nativo (sopra) esiste ma resta nascosto; se la libreria
-     non parte, __cmsNativeConsentShow() lo riattiva come fallback reale.
-     Per "library" gli asset sono serviti staticamente dal repo (public/consent/):
-     niente più dipendenza da media/<site>/consent per il nuovo sito. -->
+<% if ((_consentProvider === 'library' || _consentProvider === 'external') && typeof consentLibUrl !== 'undefined' && consentLibUrl && typeof consentScriptUrl !== 'undefined' && consentScriptUrl) { %>
+<!-- Provider "library" (settings tracking_consent_provider=library): libreria
+     cookieconsent condivisa, asset serviti staticamente dal repo
+     (public/consent/*), nessuna dipendenza da media/<site>/consent.
+     Il markup del banner nativo (sopra) esiste ma resta nascosto; se la
+     libreria non parte, __cmsNativeConsentShow() lo riattiva come fallback
+     reale. Il controllo 'external' resta qui solo come sinonimo difensivo
+     (vedi commento su _consentProvider sopra): non più raggiungibile da UI,
+     getSiteTrackingConfig normalizza già external → library. -->
 <script>
 (function () {
   // ── Config per-sito iniettata (XSS-safe via _jsonScript) ────────────────
