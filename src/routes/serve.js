@@ -14,6 +14,7 @@ import {
 } from "../services/seo.js";
 import { getCanonicalBaseUrl } from "../services/urls.js";
 import { createApiToken, listApiTokens, revokeApiToken } from "../services/api-tokens.js";
+import { stripAllComments } from "../services/comment-strip.js";
 import config from "../config.js";
 
 const router = Router();
@@ -29,6 +30,25 @@ export const publicLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Le pagine pubbliche servite dal CMS devono essere IDENTICHE sia live che
+// nell'export statico: nessun commento HTML/JS/CSS visibile all'utente.
+// Questi due helper applicano lo strip al markup finale (stesso modulo usato
+// da static-export.js), rispettivamente per pagine standalone ("già HTML
+// completo") e wrapped ("renderizzato dal layout EJS"). L'admin NON passa da
+// qui (ha le proprie route) quindi non viene toccato.
+function sendPublicHtml(res, html) {
+  return res.send(stripAllComments(html));
+}
+
+function renderPublicPage(res, next, view, options) {
+  // express-ejs-layouts supporta il callback: intercetta l'HTML finale
+  // (dopo layout) e lo strippa prima di inviarlo.
+  return res.render(view, options, (err, rendered) => {
+    if (err) return next(err);
+    return res.send(stripAllComments(rendered));
+  });
+}
 
 router.get("/health", async (req, res) => {
   try {
@@ -273,10 +293,10 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
             let html = await expandSnippets(siteId, page.content);
             html = injectSeoIntoStandalone(html, seoLocals);
             html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(trackingLocals));
-            return res.send(html);
+            return sendPublicHtml(res, html);
           }
           const renderedContent = await expandSnippets(siteId, page.content);
-          return res.render(layoutName, {
+          return renderPublicPage(res, next, layoutName, {
             ...trackingLocals,
             title: page.title,
             content: renderedContent,
@@ -286,7 +306,7 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
         }
       }
       if (urlPath === "/") {
-        return res.render(layoutName, {
+        return renderPublicPage(res, next, layoutName, {
           ...themeVars,
           title: "",
           content: "",
@@ -313,11 +333,11 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
       let html = await expandSnippets(siteId, page.content);
       html = injectSeoIntoStandalone(html, seoLocals);
       html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(trackingLocals));
-      return res.send(html);
+      return sendPublicHtml(res, html);
     }
 
     const renderedContent = await expandSnippets(siteId, page.content);
-    res.render(layoutName, {
+    return renderPublicPage(res, next, layoutName, {
       ...trackingLocals,
       title: page.title,
       content: renderedContent,

@@ -16,17 +16,11 @@ import {
 import { getCanonicalBaseUrl } from "./urls.js";
 import config from "../config.js";
 import ejs from "ejs";
+import { stripAllComments } from "./comment-strip.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const STATIC_ROOT = path.resolve(__dirname, "../../static");
 export const VIEWS_DIR = path.resolve(__dirname, "../../views");
-
-// Rimuove tutti i commenti HTML (<!-- ... -->) dal markup esportato.
-// Questo include commenti presenti negli snippet, negli script, negli stili
-// e ovunque nel documento, come richiesto per l'export statico.
-function stripHtmlComments(html) {
-  return html.replace(/<!--[\s\S]*?-->/g, "");
-}
 
 function urlPathToFilename(urlPath) {
   if (urlPath === "/" || urlPath === "") return "index.html";
@@ -100,8 +94,10 @@ async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
       finalHtml = injectTrackingIntoStandalone(finalHtml, await renderTrackingBlocks(trackingLocals));
     }
 
-    // RIMUOVI TUTTI I COMMENTI HTML dal markup finale prima di salvare
-    finalHtml = stripHtmlComments(finalHtml);
+    // RIMUOVI TUTTI I COMMENTI (HTML + JS + CSS) dal markup finale prima di
+    // salvare — stesso strip applicato dal live (serve.js) per la parità
+    // pagina servita = pagina esportata.
+    finalHtml = stripAllComments(finalHtml);
 
     const filename = urlPathToFilename(page.url_path);
     const dir = getSiteStaticDir(siteId);
@@ -294,8 +290,9 @@ export async function generate404Page(siteId) {
     const dir = getSiteStaticDir(siteId);
     const filePath = path.join(dir, "404.html");
     ensureDir(dir);
-    // RIMUOVI TUTTI I COMMENTI HTML dalla pagina 404 prima di salvare
-    finalHtml = stripHtmlComments(finalHtml);
+    // RIMUOVI TUTTI I COMMENTI (HTML + JS + CSS) dalla pagina 404 prima di
+    // salvare — stesso strip del live.
+    finalHtml = stripAllComments(finalHtml);
     fs.writeFileSync(filePath, finalHtml, "utf-8");
 
     return { ok: true, path: filePath };
