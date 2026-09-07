@@ -37,43 +37,27 @@ gtag('consent', 'default', {
      pixelEnabled === false (override per-pagina) salta completamente l'init. -->
 <script>
 !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-// Dedup PageView a livello di fbq stesso, indipendente da CHI lo chiama:
-// il CMS (applyConsent, guardia window.__cmsPageViewFired) o un bridge di
-// consenso esterno/vendored per-sito (media/<site>/consent/bridge.js) che
-// non riusa window.__cmsApplyConsent e riapplica il consenso da solo.
-// Senza questa rete di sicurezza, un bridge vendored "vecchio stile" può
-// rifare fbq('track','PageView') sulla stessa pagina, duplicando le
-// conversioni in Meta. Con questa guardia, chiunque chiami per primo vince
-// e i chiamanti successivi nello stesso page-load vengono ignorati.
-// NB: usa un flag TUTTO SUO (__fbqPageViewSent), diverso da
-// window.__cmsPageViewFired: quest'ultimo viene impostato dal CMS PRIMA di
-// chiamare fbq(...), quindi se il wrapper leggesse lo stesso flag lo
-// troverebbe già a true e scarterebbe anche il primissimo invio legittimo
-// (bug verificato e corretto durante lo sviluppo di questa guardia).
-(function () {
-  var _fbqStub = window.fbq;
-  window.fbq = function (action, name) {
-    if (action === 'track' && name === 'PageView') {
-      if (window.__fbqPageViewSent) return;
-      window.__fbqPageViewSent = true;
-    }
-    return _fbqStub.apply(this, arguments);
-  };
-  // Il loader ufficiale espone lo stub anche su window._fbq (stesso oggetto
-  // di window.fbq, "if(!f._fbq)f._fbq=n" alla riga sopra). fbevents.js,
-  // quando finisce di caricarsi in modo asincrono, confronta questi due
-  // riferimenti per rilevare installazioni multiple/in conflitto sulla
-  // stessa pagina. Se non teniamo _fbq allineato al nuovo wrapper, i due
-  // puntatori divergono e Meta stampa "Multiple pixels with conflicting
-  // versions were detected on this page" anche se il pixel è unico — bug
-  // introdotto dal wrapper stesso, verificato in produzione e corretto qui.
-  window._fbq = window.fbq;
-  for (var k in _fbqStub) {
-    if (Object.prototype.hasOwnProperty.call(_fbqStub, k)) window.fbq[k] = _fbqStub[k];
-  }
-})();
+// NON riassegnare mai window.fbq dopo questa riga (es. con un wrapper di
+// dedup "a valle"): lo stub sopra instrada ogni chiamata su n.callMethod
+// SE E SOLO SE n è ESATTAMENTE l'oggetto a cui fbevents.js, caricandosi in
+// modo asincrono, aggancia il proprio motore di invio (mutando in place
+// l'oggetto che trova in window.fbq/window._fbq — non sostituendolo).
+// Un wrapper che intercetta le chiamate e poi fa `_fbqStub.apply(...)`
+// spezza questo handoff: n.callMethod resta per sempre undefined sullo
+// stub originale, quindi OGNI evento (anche quelli chiamati a libreria già
+// caricata) finisce in n.queue.push(arguments) e non viene mai consegnato
+// — fallimento silenzioso al 100%, senza errori in console. Bug introdotto
+// dal commit 3f866d8 (dedup PageView "a livello di fbq") e dal fix
+// successivo cfb5646 (che aveva solo silenziato il sintomo visibile,
+// "multiple pixels", lasciando la consegna eventi rotta); rimossi entrambi
+// qui, verificato riproducendo il contratto esatto dello stub in sandbox:
+// senza wrapper, ogni fbq(...) chiamato dopo l'aggancio di callMethod
+// arriva a destinazione; con un wrapper, resta bloccato in coda per sempre.
+// La deduplicazione del PageView resta comunque garantita a monte, da chi
+// CHIAMA fbq (window.__cmsApplyConsent in tracking-body.ejs, guardia
+// window.__cmsPageViewFired) — mai dentro fbq stesso.
+fbq('consent', 'revoke'); // PRIMA di init: nessun segnale può partire nella finestra tra le due chiamate (ordine documentato da Meta e usato dai CMP)
 fbq('init', '<%= metaPixelId %>');
-fbq('consent', 'revoke');
 window.__cmsMarketingGranted = false;
 </script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=<%= metaPixelId %>&ev=PageView&noscript=1"/></noscript>
