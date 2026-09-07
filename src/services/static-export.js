@@ -21,6 +21,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const STATIC_ROOT = path.resolve(__dirname, "../../static");
 export const VIEWS_DIR = path.resolve(__dirname, "../../views");
 
+// Rimuove tutti i commenti HTML (<!-- ... -->) dal markup esportato.
+// Questo include commenti presenti negli snippet, negli script, negli stili
+// e ovunque nel documento, come richiesto per l'export statico.
+function stripHtmlComments(html) {
+  return html.replace(/<!--[\s\S]*?-->/g, "");
+}
+
 function urlPathToFilename(urlPath) {
   if (urlPath === "/" || urlPath === "") return "index.html";
   const clean = urlPath.replace(/^\//, "").replace(/\/$/, "");
@@ -92,6 +99,9 @@ async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
       finalHtml = injectSeoIntoStandalone(html, seoLocals);
       finalHtml = injectTrackingIntoStandalone(finalHtml, await renderTrackingBlocks(trackingLocals));
     }
+
+    // RIMUOVI TUTTI I COMMENTI HTML dal markup finale prima di salvare
+    finalHtml = stripHtmlComments(finalHtml);
 
     const filename = urlPathToFilename(page.url_path);
     const dir = getSiteStaticDir(siteId);
@@ -284,6 +294,8 @@ export async function generate404Page(siteId) {
     const dir = getSiteStaticDir(siteId);
     const filePath = path.join(dir, "404.html");
     ensureDir(dir);
+    // RIMUOVI TUTTI I COMMENTI HTML dalla pagina 404 prima di salvare
+    finalHtml = stripHtmlComments(finalHtml);
     fs.writeFileSync(filePath, finalHtml, "utf-8");
 
     return { ok: true, path: filePath };
