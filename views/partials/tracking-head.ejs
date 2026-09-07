@@ -59,6 +59,15 @@ gtag('consent', 'default', {
     }
     return _fbqStub.apply(this, arguments);
   };
+  // Il loader ufficiale espone lo stub anche su window._fbq (stesso oggetto
+  // di window.fbq, "if(!f._fbq)f._fbq=n" alla riga sopra). fbevents.js,
+  // quando finisce di caricarsi in modo asincrono, confronta questi due
+  // riferimenti per rilevare installazioni multiple/in conflitto sulla
+  // stessa pagina. Se non teniamo _fbq allineato al nuovo wrapper, i due
+  // puntatori divergono e Meta stampa "Multiple pixels with conflicting
+  // versions were detected on this page" anche se il pixel è unico — bug
+  // introdotto dal wrapper stesso, verificato in produzione e corretto qui.
+  window._fbq = window.fbq;
   for (var k in _fbqStub) {
     if (Object.prototype.hasOwnProperty.call(_fbqStub, k)) window.fbq[k] = _fbqStub[k];
   }
