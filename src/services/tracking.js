@@ -77,7 +77,20 @@ const TRACKING_KEYS = {
   // "/thank-you,/grazie". Vuoto = nessun Lead automatico anche se
   // leadEventName è impostato (entrambe le chiavi servono).
   leadPages: "tracking_lead_pages",
+  // Durata (in ore) dei cookie consent_analytics/consent_marketing e del
+  // cookie interno del provider "library" (cc_cookie). Default 1 ora
+  // (DEFAULT_CONSENT_COOKIE_HOURS sotto): scaduta, il banner ricompare e
+  // l'utente deve ridare il consenso. Override per-pagina possibile in
+  // page_tracking_overrides.consent_cookie_hours (vedi getEffectiveTrackingConfig).
+  consentCookieHours: "tracking_consent_cookie_hours",
 };
+
+// Default globale: nessun valore salvato in settings = 1 ora. Cambiare la
+// durata di default per TUTTI i siti che non la impostano esplicitamente
+// va fatto qui (decisione di prodotto, non retrocompatibilità: prima
+// dell'introduzione di questo campo la durata era fissa a 365 giorni negli
+// script client — vedi tracking-body.ejs/bridge.js).
+const DEFAULT_CONSENT_COOKIE_HOURS = 1;
 
 const CONSENT_DEFAULTS = {
   consentBannerText: "Usiamo cookie tecnici necessari e, solo con il tuo consenso, cookie di analisi e marketing.",
@@ -90,6 +103,7 @@ function emptyConfig() {
   const c = {};
   for (const field of Object.keys(TRACKING_KEYS)) c[field] = "";
   c.consentProvider = "native";
+  c.consentCookieHours = DEFAULT_CONSENT_COOKIE_HOURS;
   c.hasAnyTracking = false;
   return c;
 }
@@ -124,6 +138,11 @@ export async function getSiteTrackingConfig(siteId) {
     c.consentLibCssUrl = c.consentLibCssUrl || '/consent/consent.css';
     c.consentScriptUrl = c.consentScriptUrl || '/consent/bridge.js';
   }
+  // Durata cookie di consenso: numero intero di ore, sempre valorizzato
+  // (mai stringa vuota) così i template client-side possono usarlo senza
+  // ulteriori controlli di undefined.
+  const parsedHours = parseInt(c.consentCookieHours, 10);
+  c.consentCookieHours = Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : DEFAULT_CONSENT_COOKIE_HOURS;
   return c;
 }
 
@@ -286,12 +305,13 @@ export function injectTrackingIntoStandalone(html, { head = "", body = "" } = {}
 
 // ── Per-pagina tracking overrides ───────────────────────────────────────────
 // Tabella: page_tracking_overrides (page_id PK, pixel_enabled, track_pageview,
-// track_lead — tutti NULLABLE per tri-state: NULL = eredita, true/false = override)
+// track_lead, consent_cookie_hours — tutti NULLABLE per tri-state: NULL =
+// eredita, valore impostato = override)
 
 export async function getPageTrackingOverride(pageId) {
   if (!pageId) return {};
   const result = await query(
-    `SELECT pixel_enabled, track_pageview, track_lead
+    `SELECT pixel_enabled, track_pageview, track_lead, consent_cookie_hours
      FROM page_tracking_overrides WHERE page_id = $1`,
     [pageId]
   );
@@ -301,18 +321,22 @@ export async function getPageTrackingOverride(pageId) {
     pixel_enabled: row.pixel_enabled ?? null,
     track_pageview: row.track_pageview ?? null,
     track_lead: row.track_lead ?? null,
+    consent_cookie_hours: row.consent_cookie_hours ?? null,
   };
 }
 
 export async function setPageTrackingOverride(pageId, fields) {
   if (!pageId) return;
 
-  // Campi: pixelEnabled, trackPageview, trackLead (camelCase dall'API/UI)
-  // undefined = non toccare (chiave assente); null = resetta a eredita (NULL nel DB)
+  // Campi: pixelEnabled, trackPageview, trackLead, consentCookieHours
+  // (camelCase dall'API/UI). undefined = non toccare (chiave assente);
+  // null = resetta a eredita (NULL nel DB). Tipi diversi per colonna:
+  // i primi tre sono booleani, consentCookieHours è un intero (ore) > 0.
   const fieldMap = {
-    pixelEnabled: "pixel_enabled",
-    trackPageview: "track_pageview",
-    trackLead: "track_lead",
+    pixelEnabled: { col: "pixel_enabled", type: "boolean" },
+    trackPageview: { col: "track_pageview", type: "boolean" },
+    trackLead: { col: "track_lead", type: "boolean" },
+    consentCookieHours: { col: "consent_cookie_hours", type: "integer" },
   };
 
   const cols = [];
@@ -320,12 +344,22 @@ export async function setPageTrackingOverride(pageId, fields) {
   const updateSets = [];
   let paramIdx = 2;
 
-  for (const [apiField, dbField] of Object.entries(fieldMap)) {
+  for (const [apiField, { col: dbField, type }] of Object.entries(fieldMap)) {
     if (apiField in fields) {
-      const value = fields[apiField];
+      const raw = fields[apiField];
+      let value;
+      if (raw === null) {
+        value = null;
+      } else if (type === "boolean") {
+        value = raw === true;
+      } else {
+        // integer: scarta valori non validi (<=0, NaN) come "eredita",
+        // invece di salvare un override inutilizzabile lato client.
+        const n = parseInt(raw, 10);
+        value = Number.isFinite(n) && n > 0 ? n : null;
+      }
       cols.push(dbField);
-      // value può essere true, false, null — tutti validi
-      values.push(value === null ? null : value === true);
+      values.push(value);
       updateSets.push(`${dbField} = $${paramIdx}`);
       paramIdx++;
     }
@@ -375,6 +409,12 @@ export async function getEffectiveTrackingConfig(siteId, pageId) {
     effective.leadOverride = pageOverride.track_lead;
   } else {
     effective.leadOverride = null;
+  }
+
+  // consentCookieHours: default dal sito (già normalizzato a un intero > 0
+  // in getSiteTrackingConfig), sovrascritto se questa pagina ha un override.
+  if (pageOverride.consent_cookie_hours !== undefined && pageOverride.consent_cookie_hours !== null) {
+    effective.consentCookieHours = pageOverride.consent_cookie_hours;
   }
 
   return effective;

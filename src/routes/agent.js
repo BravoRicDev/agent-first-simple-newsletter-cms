@@ -2950,7 +2950,7 @@ router.put("/api/agent/sites/:siteId/tracking", requireAuth, requireAgent, async
     const fields = {};
     for (const f of [
       "ga4Id", "gtmId", "metaPixelId", "metaCapiToken", "metaCapiTestCode", "clarityId", "searchConsoleVerification",
-      "consentBannerText", "consentAcceptLabel", "consentRejectLabel", "consentPrivacyUrl",
+      "consentBannerText", "consentAcceptLabel", "consentRejectLabel", "consentPrivacyUrl", "consentCookieHours",
       "consentProvider", "consentLibUrl", "consentLibCssUrl", "consentScriptUrl",
       "consentTitle", "consentDescription", "consentPreferencesTitle",
       "consentAcceptAllLabel", "consentRejectLabelLib", "consentPreferencesLabel",
@@ -2982,7 +2982,7 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/tracking", requireAuth, requi
     if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
 
     const override = await getPageTrackingOverride(pageId);
-    res.json({ pixelEnabled: override.pixel_enabled, trackPageview: override.track_pageview, trackLead: override.track_lead });
+    res.json({ pixelEnabled: override.pixel_enabled, trackPageview: override.track_pageview, trackLead: override.track_lead, consentCookieHours: override.consent_cookie_hours });
   } catch (err) { next(err); }
 });
 
@@ -2996,12 +2996,12 @@ router.put("/api/agent/sites/:siteId/pages/:pageId/tracking", requireAuth, requi
     if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
 
     const fields = {};
-    for (const f of ["pixelEnabled", "trackPageview", "trackLead"]) {
+    for (const f of ["pixelEnabled", "trackPageview", "trackLead", "consentCookieHours"]) {
       if (f in req.body) fields[f] = req.body[f];
     }
     await setPageTrackingOverride(pageId, fields);
     const override = await getPageTrackingOverride(pageId);
-    res.json({ pixelEnabled: override.pixel_enabled, trackPageview: override.track_pageview, trackLead: override.track_lead });
+    res.json({ pixelEnabled: override.pixel_enabled, trackPageview: override.track_pageview, trackLead: override.track_lead, consentCookieHours: override.consent_cookie_hours });
   } catch (err) { next(err); }
 });
 

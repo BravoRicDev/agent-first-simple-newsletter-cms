@@ -32,6 +32,14 @@
     : 'bottom right';
   var LANG = C.language || 'it';
   var REVISION = parseInt(C.revision, 10) || 0;
+  // Durata dei cookie di consenso (ore, default 1 — configurabile per sito
+  // e per pagina, vedi src/services/tracking.js consentCookieHours), sia
+  // per consent_analytics/marketing sia per il cookie interno della lib
+  // (cc_cookie, sotto in CookieConsent.run). COOKIE_DAYS: setCookie() e
+  // l'opzione "expires" della lib lavorano in giorni; 86400000 (ms/giorno)
+  // è divisibile per 24, quindi la conversione da ore è sempre esatta.
+  var COOKIE_HOURS = parseInt(C.cookieHours, 10) || 1;
+  var COOKIE_DAYS = COOKIE_HOURS / 24;
 
   function cookieDomain() {
     var h = location.hostname;
@@ -87,8 +95,8 @@
     var cats = (cookie && cookie.categories) || [];
     var a = cats.indexOf('analytics') > -1;
     var m = cats.indexOf('marketing') > -1;
-    setCookie('consent_analytics', a ? '1' : '0', 365);
-    setCookie('consent_marketing', m ? '1' : '0', 365);
+    setCookie('consent_analytics', a ? '1' : '0', COOKIE_DAYS);
+    setCookie('consent_marketing', m ? '1' : '0', COOKIE_DAYS);
     try { if (window.__cmsConsentGtagUpdate) window.__cmsConsentGtagUpdate(a, m); } catch (e) {}
     applyConsent(a, m);
   }
@@ -164,7 +172,7 @@
           marketing: { enabled: true }
         },
         language: { default: LANG, translations: (function () { var o = {}; o[LANG] = translations(); return o; })() },
-        cookie: { name: 'cc_cookie', domain: cookieDomain() || undefined, path: '/', expires: 365 },
+        cookie: { name: 'cc_cookie', domain: cookieDomain() || undefined, path: '/', expires: COOKIE_DAYS },
         onFirstConsent: function (p) { bridge(p.cookie); },
         onConsent: function (p) { bridge(p.cookie); }
       });

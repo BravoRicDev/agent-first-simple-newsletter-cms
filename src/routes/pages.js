@@ -164,6 +164,7 @@ router.get("/admin/pages/:id/edit", requireAuth, resolveSite, authorize("pages",
       tracking_pixel_enabled: trackingOverride.pixel_enabled ?? null,
       tracking_track_pageview: trackingOverride.track_pageview ?? null,
       tracking_track_lead: trackingOverride.track_lead ?? null,
+      tracking_consent_cookie_hours: trackingOverride.consent_cookie_hours ?? null,
     };
 
     const analytics = (await query(
@@ -260,10 +261,16 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     // sito), "1" → true, "0" → false. Tutti opzionali, stesso pattern SEO
     // sopra — vedi views/admin/pages/edit.ejs.
     const parseTri = (v) => (v === "1" ? true : v === "0" ? false : null);
+    // consentCookieHours: campo numerico libero, non tri-state "1/0" come
+    // gli altri — vuoto/non valido/≤0 = eredita dal sito (setPageTrackingOverride
+    // scarta già i valori non validi, qui basta non forzare a null solo lo 0
+    // esplicito, che comunque risulterebbe scartato lì).
+    const cookieHoursRaw = req.body.tracking_consent_cookie_hours;
     await setPageTrackingOverride(req.params.id, {
       pixelEnabled: parseTri(req.body.tracking_pixel_enabled),
       trackPageview: parseTri(req.body.tracking_track_pageview),
       trackLead: parseTri(req.body.tracking_track_lead),
+      consentCookieHours: cookieHoursRaw ? cookieHoursRaw : null,
     }).catch(() => {});
 
     res.redirect(`/admin/pages?site_id=${siteId}&saved=1`);

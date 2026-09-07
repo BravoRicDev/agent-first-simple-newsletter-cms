@@ -225,6 +225,7 @@ router.post("/admin/settings/tracking", requireAuth, authorize("settings", "upda
       consentAcceptLabel: req.body.consent_accept_label,
       consentRejectLabel: req.body.consent_reject_label,
       consentPrivacyUrl: req.body.consent_privacy_url,
+      consentCookieHours: req.body.consent_cookie_hours,
       consentProvider: req.body.consent_provider,
       consentLibUrl: req.body.consent_lib_url,
       consentLibCssUrl: req.body.consent_lib_css_url,

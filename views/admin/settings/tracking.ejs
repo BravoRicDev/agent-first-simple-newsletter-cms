@@ -95,6 +95,13 @@
       <input type="text" name="consent_reject_label" value="<%= trackingConfig.consentRejectLabel %>" placeholder="Solo necessari">
     </div>
   </div>
+  <div class="form-group" style="max-width:260px;">
+    <label>Durata del consenso (ore)</label>
+    <input type="number" name="consent_cookie_hours" min="1" step="1" value="<%= trackingConfig.consentCookieHours %>" placeholder="1">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Scaduta, il banner ricompare e l'utente deve ridare il consenso (di default 1 ora). Puoi anche impostarla per singola pagina nell'editor della pagina.
+    </div>
+  </div>
 
   <h2 style="font-size:15px;margin-top:24px;">Provider del banner di consenso</h2>
   <p style="font-size:12px;color:#666;margin-bottom:10px;">

@@ -37,6 +37,12 @@
 (function () {
   // trackPageview: override per-pagina (true/false/null). null = eredita da sito.
   var TRACK_PAGEVIEW = <%- _jsonScript(typeof trackPageview !== 'undefined' ? trackPageview : null) %>;
+  // Durata dei cookie di consenso: ore (default 1, configurabile per sito e
+  // per pagina — vedi src/services/tracking.js consentCookieHours). Scaduto,
+  // il banner ricompare e il consenso va ridato. setCookie() lavora ancora
+  // in "giorni" (compatibilità con le chiamate sotto): la conversione è
+  // esatta perché 86400000 (ms/giorno) è divisibile per 24.
+  var CONSENT_COOKIE_DAYS = (<%- _jsonScript(typeof consentCookieHours !== 'undefined' && consentCookieHours ? Number(consentCookieHours) : 1) %>) / 24;
   function getCookie(name) {
     var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
     return m ? decodeURIComponent(m[1]) : null;
@@ -102,8 +108,8 @@
     if (!banner.dataset.bound) {
       banner.dataset.bound = '1';
       document.getElementById('cms-consent-accept').addEventListener('click', function () {
-        setCookie('consent_analytics', '1', 365);
-        setCookie('consent_marketing', '1', 365);
+        setCookie('consent_analytics', '1', CONSENT_COOKIE_DAYS);
+        setCookie('consent_marketing', '1', CONSENT_COOKIE_DAYS);
         applyConsent(true, true);
         banner.style.display = 'none';
         // Risolviamo il flag di revoca così il banner può riapparire
@@ -111,8 +117,8 @@
         if (window.localStorage) window.localStorage.removeItem('cms-banner-revoked-at');
       });
       document.getElementById('cms-consent-reject').addEventListener('click', function () {
-        setCookie('consent_analytics', '0', 365);
-        setCookie('consent_marketing', '0', 365);
+        setCookie('consent_analytics', '0', CONSENT_COOKIE_DAYS);
+        setCookie('consent_marketing', '0', CONSENT_COOKIE_DAYS);
         applyConsent(false, false);
         banner.style.display = 'none';
       });
@@ -280,6 +286,9 @@
     position: <%- _jsonScript(typeof consentPosition !== 'undefined' ? consentPosition : '') %>,
     language: <%- _jsonScript(typeof consentLanguage !== 'undefined' ? consentLanguage : 'it') %>,
     revision: <%- _jsonScript(typeof consentRevision !== 'undefined' && consentRevision ? String(consentRevision) : '0') %>,
+    // Durata (ore) dei cookie di consenso, letta dal bridge (public/consent/bridge.js)
+    // per il proprio cookie interno cc_cookie oltre a consent_analytics/marketing.
+    cookieHours: <%- _jsonScript(typeof consentCookieHours !== 'undefined' && consentCookieHours ? Number(consentCookieHours) : 1) %>,
     title: <%- _jsonScript(typeof consentTitle !== 'undefined' ? consentTitle : '') %>,
     description: <%- _jsonScript(typeof consentDescription !== 'undefined' ? consentDescription : '') %>,
     preferencesTitle: <%- _jsonScript(typeof consentPreferencesTitle !== 'undefined' ? consentPreferencesTitle : '') %>,

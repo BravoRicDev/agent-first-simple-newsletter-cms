@@ -22,6 +22,26 @@ describe("tracking: config per sito, mascheramento token, Conversions API", () =
     assert.equal(c.ga4Id, "");
   });
 
+  test("consentCookieHours: default 1 ora se non impostato, sempre un intero > 0", async () => {
+    const c = await getSiteTrackingConfig(site.id);
+    assert.equal(c.consentCookieHours, 1);
+  });
+
+  test("consentCookieHours: valore impostato esplicitamente", async () => {
+    await setSiteTrackingConfig(site.id, { consentCookieHours: "24" });
+    const c = await getSiteTrackingConfig(site.id);
+    assert.equal(c.consentCookieHours, 24);
+  });
+
+  test("consentCookieHours: valori non validi (0, negativo, non numerico) tornano al default", async () => {
+    for (const bad of ["0", "-5", "abc"]) {
+      await setSiteTrackingConfig(site.id, { consentCookieHours: bad });
+      const c = await getSiteTrackingConfig(site.id);
+      assert.equal(c.consentCookieHours, 1, `"${bad}" deve ricadere sul default`);
+    }
+    await setSiteTrackingConfig(site.id, { consentCookieHours: "24" }); // ripristina per i test successivi
+  });
+
   test("dopo aver impostato un ID, i testi del banner tornano ai default", async () => {
     await setSiteTrackingConfig(site.id, { ga4Id: "G-ABC" });
     const c = await getSiteTrackingConfig(site.id);
@@ -217,6 +237,35 @@ describe("tracking: override per-pagina (pixel/pageview/lead opzionali)", () => 
     const effective = await getEffectiveTrackingConfig(site.id, page.id);
     assert.equal(effective.pixelEnabled, true, "tornato a eredita: sito ha metaPixelId");
     assert.equal(effective.leadOverride, null);
+  });
+
+  test("consentCookieHours: override per-pagina vince sul default di sito", async () => {
+    await setSiteTrackingConfig(site.id, { consentCookieHours: "24" });
+    await setPageTrackingOverride(page.id, { consentCookieHours: "4" });
+    const o = await getPageTrackingOverride(page.id);
+    assert.equal(o.consent_cookie_hours, 4);
+
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.consentCookieHours, 4, "override per-pagina applicato");
+  });
+
+  test("consentCookieHours: valori non validi (0, negativo, non numerico) salvati come null (eredita)", async () => {
+    for (const bad of ["0", "-3", "abc"]) {
+      await setPageTrackingOverride(page.id, { consentCookieHours: bad });
+      const o = await getPageTrackingOverride(page.id);
+      assert.equal(o.consent_cookie_hours, null, `"${bad}" non deve essere salvato come override valido`);
+    }
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.consentCookieHours, 24, "senza override valido, eredita il valore di sito");
+  });
+
+  test("consentCookieHours: reset esplicito a null torna a eredita dal sito", async () => {
+    await setPageTrackingOverride(page.id, { consentCookieHours: "4" });
+    await setPageTrackingOverride(page.id, { consentCookieHours: null });
+    const o = await getPageTrackingOverride(page.id);
+    assert.equal(o.consent_cookie_hours, null);
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.consentCookieHours, 24);
   });
 
   test("setPageTrackingOverride con pageId falsy: no-op silenzioso", async () => {
