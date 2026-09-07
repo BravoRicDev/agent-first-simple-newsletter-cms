@@ -141,16 +141,23 @@
 
     // fbq può essere caricato da uno script ESTERNO (provider external) che
     // arriva DOPO questo script: finché fbq non esiste il grant non parte.
-    // Polling breve: appena fbq è disponibile, ri-applichiamo (idempotente,
+    // Polling breve: appena fbq è DAVVERO pronto, ri-applichiamo (idempotente,
     // PageView una sola volta). Copre anche bridge esterni che non riapplicano.
+    // NB: "window.fbq è una funzione" è vero fin dal primissimo tick (è lo
+    // stub del loader, che esiste da subito e nel frattempo accoda soltanto
+    // — vedi tracking-head.ejs). Non è un segnale di "libreria caricata": un
+    // grant riapplicato mentre fbevents.js non è ancora pronto finisce solo
+    // in coda insieme a tutto il resto, senza sbloccarne l'elaborazione.
+    // Il segnale corretto è window.fbq.callMethod, agganciato da fbevents.js
+    // SOLO a caricamento completato (mai presente sullo stub).
     if (storedMarketing === '1') {
       var _fbqTries = 0;
       var _fbqTimer = setInterval(function () {
         _fbqTries++;
-        if (window.fbq && typeof window.fbq === 'function') {
+        if (window.fbq && window.fbq.callMethod) {
           clearInterval(_fbqTimer);
           applyConsent(storedAnalytics === '1', storedMarketing === '1');
-        } else if (_fbqTries > 30) { // ~3s max, poi basta
+        } else if (_fbqTries > 100) { // ~10s max: reti lente, fbevents.js può metterci più di 3s
           clearInterval(_fbqTimer);
         }
       }, 100);
