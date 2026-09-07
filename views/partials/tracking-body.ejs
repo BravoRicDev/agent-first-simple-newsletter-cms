@@ -149,7 +149,7 @@
     // Se l'utente ha dato un esplicito consenso marketing revocato (0),
     // mostriamo di nuovo il banner per dargli una seconda chance.
     // Throttle: mostriamo solo una volta per sessione, dopo un breve delay.
-    if (_consentProvider === 'native' && storedMarketing === '0') {
+    if (<%- _jsonScript(_consentProvider) %> === 'native' && storedMarketing === '0') {
       var key = 'cms-banner-revoked-at';
       var now = Date.now();
       var lastShown = window.localStorage && window.localStorage.getItem(key);
