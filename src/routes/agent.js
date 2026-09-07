@@ -1361,12 +1361,19 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/diff/:versionId", requireAuth
 
     const format = (req.query.format || "unified").toString().trim();
     let diffResult;
-
+    // Nota: con aria text diff v9, l'opzione `object:true` si aspetta array di
+    // OGGETTI con proprietà `value`, non array di stringhe. Join le stringhe e
+    // fai diff tra gli interi documenti: per il formato JSON serializziamo il
+    // risultato strutturato (value + added/removed/count) senza opzione object.
     if (format === "json") {
-      diffResult = diffLines(currentLines, versionLines, { object: true });
+      diffResult = diffLines(version.content, page.content).map(part => ({
+        type: part.removed ? "removed" : part.added ? "added" : "unchanged",
+        value: part.value,
+        count: part.count,
+      }));
     } else {
       // Default unified format
-      diffResult = diffLines(currentLines, versionLines);
+      diffResult = diffLines(version.content, page.content);
     }
 
     res.json({
@@ -4931,40 +4938,102 @@ registerSourceSyncRoutes(router);
 registerGhlPushRoutes(router);
 registerAccessGrantsRoutes(router);
 
-export default router;
-
 // ── Server-Sent Events ─────────────────────────────────────────────────────
-// Endpoint SSE per notifiche in tempo reale su modifiche a pagine, snippet e media.
+// Endpoint SSE per notifiche in tempo reale su modifiche a pagine, snippet e
+// media di un sito. Il server fa polling leggero su audit_log ogni POLL_MS
+// (nessun bus eventi esterno necessario) e invia eventi page.created,
+// page.updated, snippet.created, snippet.updated, media.*.
+// Supporta Last-Event-ID per riprendere dal punto in cui il client si è
+// disconnesso.
+const SSE_POLL_MS = 5000;
+
 router.get("/api/agent/sites/:siteId/events", requireAuth, requireAgent, async (req, res) => {
+  const siteId = parseInt(req.params.siteId, 10);
+  if (!Number.isInteger(siteId) || siteId < 1) {
+    return res.status(400).json({ error: "siteId non valido" });
+  }
+  if (!Number.isInteger(req.user.sub) || !(req.user.role === "superadmin" || req.user.site_id === siteId)) {
+    return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+  }
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
 
-  let sent = 0;
+  let lastEventId = parseInt(String(req.get("Last-Event-ID") || "0"), 10);
+  if (!Number.isInteger(lastEventId) || lastEventId < 0) lastEventId = 0;
 
-  // Invia un heartbeat ogni 30 secondi per mantenere la connessione viva
-  const heartbeat = setInterval(() => {
-    if (sent === 0) {
-      res.write(`event: heartbeat\ndata: {"status": "ok"}\n\n`);
-      sent = 1;
+  let closed = false;
+  let polling = false;
+
+  const send = (event, data) => {
+    if (closed) return;
+    res.write(`id: ${data.id}\n`);
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const poll = async () => {
+    if (closed || polling) return;
+    polling = true;
+    try {
+      const rows = (await query(
+        `SELECT al.id, al.entity_type, al.entity_id, al.action, al.created_at, al.new_data,
+                p.url_path
+         FROM audit_log al
+         LEFT JOIN pages p ON p.id = al.entity_id AND al.entity_type = 'page'
+         WHERE al.site_id = $1 AND al.id > $2
+           AND al.entity_type IN ('page','snippet','media')
+           AND al.action IN ('create','update','delete')
+         ORDER BY al.id ASC LIMIT 50`,
+        [siteId, lastEventId]
+      )).rows;
+
+      for (const row of rows) {
+        const entity = row.entity_type === "page" ? "page" : row.entity_type;
+        const action = row.action === "create" ? "created" : row.action === "delete" ? "deleted" : "updated";
+        send(`${entity}.${action}`, {
+          id: row.id,
+          site_id: siteId,
+          entity_type: row.entity_type,
+          entity_id: row.entity_id,
+          action: row.action,
+          url_path: row.url_path || null,
+          created_at: row.created_at,
+          new_data: row.new_data || {},
+        });
+        lastEventId = row.id;
+      }
+
+      res.write(`event: heartbeat\ndata: {"status":"ok"}\n\n`);
+    } catch (err) {
+      logger.error(`[SSE] Errore polling audit_log per site ${siteId}: ${err.message}`);
+    } finally {
+      polling = false;
     }
-  }, 30000);
+  };
 
-  // Cancel the heartbeat when the connection closes
+  // Evento iniziale di connessione (con il prossimo id da attendere)
+  res.write(`event: connected\ndata: ${JSON.stringify({ siteId, status: "connected", last_event_id: lastEventId, poll_ms: SSE_POLL_MS })}\n\n`);
+
+  const timer = setInterval(poll, SSE_POLL_MS);
+  poll();
+
   res.on("close", () => {
-    clearInterval(heartbeat);
+    closed = true;
+    clearInterval(timer);
   });
 
-  // Invia evento iniziale
-  res.write(`event: connected\ndata: {"siteId": ${req.params.siteId}, "status": "connected"}\n\n`);
-
-  // Qui potremmo ascoltare eventi reali dal database o dal bus eventi.
-  // Per ora, il client riceve solo l'evento di connessione e gli heartbeat.
-  // Per implementazione completa, ascoltare i cambiamenti nel DB (es. via pg listen/notify
-  // o una coda Kafka/RabbitMQ) e inviare:
-  //   event: page.created
-  //   data: { page_id, url_path, title, site_id }
-  // oppure
-  //   event: snippet.updated
-  //   data: { snippet_id, name, site_id }
+  // Timeout di sicurezza: chiudi lo stream dopo 5 minuti per evitare leak
+  const timeout = setTimeout(() => {
+    if (!closed) {
+      res.write(`event: timeout\ndata: {"status":"reconnect","after":${SSE_POLL_MS}}\n\n`);
+      res.end();
+    }
+  }, 5 * 60 * 1000);
+  res.on("close", () => clearTimeout(timeout));
 });
+
+export default router;

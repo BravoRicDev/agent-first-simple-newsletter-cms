@@ -1,5 +1,6 @@
 <h1>Agente AI — Guida rapida</h1>
-<p style="margin-bottom:25px;color:#666;font-size:14px;">Usa questa pagina per configurare un agente AI (Claude Code, OpenCode) che possa leggere e modificare pagine e snippet del CMS automaticamente tramite API.</p>
+<p style="margin-bottom:25px;color:#666;font-size:14px;">Usa questa pagina per configurare un agente AI (Claude Code, OpenCode) che possa leggere e modificare pagine e snippet del CMS automaticamente tramite API.
+<span style="color:#999;">Scorciatoie: <kbd>Alt+U</kbd> copia URL · <kbd>Alt+G</kbd> apri guida · <kbd>Alt+V</kbd> visualizza AGENT.md</span></p>
 
 <!-- URL -->
 <div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
@@ -7,7 +8,7 @@
   <p style="font-size:13px;color:#666;margin-bottom:10px;">L'agente deve sapere a che URL connettersi. Copia questo indirizzo:</p>
   <div style="display:flex;gap:8px;align-items:center;">
     <code id="baseUrlDisplay" style="flex:1;padding:10px 14px;background:#f5f5f5;border-radius:6px;font-size:14px;border:1px solid #ddd;"><%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %></code>
-    <button class="btn" onclick="copyText('<%= typeof baseUrl !== 'undefined' ? baseUrl.replace(/'/g, "\\'") : '' %>')" style="white-space:nowrap;">📋 Copia URL</button>
+    <button class="btn" id="copyUrlBtn" accesskey="u" onclick="copyText('<%= typeof baseUrl !== 'undefined' ? baseUrl.replace(/'/g, "\\'") : '' %>')" style="white-space:nowrap;" title="Alt+U">📋 Copia URL</button>
   </div>
 </div>
 
@@ -28,7 +29,7 @@
     </p>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
       <code id="agentTokenDisplay" style="flex:1;padding:12px 14px;background:#f5f5f5;border-radius:6px;font-size:14px;border:1px solid #ddd;word-break:break-all;"><%= agentToken %></code>
-      <button class="btn" style="background:#059669;" onclick="copyText('<%= agentToken.replace(/'/g, "\\'") %>')">📋 Copia token</button>
+      <button class="btn" style="background:#059669;" accesskey="t" onclick="copyText('<%= agentToken.replace(/'/g, "\\'") %>')" title="Alt+T">📋 Copia token</button>
     </div>
     <p style="font-size:13px;color:#666;">
       L'agente userà l'header: <code>Authorization: Bearer &lt;token&gt;</code> su tutte le chiamate.
@@ -59,14 +60,24 @@
     <details style="margin-top:12px;">
       <summary style="cursor:pointer;color:#4f46e5;font-size:13px;">Gestisci token esistenti (<%= tokens.length %>)</summary>
       <table style="margin-top:8px;font-size:13px;">
-        <thead><tr><th>Nome</th><th>Token</th><th>Scade</th><th>Ultimo uso</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>Token</th><th>Scade</th><th>Ultimo uso</th><th>Stato</th><th></th></tr></thead>
         <tbody>
           <% tokens.forEach(tk => { %>
+          <%
+            let expiryBadge = '';
+            if (tk.expires_at) {
+              const daysLeft = Math.ceil((new Date(tk.expires_at) - Date.now()) / 86400000);
+              if (daysLeft <= 0) expiryBadge = '<span style="color:#b91c1c;font-weight:600;">⚠ scaduto</span>';
+              else if (daysLeft <= 7) expiryBadge = `<span style="color:#b45309;font-weight:600;">⚠ ${daysLeft} gg</span>`;
+              else expiryBadge = `<span style="color:#059669;">${daysLeft} gg</span>`;
+            }
+          %>
           <tr>
             <td><%= tk.name %></td>
             <td><code><%= tk.token_prefix %></code></td>
             <td><%= tk.expires_at ? new Date(tk.expires_at).toLocaleDateString('it-IT') : '—' %></td>
             <td><%= tk.last_used_at ? new Date(tk.last_used_at).toLocaleString('it-IT') : 'mai' %></td>
+            <td><%- expiryBadge %></td>
             <td>
               <% if (!tk.revoked_at) { %>
                 <form method="POST" action="/admin/agent/token/<%= tk.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revocare questo token? L\'agente non potrà più usarlo.');">
@@ -80,6 +91,11 @@
           <% }) %>
         </tbody>
       </table>
+      <% if (tokens.some(t => t.expires_at && new Date(t.expires_at) - Date.now() < 7*86400000 && !t.revoked_at)) { %>
+        <p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px 12px;font-size:13px;color:#92400e;margin-top:10px;">
+          ⚠️ <strong>Attenzione:</strong> uno o più token stanno per scadere (entro 7 giorni). Gli agenti collegati riceveranno un 401. Genera un nuovo token quando quello attuale scade.
+        </p>
+      <% } %>
     </details>
   <% } %>
 </div>
@@ -90,8 +106,8 @@
   <p style="font-size:13px;color:#666;margin-bottom:10px;">Copia questo blocco e dallo all'agente AI all'inizio della conversazione. L'agente ti guiderà passo passo.</p>
   <div style="background:#f5f5f5;border-radius:6px;padding:14px;border:1px solid #ddd;font-size:13px;line-height:1.6;white-space:pre-wrap;font-family:monospace;margin-bottom:10px;" id="agentInstructionsBlock">
 Sei un assistente AI che gestisce il CMS <%= app.name %> dell'utente.
-URL base: <%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %><% if (agentToken) { %>
-TOKEN AGENTE: <%= agentToken %>
+URL base: <%= typeof baseUrl !== 'undefined' ? baseUrl : '—' %>
+<% if (agentToken) { %>TOKEN AGENTE: <%= agentToken %>
 <% } %>
 
 AUTENTICAZIONE (modo semplice, consigliato):
@@ -101,6 +117,18 @@ AUTENTICAZIONE (modo semplice, consigliato):
   /admin/agent e usalo come header Authorization: Bearer &lt;token&gt;.<% } %>
 - Quando il token scade (max 365 giorni), l'utente ne genera uno nuovo
   dalla stessa pagina /admin/agent.
+
+API VERSIONE E METADATA (tutte le risposte hanno):
+- Header X-Agent-Api-Version: 1.0
+- Header X-Request-Id: usa questo id nei messaggi di errore all'utente
+- Paginazione: aggiungi ?limit=&offset= alle liste (default 50, max 200)
+- Idempotenza: invia header Idempotency-Key per creazioni/update sicuri
+- Versioni API: nessun endpoint deprecato al momento
+
+SCOPERTA CAPACITÀ:
+- Chiama GET {url}/api/agent/capabilities per la lista completa
+  degli endpoint, delle feature e dei rate limit.
+- Chiama GET {url}/api/agent/guide per AGENT.md completo (markdown).
 
 REGOLA 1: Prima di ogni modifica a una pagina o snippet, chiama sempre
 GET {url}/api/agent/sites/{siteId}/pages/{pageId}/versions
@@ -117,6 +145,10 @@ REGOLA 3: Se trovi URL esterni nella pagina, chiama extract-assets.
    NON scaricare file in locale e caricarli manualmente — usa sempre l'API.
    Se trovi base64 inline, usa inline-to-files.
 
+VALIDAZIONE URL PRIMA DI CREARE:
+- Prima di POST /pages, chiama GET {url}/api/agent/sites/{siteId}/validate-path?url_path=/nuovo-percorso
+  per verificare che il path sia valido e non in conflitto.
+
 [FALLBACK — SOLO se non vuoi usare il token agente]
 Flusso OTP a due fattori (email + codice):
 1. POST /api/auth/login con { "email": "..." } per inviare la magic-link.
@@ -128,6 +160,7 @@ Flusso OTP a due fattori (email + codice):
 
 Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
   <button class="btn" onclick="copyInstructions()">📋 Copia istruzioni per l'agente</button>
+  <button class="btn" id="openGuideBtn" accesskey="v" onclick="openGuideModal()" style="background:#4f46e5;margin-left:8px;" title="Alt+V">📖 Visualizza AGENT.md</button>
 </div>
 
 <!-- Passo passo -->
@@ -146,48 +179,68 @@ Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
   </table>
 </div>
 
-<!-- Endpoint -->
+<!-- Endpoint con copia per riga -->
 <div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
   <h3 style="font-size:15px;margin-bottom:10px;">🔌 Cosa può fare l'agente</h3>
-  <table>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">Clicca 📋 su una riga per copiare metodo + path. Usa il campo sotto per filtrare.</p>
+  <input type="text" id="endpointFilter" placeholder="🔍 Filtra endpoint (es. snippet, media, pages)…" style="width:100%;max-width:400px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:10px;" oninput="filterEndpoints()">
+  <table id="endpointTable">
     <thead>
-      <tr><th>Endpoint</th><th>Metodo</th><th>Descrizione</th></tr>
+      <tr><th></th><th>Endpoint</th><th>Metodo</th><th>Descrizione</th></tr>
     </thead>
     <tbody>
-      <tr><td><code>/api/agent/me</code></td><td>GET</td><td>Utente corrente e scadenza token</td></tr>
-      <tr><td><code>/api/agent/sites</code></td><td>GET</td><td>Lista siti accessibili</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages</code></td><td>GET</td><td>Lista pagine di un sito</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid</code></td><td>GET</td><td>Contenuto completo pagina</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages</code></td><td>POST</td><td>Crea nuova pagina</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid</code></td><td>PUT</td><td>Modifica pagina esistente</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/search?q=...</code></td><td>GET</td><td>Cerca pagine per testo nel contenuto</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/bulk-publish</code></td><td>POST</td><td>Pubblica/nascondi più pagine insieme</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/publish-toggle</code></td><td>POST</td><td>Cambia pubblicazione senza toccare il contenuto</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/duplicate</code></td><td>POST</td><td>Duplica pagina con nuovo URL</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/rename-url</code></td><td>POST</td><td>Rinomina URL senza toccare il contenuto</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/find-replace</code></td><td>POST</td><td>Cerca e sostituisci nel contenuto HTML</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/versions</code></td><td>GET</td><td>Lista versioni precedenti</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/versions/:vid/restore</code></td><td>POST</td><td>Ripristina una versione precedente</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/snippet-usage</code></td><td>GET</td><td>Quali {{snippet:...}} sono usati in questa pagina</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/rendered</code></td><td>GET</td><td>HTML finale con snippet espansi</td></tr>
-      <tr><td><code>/api/agent/sites/:id/pages/:pid/diff/:vid</code></td><td>GET</td><td>Differenza tra pagina corrente e versione</td></tr>
-      <tr><td><code>/api/agent/sites/:id/snippets</code></td><td>GET</td><td>Lista snippet con contenuto</td></tr>
-      <tr><td><code>/api/agent/sites/:id/snippets/:sid</code></td><td>GET</td><td>Snippet singolo</td></tr>
-      <tr><td><code>/api/agent/sites/:id/snippets</code></td><td>POST</td><td>Crea nuovo snippet</td></tr>
-      <tr><td><code>/api/agent/sites/:id/snippets/:sid</code></td><td>PUT</td><td>Modifica snippet esistente</td></tr>
-      <tr><td><code>/api/agent/sites/:id/snippets/:sid/find-replace</code></td><td>POST</td><td>Cerca e sostituisci nel contenuto dello snippet</td></tr>
-      <tr><td><code>/api/agent/sites/:id/media</code></td><td>GET</td><td>Lista file media del sito</td></tr>
-      <tr><td><code>/api/agent/sites/:id/media/upload</code></td><td>POST</td><td>Carica file locale (multipart form-data)</td></tr>
-      <tr><td><code>/api/agent/sites/:id/media/fetch-url</code></td><td>POST</td><td>Scarica URL esterno nei media</td></tr>
-      <tr><td><code>/api/agent/sites/:id/media/:filename</code></td><td>DELETE</td><td>Elimina un file media</td></tr>
-      <tr><td><code>/api/agent/sites/:id/settings</code></td><td>GET</td><td>Impostazioni del sito</td></tr>
-      <tr><td><code>/api/agent/sites/:id/settings/:key</code></td><td>PUT</td><td>Aggiorna impostazione (anche homepage_path)</td></tr>
-      <tr><td><code>/api/agent/sites/:id/audit-log</code></td><td>GET</td><td>Registro attività (filtrabile per entity_type)</td></tr>
-      <tr><td><code>/api/agent/sites/:id/stats</code></td><td>GET</td><td>Riepilogo di pagine, snippet e media</td></tr>
-      <tr><td><code>/api/auth/login</code></td><td>POST</td><td>Invia la magic-link via email (codice OTP + link col token — login interattivo di fallback)</td></tr>
-      <tr><td><code>/api/agent/verify-otp</code></td><td>POST</td><td>Verifica email + token + OTP, restituisce il JWT (solo flusso di fallback)</td></tr>
+      <tr data-endpoint="/api/agent/me" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/me</code></td><td>GET</td><td>Utente corrente e scadenza token</td></tr>
+      <tr data-endpoint="/api/agent/capabilities" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/capabilities</code></td><td>GET</td><td>Scopre capacità, endpoint e rate limit dell'agente</td></tr>
+      <tr data-endpoint="/api/agent/sites" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites</code></td><td>GET</td><td>Lista siti accessibili</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages</code></td><td>GET</td><td>Lista pagine di un sito (paginato: ?limit=&offset=)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid</code></td><td>GET</td><td>Contenuto completo pagina</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages</code></td><td>POST</td><td>Crea nuova pagina (supporta Idempotency-Key)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid" data-method="PUT"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid</code></td><td>PUT</td><td>Modifica pagina esistente</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/search" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/search?q=...</code></td><td>GET</td><td>Cerca pagine per testo nel contenuto</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/bulk-publish" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/bulk-publish</code></td><td>POST</td><td>Pubblica/nascondi più pagine insieme</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/publish-toggle" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/publish-toggle</code></td><td>POST</td><td>Cambia pubblicazione senza toccare il contenuto</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/duplicate" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/duplicate</code></td><td>POST</td><td>Duplica pagina con nuovo URL</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/rename-url" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/rename-url</code></td><td>POST</td><td>Rinomina URL senza toccare il contenuto</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/find-replace" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/find-replace</code></td><td>POST</td><td>Cerca e sostituisci nel contenuto HTML</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/versions" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/versions</code></td><td>GET</td><td>Lista versioni precedenti</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/versions/:vid/restore" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/versions/:vid/restore</code></td><td>POST</td><td>Ripristina una versione precedente</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/summary" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/summary</code></td><td>GET</td><td>Metriche leggere (senza contenuto completo)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/snippet-usage" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/snippet-usage</code></td><td>GET</td><td>Quali {{snippet:...}} sono usati in questa pagina</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/rendered" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/rendered</code></td><td>GET</td><td>HTML finale con snippet espansi</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/pages/:pid/diff/:vid" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/pages/:pid/diff/:vid</code></td><td>GET</td><td>Differenza tra pagina corrente e versione (format=unified|json)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/validate-path" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/validate-path?url_path=</code></td><td>GET</td><td>Valida un URL path prima della creazione</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/snippets" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/snippets</code></td><td>GET</td><td>Lista snippet con contenuto (paginata)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/snippets/:sid" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/snippets/:sid</code></td><td>GET</td><td>Snippet singolo</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/snippets" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/snippets</code></td><td>POST</td><td>Crea nuovo snippet</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/snippets/:sid" data-method="PUT"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/snippets/:sid</code></td><td>PUT</td><td>Modifica snippet esistente</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/snippets/bulk-rename" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/snippets/bulk-rename</code></td><td>POST</td><td>Rinomina più snippet in una chiamata</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/snippets/:sid/find-replace" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/snippets/:sid/find-replace</code></td><td>POST</td><td>Cerca e sostituisci nel contenuto dello snippet</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/media" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/media</code></td><td>GET</td><td>Lista file media (filtri: q=, type=, limit=, offset=)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/media/upload" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/media/upload</code></td><td>POST</td><td>Carica file locale (multipart form-data)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/media/fetch-url" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/media/fetch-url</code></td><td>POST</td><td>Scarica URL esterno nei media</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/media/:filename" data-method="DELETE"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/media/:filename</code></td><td>DELETE</td><td>Elimina un file media</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/settings" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/settings</code></td><td>GET</td><td>Impostazioni del sito</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/settings/:key" data-method="PUT"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/settings/:key</code></td><td>PUT</td><td>Aggiorna impostazione (anche homepage_path)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/audit-log" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/audit-log</code></td><td>GET</td><td>Registro attività (filtrabile per entity_type)</td></tr>
+      <tr data-endpoint="/api/agent/sites/:id/stats" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/sites/:id/stats</code></td><td>GET</td><td>Riepilogo di pagine, snippet e media</td></tr>
+      <tr data-endpoint="/api/agent/ingest" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/ingest</code></td><td>POST</td><td>Importa contenuto da URL esterno</td></tr>
+      <tr data-endpoint="/api/agent/guide" data-method="GET"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/guide</code></td><td>GET</td><td>AGENT.md completo (text/markdown)</td></tr>
+      <tr data-endpoint="/api/auth/login" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/auth/login</code></td><td>POST</td><td>Invia la magic-link via email (codice OTP + link col token — login interattivo di fallback)</td></tr>
+      <tr data-endpoint="/api/agent/verify-otp" data-method="POST"><td><button class="btn btn-sm" onclick="copyEndpoint(this)">📋</button></td><td><code>/api/agent/verify-otp</code></td><td>POST</td><td>Verifica email + token + OTP, restituisce il JWT (solo flusso di fallback)</td></tr>
     </tbody>
   </table>
+</div>
+
+<!-- Test rapido endpoint (endpoint explorer) -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);border:1px solid #e0e7ff;">
+  <h3 style="font-size:15px;margin-bottom:10px;">🧪 Prova un endpoint (test rapido)</h3>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">Seleziona un endpoint, inserisci i parametri (se servono) e premi <strong>Invia</strong>. La richiesta parte con l'header <code>Authorization: Bearer &lt;token&gt;</code> se il token è disponibile in questa pagina.</p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+    <select id="explorerEndpoint" style="padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;flex:1;min-width:260px;" onchange="updateExplorer()"></select>
+    <input type="text" id="explorerParams" placeholder='Parametri query (es. siteId=2&url_path=/test)' style="flex:1;min-width:200px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+    <button class="btn" style="background:#4f46e5;" onclick="runExplorer()">🚀 Invia</button>
+  </div>
+  <pre id="explorerResult" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:14px;font-size:12px;max-height:300px;overflow:auto;white-space:pre-wrap;display:none;"></pre>
 </div>
 
 <!-- Cronologia importazioni -->
@@ -217,12 +270,47 @@ Leggi AGENT.md per la documentazione completa delle API disponibili.</div>
   </table>
 </div>
 
+<!-- Attività recente dell'agente (audit trail) -->
+<div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:10px;">🕓 Attività recente dell'agente</h3>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">Ultime modifiche a pagine e snippet effettuate dal tuo utente (dall'audit log).</p>
+  <table>
+    <thead>
+      <tr><th>Quando</th><th>Azione</th><th>Tipo</th><th>Sito</th><th>Risorsa</th></tr>
+    </thead>
+    <tbody>
+      <% if (!auditLog || auditLog.length === 0) { %>
+        <tr><td colspan="5" style="text-align:center;color:#999;">Nessuna attività registrata</td></tr>
+      <% } else { %>
+        <% auditLog.forEach(a => { %>
+        <tr>
+          <td style="white-space:nowrap;font-size:12px;"><%= new Date(a.created_at).toLocaleString('it-IT') %></td>
+          <td><span style="background:#eef2ff;color:#3730a3;border-radius:4px;padding:2px 6px;font-size:12px;"><%= a.action %></span></td>
+          <td><%= a.entity_type %></td>
+          <td><%= a.site_name || '—' %></td>
+          <td><%= a.page_url || ('#' + a.entity_id) %></td>
+        </tr>
+        <% }) %>
+      <% } %>
+    </tbody>
+  </table>
+</div>
+
 <!-- File di riferimento -->
 <div style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
   <h3 style="font-size:15px;margin-bottom:10px;">📄 File di riferimento</h3>
   <p style="font-size:13px;color:#666;margin-bottom:10px;">Scarica il file <code>AGENT.md</code> e daglielo all'agente dicendo: <em>"Leggi questo file, contiene tutte le API che puoi usare."</em></p>
-  <a href="/api/agent/guide" target="_blank" class="btn" style="background:#059669;">⬇️ Scarica AGENT.md</a>
+  <a href="/api/agent/guide" target="_blank" class="btn" accesskey="g" style="background:#059669;" title="Alt+G">⬇️ Scarica AGENT.md</a>
   <button class="btn" onclick="copyFullGuide()" style="background:#6b7280;margin-left:8px;">📋 Copia AGENT.md completo</button>
+</div>
+
+<!-- Modal AGENT.md viewer -->
+<div id="guideModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;">
+  <div style="position:relative;max-width:900px;margin:40px auto;background:#fff;border-radius:8px;padding:20px;max-height:85vh;overflow:auto;">
+    <h3 style="font-size:15px;margin-bottom:10px;">📖 AGENT.md <span style="color:#999;font-weight:normal;font-size:12px;">(operating protocol)</span></h3>
+    <button class="btn btn-sm" onclick="closeGuideModal()" style="position:absolute;top:10px;right:10px;background:#6b7280;">✕ Chiudi</button>
+    <pre id="guideContent" style="background:#f5f5f5;border-radius:6px;padding:14px;font-size:12px;line-height:1.5;max-height:70vh;overflow:auto;white-space:pre-wrap;user-select:text;"></pre>
+  </div>
 </div>
 
 <script>
@@ -267,4 +355,136 @@ function copyToClipboard(text, btn, feedback) {
     window.prompt('Copia questo testo (Ctrl+A, Ctrl+C):', text);
   }
 }
+
+// Copia un singolo endpoint dalla tabella
+function copyEndpoint(btn) {
+  const tr = btn.closest('tr');
+  const method = tr.dataset.method;
+  const endpoint = tr.dataset.endpoint;
+  const curl = `curl -X ${method} "https://HOST${endpoint}" -H "Authorization: Bearer <token>"`;
+  copyToClipboard(curl, btn, '✅');
+}
+
+// Filtro tabella endpoint
+function filterEndpoints() {
+  const q = (document.getElementById('endpointFilter').value || '').toLowerCase().trim();
+  const rows = document.querySelectorAll('#endpointTable tbody tr');
+  rows.forEach(tr => {
+    const text = (tr.textContent || '').toLowerCase();
+    tr.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+}
+
+// AGENT.md modal viewer
+async function openGuideModal() {
+  const modal = document.getElementById('guideModal');
+  const content = document.getElementById('guideContent');
+  modal.style.display = 'block';
+  content.textContent = 'Caricamento…';
+  try {
+    const r = await fetch('/api/agent/guide');
+    if (!r.ok) throw new Error('Errore ' + r.status);
+    content.textContent = await r.text();
+  } catch (err) {
+    content.textContent = 'Impossibile caricare AGENT.md: ' + err.message;
+  }
+}
+
+function closeGuideModal() {
+  document.getElementById('guideModal').style.display = 'none';
+}
+
+// Endpoint explorer
+const EXPLORER_ENDPOINTS = [
+  { method: 'GET', path: '/api/agent/me' },
+  { method: 'GET', path: '/api/agent/capabilities' },
+  { method: 'GET', path: '/api/agent/sites' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/pages?limit=50' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/pages/{pageId}' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/pages/search?q={query}' },
+  { method: 'POST', path: '/api/agent/sites/{siteId}/pages' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/snippets?limit=50' },
+  { method: 'POST', path: '/api/agent/sites/{siteId}/snippets' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/media?limit=50' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/validate-path?url_path={path}' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/audit-log' },
+  { method: 'GET', path: '/api/agent/sites/{siteId}/stats' },
+  { method: 'GET', path: '/api/agent/guide' },
+  { method: 'POST', path: '/api/agent/ingest' },
+];
+
+function populateExplorer() {
+  const sel = document.getElementById('explorerEndpoint');
+  sel.innerHTML = '';
+  EXPLORER_ENDPOINTS.forEach(ep => {
+    const opt = document.createElement('option');
+    opt.value = ep.method + ' ' + ep.path;
+    opt.textContent = ep.method + ' ' + ep.path;
+    sel.appendChild(opt);
+  });
+  updateExplorer();
+}
+
+function updateExplorer() {
+  const val = document.getElementById('explorerEndpoint').value;
+  const params = document.getElementById('explorerParams');
+  params.placeholder = 'Parametri (es. siteId=2' + (val.includes('{') ? '&pageId=10' : '') + ')…';
+}
+
+async function runExplorer() {
+  const resultEl = document.getElementById('explorerResult');
+  const val = document.getElementById('explorerEndpoint').value;
+  const [method, pathTemplate] = val.split(' ');
+  const paramsStr = document.getElementById('explorerParams').value.trim();
+
+  // Sostituisci i placeholder {x} con i valori da paramsStr (siteId=2&pageId=10)
+  let path = pathTemplate;
+  let query = '';
+  if (paramsStr) {
+    const pairs = paramsStr.split('&');
+    for (const p of pairs) {
+      const [k, v] = p.split('=');
+      if (!k || !v) continue;
+      if (path.includes('{' + k + '}')) {
+        path = path.replace('{' + k + '}', encodeURIComponent(v));
+      } else {
+        query += (query ? '&' : '') + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+      }
+    }
+  }
+  // Placeholder rimasti → chiedi all'utente
+  const remaining = path.match(/\{(\w+)\}/);
+  if (remaining) {
+    const val2 = window.prompt('Valore per ' + remaining[1] + ':');
+    if (!val2) return;
+    path = path.replace(remaining[0], encodeURIComponent(val2));
+  }
+  const url = path + (query ? '?' + query : '');
+
+  resultEl.style.display = 'block';
+  resultEl.textContent = method + ' ' + url + '\n\nInviando…';
+
+  // Estrai il token agente dal DOM se disponibile
+  const tokenEl = document.getElementById('agentTokenDisplay');
+  const token = tokenEl ? tokenEl.textContent.trim() : '';
+  const headers = { 'Accept': 'application/json' };
+  if (token && token.startsWith('agtok_')) headers['Authorization'] = 'Bearer ' + token;
+
+  try {
+    const r = await fetch(url, { method, headers, body: method === 'POST' || method === 'PUT' ? JSON.stringify({}) : undefined });
+    const text = await r.text();
+    resultEl.textContent = 'HTTP ' + r.status + '\n' + url + '\n\n' + (text.length > 15000 ? text.slice(0, 15000) + '\n…(troncato)' : text);
+  } catch (err) {
+    resultEl.textContent = 'Errore di rete: ' + err.message;
+  }
+}
+
+// Keyboard shortcuts: Alt+U copia URL, Alt+G apri guida esterna, Alt+V visualizza modal
+document.addEventListener('keydown', (e) => {
+  if (!e.altKey) return;
+  if (e.key === 'u' || e.key === 'U') { e.preventDefault(); document.getElementById('copyUrlBtn') && document.getElementById('copyUrlBtn').click(); }
+  if (e.key === 'v' || e.key === 'V') { e.preventDefault(); openGuideModal(); }
+});
+
+populateExplorer();
 </script>

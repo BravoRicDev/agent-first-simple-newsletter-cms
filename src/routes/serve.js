@@ -106,7 +106,17 @@ router.get("/admin/agent", requireAuth, async (req, res, next) => {
        ORDER BY il.created_at DESC LIMIT 20`
     )).rows;
     const tokens = await listApiTokens(req.user.sub);
-    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog, tokens, newToken: null });
+    const auditLog = (await query(
+      `SELECT al.action, al.entity_type, al.entity_id, al.created_at,
+              s.name AS site_name, p.url_path AS page_url
+       FROM audit_log al
+       LEFT JOIN sites s ON s.id = al.site_id
+       LEFT JOIN pages p ON p.id = al.entity_id AND al.entity_type = 'page'
+       WHERE al.user_id = $1 AND al.action IN ('create','update','post','put','patch') AND al.entity_type IN ('page','snippet')
+       ORDER BY al.created_at DESC LIMIT 20`,
+      [req.user.sub]
+    )).rows;
+    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog, tokens, newToken: null, auditLog });
   } catch (err) { next(err); }
 });
 
@@ -133,7 +143,17 @@ router.post("/admin/agent/token", requireAuth, async (req, res, next) => {
     )).rows;
     // Il token in chiaro è disponibile SOLO in questa risposta (stesso modello
     // di /admin/api-tokens): dopo il reload non sarà più recuperabile.
-    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog, tokens, newToken: created });
+    const auditLog = (await query(
+      `SELECT al.action, al.entity_type, al.entity_id, al.created_at,
+              s.name AS site_name, p.url_path AS page_url
+       FROM audit_log al
+       LEFT JOIN sites s ON s.id = al.site_id
+       LEFT JOIN pages p ON p.id = al.entity_id AND al.entity_type = 'page'
+       WHERE al.user_id = $1 AND al.action IN ('create','update','post','put','patch') AND al.entity_type IN ('page','snippet')
+       ORDER BY al.created_at DESC LIMIT 20`,
+      [req.user.sub]
+    )).rows;
+    res.render("admin/agent/index", { baseUrl: config.magicLinkBaseUrl, ingestLog, tokens, newToken: created, auditLog });
   } catch (err) { next(err); }
 });
 
