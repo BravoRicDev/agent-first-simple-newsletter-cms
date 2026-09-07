@@ -185,8 +185,18 @@ router.get("/admin/webhooks", requireAuth, authorize("forms", "read"), async (re
       [siteId]
     )).rows;
     const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
+    // Log tentativi inbound recenti (per diagnostica sicurezza)
+    const inboundLog = (await query(
+      `SELECT l.id, l.webhook_id, l.event_type, l.ip::text AS ip, l.status, l.reason,
+              l.created_at, w.name AS webhook_name
+       FROM webhook_inbound_log l
+       LEFT JOIN webhooks w ON w.id = l.webhook_id
+       WHERE l.site_id = $1
+       ORDER BY l.created_at DESC LIMIT 15`,
+      [siteId]
+    )).rows;
     res.render("admin/crm/webhooks", {
-      webhooks, deliveries, recentDeliveries, site, sites, siteId, isSuperadmin,
+      webhooks, deliveries, recentDeliveries, inboundLog, site, sites, siteId, isSuperadmin,
       saved: req.query.saved === "1", events: WEBHOOK_EVENTS, filterableFields: FILTERABLE_FIELDS,
     });
   } catch (err) { next(err); }
@@ -203,6 +213,8 @@ router.post("/admin/webhooks", requireAuth, authorize("forms", "update"), async 
       secret: req.body.secret,
       events: JSON.parse(req.body.events_json || "[]"),
       filter: JSON.parse(req.body.filter_json || "{}"),
+      allowed_ips: (req.body.allowed_ips || "").split(",").map(s => s.trim()).filter(Boolean),
+      verify_secret: req.body.verify_secret || "",
       active: req.body.active !== "off",
     };
     if (parsed.name && siteId) {
@@ -222,6 +234,8 @@ router.post("/admin/webhooks/:id/update", requireAuth, authorize("forms", "updat
       secret: req.body.secret,
       events: JSON.parse(req.body.events_json || "[]"),
       filter: JSON.parse(req.body.filter_json || "{}"),
+      allowed_ips: (req.body.allowed_ips || "").split(",").map(s => s.trim()).filter(Boolean),
+      verify_secret: req.body.verify_secret || "",
       active: req.body.active !== "off",
     };
     const current = await getWebhook(siteId, id);
@@ -229,6 +243,21 @@ router.post("/admin/webhooks/:id/update", requireAuth, authorize("forms", "updat
       parsed.direction = current.direction;
       await updateWebhook(siteId, id, parsed);
     }
+    res.redirect(`/admin/webhooks?site_id=${siteId}&saved=1`);
+  } catch (err) { next(err); }
+});
+
+// Rotate token webhook IN (rigenera secret)
+router.post("/admin/webhooks/:id/rotate-token", requireAuth, authorize("forms", "update"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && req.body.site_id ? parseInt(req.body.site_id, 10) : req.user.site_id;
+    const id = parseInt(req.params.id, 10);
+    const { randomBytes } = await import("crypto");
+    const newSecret = randomBytes(16).toString("hex");
+    await query(
+      "UPDATE webhooks SET secret = $1, updated_at = NOW() WHERE id = $2 AND site_id = $3",
+      [newSecret, id, siteId]
+    );
     res.redirect(`/admin/webhooks?site_id=${siteId}&saved=1`);
   } catch (err) { next(err); }
 });

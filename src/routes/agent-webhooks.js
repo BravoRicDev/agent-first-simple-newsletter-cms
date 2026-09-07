@@ -3,8 +3,10 @@ import { canAccessSite, requireAgent } from "./agent-helpers.js";
 import {
   listWebhooks, getWebhook, createWebhook, updateWebhook, deleteWebhook,
   deliverPending, sendWebhookPayload,
+  ipInAllowedList, verifyHmacSignature, matchesFilter,
 } from "../services/webhooks.js";
 import { WEBHOOK_EVENTS, FILTERABLE_FIELDS } from "../constants/webhook-events.js";
+import crypto from "crypto";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Feature 35 — Webhook IN/OUT (collegamento n8n). Route agent per gestire
@@ -141,6 +143,121 @@ export function registerWebhooksRoutes(router) {
       const deleted = await deleteWebhook(siteId, webhookId);
       if (!deleted) return res.status(404).json({ error: "Webhook non trovato" });
       res.json({ deleted: true });
+    } catch (err) { next(err); }
+  });
+
+  // ── Sicurezza inbound: log, rotate token, rotate verify_secret, dry-run ──
+
+  // Storico tentativi INBOUND (accepted/filtered/ip_blocked/signature_fail/invalid_token).
+  router.get("/api/agent/sites/:siteId/webhooks/inbound-log", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const params = [siteId];
+      let where = "l.site_id = $1";
+      const status = String(req.query.status || "");
+      if (["accepted", "filtered", "ip_blocked", "signature_fail", "invalid_token", "error"].includes(status)) {
+        params.push(status);
+        where += ` AND l.status = $${params.length}`;
+      }
+      if (req.query.webhook_id) {
+        params.push(parseInt(req.query.webhook_id, 10));
+        where += ` AND l.webhook_id = $${params.length}`;
+      }
+      params.push(Math.min(parseInt(req.query.limit, 10) || 50, 200));
+      const rows = (await query(
+        `SELECT l.id, l.webhook_id, l.event_type, l.ip::text AS ip, l.status, l.reason,
+                l.created_at, w.name AS webhook_name
+         FROM webhook_inbound_log l
+         LEFT JOIN webhooks w ON w.id = l.webhook_id
+         WHERE ${where}
+         ORDER BY l.created_at DESC
+         LIMIT $${params.length}`,
+        params
+      )).rows;
+      res.json({ log: rows });
+    } catch (err) { next(err); }
+  });
+
+  // Rigenera il token (secret) del webhook IN: il vecchio token smette di funzionare.
+  router.post("/api/agent/sites/:siteId/webhooks/:webhookId/rotate-token", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      const webhookId = parseInt(req.params.webhookId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const current = await getWebhook(siteId, webhookId);
+      if (!current) return res.status(404).json({ error: "Webhook non trovato" });
+      const { randomBytes } = await import("crypto");
+      const newSecret = randomBytes(16).toString("hex"); // 32 char
+      const updated = await query(
+        `UPDATE webhooks SET secret = $1, updated_at = NOW() WHERE id = $2 AND site_id = $3 RETURNING *`,
+        [newSecret, webhookId, siteId]
+      );
+      res.json({ webhook: updated.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // Rigenera la verify_secret (chiave HMAC) per la verifica firma inbound.
+  router.post("/api/agent/sites/:siteId/webhooks/:webhookId/rotate-verify-secret", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      const webhookId = parseInt(req.params.webhookId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const current = await getWebhook(siteId, webhookId);
+      if (!current) return res.status(404).json({ error: "Webhook non trovato" });
+      const { randomBytes } = await import("crypto");
+      const newSecret = randomBytes(32).toString("hex"); // 64 char
+      const updated = await query(
+        `UPDATE webhooks SET verify_secret = $1, updated_at = NOW() WHERE id = $2 AND site_id = $3 RETURNING *`,
+        [newSecret, webhookId, siteId]
+      );
+      res.json({ webhook: updated.rows[0] });
+    } catch (err) { next(err); }
+  });
+
+  // Dry-run inbound: simula una chiamata al webhook IN (filtri/allowlist/HMAC)
+  // SENZA eseguire azioni. Utile per testare il mapping e i filtri di sicurezza.
+  router.post("/api/agent/sites/:siteId/webhooks/:webhookId/dry-run", requireAgent, async (req, res, next) => {
+    try {
+      const siteId = parseInt(req.params.siteId, 10);
+      const webhookId = parseInt(req.params.webhookId, 10);
+      if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: "Accesso negato" });
+      const webhook = await getWebhook(siteId, webhookId);
+      if (!webhook) return res.status(404).json({ error: "Webhook non trovato" });
+      if (webhook.direction !== "in") return res.status(400).json({ error: "Dry-run disponibile solo per webhook in" });
+
+      const body = req.body?.payload || {};
+      const bodyStr = typeof req.body?.payload_raw === "string" ? req.body.payload_raw : JSON.stringify(body);
+      const signature = String(req.body?.signature || "");
+      const ip = String(req.body?.ip || "127.0.0.1");
+
+      const checks = {};
+      // Allowlist IP
+      if (webhook.allowed_ips && webhook.allowed_ips.length > 0) {
+        checks.ip_allowed = ipInAllowedList(ip, webhook.allowed_ips);
+      } else {
+        checks.ip_allowed = true;
+      }
+      // HMAC
+      if (webhook.verify_secret) {
+        checks.signature_valid = signature
+          ? verifyHmacSignature(webhook.verify_secret, bodyStr, signature)
+          : false;
+      } else {
+        checks.signature_valid = null; // non richiesta
+      }
+      // Filtro payload
+      if (webhook.filter && Object.keys(webhook.filter).length > 0) {
+        checks.filter_match = matchesFilter(webhook.filter, body.payload || body);
+      } else {
+        checks.filter_match = true;
+      }
+      // Mapping
+      const mapping = webhook.events && typeof webhook.events === "object" && !Array.isArray(webhook.events) ? webhook.events : {};
+      const eventType = String(body.event_type || body.type || "").trim();
+      checks.would_execute = (eventType && mapping[eventType]) ? mapping[eventType] : (Object.keys(mapping)[0] || null);
+
+      res.json({ webhook_id: webhookId, checks, would_execute: checks.would_execute });
     } catch (err) { next(err); }
   });
 }

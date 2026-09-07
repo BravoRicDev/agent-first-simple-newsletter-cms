@@ -1365,22 +1365,37 @@ agent routes + MCP tools (301 total tools). Overview:
   `emitContactEvent`). OUT webhooks support a `filter` object
   (e.g. `{"form_slug":"qualifica-lead"}` or `{"!tag":"spam"}`): only
   deliveries whose payload matches (AND, dot-paths, `!` = not-equal) fire.
+  IN webhooks support inbound security:
+  - `allowed_ips` (array of CIDR/IP): only those source IPs can call the
+    endpoint (e.g. n8n egress IP). Empty = allow all.
+  - `verify_secret`: if set, the CMS verifies the `X-Webhook-Signature`
+    header (HMAC-SHA256 of the JSON body). n8n signs with the same key.
+  - `filter` also applies to IN payloads before actions run.
+  Every inbound attempt is logged in `webhook_inbound_log`
+  (accepted/filtered/ip_blocked/signature_fail/invalid_token) for
+  diagnostics.
   Agent endpoints:
   ```text
-  GET    /api/agent/webhook-events                      ← event catalog (28) + filterable fields
-  GET    /api/agent/sites/:id/webhooks                 ← list (?direction=in|out)
-  POST   /api/agent/sites/:id/webhooks                 ← create { name, direction, url?, secret, events, filter?, active }
-  PUT    /api/agent/sites/:id/webhooks/:webhookId      ← update
-  DELETE /api/agent/sites/:id/webhooks/:webhookId      ← delete
-  POST   /api/agent/sites/:id/webhooks/:webhookId/test ← send test payload (OUT only)
-  GET    /api/agent/sites/:id/webhook-deliveries       ← delivery log (?status= sent|pending|failed)
-  POST   /api/agent/sites/:id/webhook-deliveries/run   ← flush pending now
+  GET    /api/agent/webhook-events                          ← event catalog (28) + filterable fields
+  GET    /api/agent/sites/:id/webhooks                     ← list (?direction=in|out)
+  POST   /api/agent/sites/:id/webhooks                     ← create { name, direction, url?, secret, events, filter?, allowed_ips?, verify_secret?, active }
+  PUT    /api/agent/sites/:id/webhooks/:webhookId          ← update
+  DELETE /api/agent/sites/:id/webhooks/:webhookId          ← delete
+  POST   /api/agent/sites/:id/webhooks/:webhookId/test     ← send test payload (OUT only)
+  POST   /api/agent/sites/:id/webhooks/:webhookId/rotate-token         ← regenerate IN token (path secret)
+  POST   /api/agent/sites/:id/webhooks/:webhookId/rotate-verify-secret ← regenerate HMAC key
+  POST   /api/agent/sites/:id/webhooks/:webhookId/dry-run  ← simulate payload/signature/IP against security checks (no action)
+  GET    /api/agent/sites/:id/webhooks/inbound-log         ← inbound attempt log (?status=)
+  GET    /api/agent/sites/:id/webhook-deliveries           ← delivery log (?status= sent|pending|failed)
+  POST   /api/agent/sites/:id/webhook-deliveries/run       ← flush pending now
   POST   /api/agent/sites/:id/webhook-deliveries/:deliveryId/retry ← reset+retry one
   ```
   COMBO n8n flow: `workflow(send_webhook)` fires a webhook to n8n with the
   full payload; n8n does the complex logic/conditions; if it needs to write
   back, it POSTs to `/webhooks/in/:siteId/:token` (mapping
-  `{"lead.qualified":{"action":"create_contact"}}`).
+  `{"lead.qualified":{"action":"create_contact"}}`). For hardened inbound,
+  restrict the source IP to n8n's egress and enable `verify_secret` so n8n
+  signs each request.
 - **36 — Google OAuth**: `oauth-apps` + authorization code flow
   (auth-url/exchange/refresh/disconnect), `/oauth/callback/:provider`.
 - **37 — Bidirectional calendar sync**: `calendar-sync-configs`

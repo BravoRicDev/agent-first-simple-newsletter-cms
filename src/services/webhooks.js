@@ -101,7 +101,92 @@ function sanitizeWebhookData(siteId, data = {}) {
     );
   }
 
-  return { site_id: siteId, direction, name, url, secret, events, filter, active: data.active !== false };
+  // Allowlist IP sorgente (solo IN): array di CIDR/IP, validati in modo lasco.
+  let allowed_ips = [];
+  if (Array.isArray(data.allowed_ips)) {
+    allowed_ips = data.allowed_ips
+      .map((v) => String(v).trim().slice(0, 100))
+      .filter((v) => /^[0-9a-fA-F:.]+(\/\d{1,3})?$/.test(v))
+      .slice(0, 20);
+  }
+  // Chiave di verifica HMAC (solo IN): separata dal token del path.
+  const verify_secret = String(data.verify_secret ?? "").slice(0, 255);
+
+  return { site_id: siteId, direction, name, url, secret, events, filter, allowed_ips, verify_secret, active: data.active !== false };
+}
+
+// ── Sicurezza INBOUND ───────────────────────────────────────────────────────
+
+// Verifica che un IP (IPv4/IPv6) appartenga a uno dei CIDR/IP consentiti.
+export function ipInAllowedList(ipStr, allowedIps) {
+  if (!allowedIps || !Array.isArray(allowedIps) || allowedIps.length === 0) return true;
+  if (!ipStr) return false;
+  for (const cidr of allowedIps) {
+    if (cidr === ipStr) return true;
+    // Simple CIDR check (IPv4 and IPv6)
+    const [rangeIp, bits] = String(cidr).includes("/") ? cidr.split("/") : [cidr, null];
+    if (bits) {
+      const bitsNum = parseInt(bits, 10);
+      if (isNaN(bitsNum)) continue;
+      if (cidrMatch(ipStr, rangeIp, bitsNum)) return true;
+    }
+  }
+  return false;
+}
+
+function cidrMatch(ip, rangeIp, bits) {
+  // Simple CIDR matching for both IPv4 and IPv6
+  // For production use a proper library, but this covers common cases
+  try {
+    const ipParts = ip.split(":").map(p => parseInt(p, 16));
+    const rangeParts = rangeIp.split(":").map(p => parseInt(p, 16));
+    if (ipParts.length !== rangeParts.length) return false;
+    const totalBits = ipParts.length * 16;
+    const bytes = Math.floor(bits / 8);
+    const remainingBits = bits % 8;
+    for (let i = 0; i < bytes; i++) {
+      if (ipParts[i] !== rangeParts[i]) return false;
+    }
+    if (remainingBits > 0) {
+      const mask = 0xFF << (8 - (bits % 8));
+      if ((ipParts[bytes] & mask) !== (rangeParts[bytes] & mask)) return false;
+    }
+    return true;
+  } catch {
+    // Fallback to string prefix for simple cases
+    return String(ipStr).startsWith(rangeIp.replace(/0+$/, "").replace(/\/$/, ""));
+  }
+}
+
+// Verifica firma HMAC-SHA256 del body (X-Webhook-Signature header).
+export function verifyHmacSignature(secret, body, providedSig) {
+  if (!secret || !providedSig) return false;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+  // Constant-time compare
+  if (providedSig.length !== expected.length) return false;
+  let result = 0;
+  for (let i = 0; i < expected.length; i++) {
+    result |= expected.charCodeAt(i) ^ providedSig.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+// Log inbound attempt in webhook_inbound_log
+async function logInboundAttempt({ siteId, webhookId, eventType, ip, status, reason, requestBody, responseStatus }) {
+  try {
+    await query(
+      `INSERT INTO webhook_inbound_log
+        (site_id, webhook_id, event_type, ip, status, reason, request_body, response_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [siteId, webhookId, eventType, ip, status, reason, requestBody ? JSON.stringify(requestBody) : null, responseStatus]
+    );
+  } catch (err) {
+    // Don't fail the request if logging fails
+    logger.error(`webhook inbound log failed: ${err.message}`);
+  }
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────
@@ -131,9 +216,9 @@ export async function getWebhook(siteId, id) {
 export async function createWebhook(siteId, data) {
   const clean = sanitizeWebhookData(siteId, data);
   const result = await query(
-    `INSERT INTO webhooks (site_id, name, direction, url, secret, events, filter, active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [clean.site_id, clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), clean.active]
+    `INSERT INTO webhooks (site_id, name, direction, url, secret, events, filter, allowed_ips, verify_secret, active)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [clean.site_id, clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), JSON.stringify(clean.allowed_ips), clean.verify_secret, clean.active]
   );
   return result.rows[0];
 }
@@ -144,9 +229,9 @@ export async function updateWebhook(siteId, id, data) {
   const clean = sanitizeWebhookData(siteId, { ...current, ...data });
   const result = await query(
     `UPDATE webhooks SET name = $1, direction = $2, url = $3, secret = $4,
-       events = $5, filter = $6, active = $7, updated_at = NOW()
-     WHERE id = $8 AND site_id = $9 RETURNING *`,
-    [clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), clean.active, id, siteId]
+       events = $5, filter = $6, allowed_ips = $7, verify_secret = $8, active = $9, updated_at = NOW()
+     WHERE id = $10 AND site_id = $11 RETURNING *`,
+    [clean.name, clean.direction, clean.url, clean.secret, JSON.stringify(clean.events), JSON.stringify(clean.filter), JSON.stringify(clean.allowed_ips), clean.verify_secret, clean.active, id, siteId]
   );
   return result.rows[0];
 }
@@ -165,7 +250,7 @@ export async function deleteWebhook(siteId, id) {
 // Semantica AND: ogni chiave del filtro deve matchare il payload.
 // Valore con prefisso '!' → il payload NON deve essere uguale.
 // Le chiavi possono essere dot-path (es. "contact.email", "payload.to_stage").
-function matchesFilter(filter, payload) {
+export function matchesFilter(filter, payload) {
   if (!filter || typeof filter !== "object" || Object.keys(filter).length === 0) return true;
   const getPath = (obj, path) => {
     const parts = String(path).split(".");
@@ -636,13 +721,53 @@ export async function sendWebhookPayload({ url, secret = "", eventType = "webhoo
 
 // Trova il webhook IN attivo per token e applica il mapping. Ritorna null
 // (→ 401) se il token non corrisponde a nessun webhook attivo del sito.
-export async function handleIncoming(siteId, token, body = {}) {
+// Restituisce oggetto con: { received: bool, actions: number, rejected: string|null }
+// rejected contiene motivo se respinto: 'ip_blocked' | 'signature_fail' | 'filtered'
+// opts: { ip: string|null, signature: string|null } — signature = header X-Webhook-Signature
+// (firma HMAC-SHA256 del body serializzato, come inviato da n8n)
+export async function handleIncoming(siteId, token, body = {}, opts = {}) {
+  const ip = opts?.ip || null;
+  const providedSig = String(opts?.signature || "").trim();
   const webhook = (await query(
     `SELECT * FROM webhooks
      WHERE site_id = $1 AND direction = 'in' AND active = true AND secret = $2`,
     [siteId, String(token || "")]
   )).rows[0];
-  if (!webhook) return null;
+  if (!webhook) {
+    await logInboundAttempt({ siteId, ip, status: "invalid_token", reason: "Token non valido", requestBody: body, responseStatus: 401 });
+    return null;
+  }
+
+  // 1. IP allowlist check
+  if (ip && webhook.allowed_ips && Array.isArray(webhook.allowed_ips) && webhook.allowed_ips.length > 0) {
+    const allowed = ipInAllowedList(ip, webhook.allowed_ips);
+    if (!allowed) {
+      await logInboundAttempt({ siteId, webhookId: webhook.id, ip, status: "ip_blocked", reason: `IP ${ip} non in allowlist`, requestBody: body, responseStatus: 403 });
+      return { received: false, actions: 0, rejected: "ip_blocked" };
+    }
+  }
+
+  // 2. HMAC signature verification (header X-Webhook-Signature sul body serializzato)
+  if (webhook.verify_secret) {
+    const canonical = typeof body === "string" ? body : JSON.stringify(body);
+    if (!providedSig) {
+      await logInboundAttempt({ siteId, webhookId: webhook.id, ip, status: "signature_fail", reason: "Firma HMAC mancante", requestBody: body, responseStatus: 401 });
+      return { received: false, actions: 0, rejected: "signature_fail" };
+    }
+    if (!verifyHmacSignature(webhook.verify_secret, canonical, providedSig)) {
+      await logInboundAttempt({ siteId, webhookId: webhook.id, ip, status: "signature_fail", reason: "Firma HMAC non valida", requestBody: body, responseStatus: 401 });
+      return { received: false, actions: 0, rejected: "signature_fail" };
+    }
+  }
+
+  // 3. Inbound payload filter (like OUT webhooks)
+  if (webhook.filter && Object.keys(webhook.filter).length > 0) {
+    const payloadForFilter = body.payload || body;
+    if (!matchesFilter(webhook.filter, payloadForFilter)) {
+      await logInboundAttempt({ siteId, webhookId: webhook.id, ip, status: "filtered", reason: "Payload non matcha filtro", requestBody: body, responseStatus: 200 });
+      return { received: true, actions: 0, rejected: "filtered" };
+    }
+  }
 
   let mapping = webhook.events;
   if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) mapping = {};
@@ -658,7 +783,9 @@ export async function handleIncoming(siteId, token, body = {}) {
       actions += await runInboundAction(siteId, firstKey, mapping[firstKey], body, webhook.id);
     }
   }
-  return { received: true, actions };
+
+  await logInboundAttempt({ siteId, webhookId: webhook.id, eventType, ip, status: "accepted", reason: null, requestBody: body, responseStatus: 200 });
+  return { received: true, actions, rejected: null };
 }
 
 async function runInboundAction(siteId, eventType, rule, body, webhookId) {

@@ -1465,13 +1465,13 @@ const TOOL_META = {
   },
   "POST /api/agent/sites/:siteId/webhooks": {
     name: "webhook_create",
-    description: { en: "Creates a webhook: in (receives external events via public endpoint with token) or out (forwards CMS events to a URL with HMAC signature).", it: "Crea un webhook: in (riceve eventi esterni via endpoint pubblico con token) o out (inoltra eventi del CMS a un URL con firma HMAC)." },
-    inputSchema: { site_id: z.number(), name: z.string().min(1).max(255), direction: z.enum(["in", "out"]), url: z.string().optional(), secret: z.string().optional(), events: z.array(z.any()).optional(), active: z.boolean().optional() },
+    description: { en: "Creates a webhook: in (receives external events via public endpoint with token) or out (forwards CMS events to a URL with HMAC signature). Security for IN: allowed_ips (array of CIDR/IP), verify_secret (HMAC key checked against X-Webhook-Signature header), filter (payload match conditions).", it: "Crea un webhook: in (riceve eventi esterni via endpoint pubblico con token) o out (inoltra eventi del CMS a un URL con firma HMAC). Sicurezza per IN: allowed_ips (array di CIDR/IP), verify_secret (chiave HMAC verificata sull'header X-Webhook-Signature), filter (condizioni sul payload)." },
+    inputSchema: { site_id: z.number(), name: z.string().min(1).max(255), direction: z.enum(["in", "out"]), url: z.string().optional(), secret: z.string().optional(), events: z.array(z.any()).optional(), filter: z.record(z.any()).optional(), allowed_ips: z.array(z.string()).optional(), verify_secret: z.string().optional(), active: z.boolean().optional() },
   },
   "PUT /api/agent/sites/:siteId/webhooks/:webhookId": {
     name: "webhook_update",
-    description: { en: "Updates a webhook.", it: "Aggiorna un webhook." },
-    inputSchema: { site_id: z.number(), webhook_id: z.number(), name: z.string().min(1).max(255).optional(), url: z.string().optional(), secret: z.string().optional(), events: z.array(z.any()).optional(), active: z.boolean().optional() },
+    description: { en: "Updates a webhook (name, url, secret, events, filter, allowed_ips, verify_secret, active).", it: "Aggiorna un webhook (name, url, secret, events, filter, allowed_ips, verify_secret, active)." },
+    inputSchema: { site_id: z.number(), webhook_id: z.number(), name: z.string().min(1).max(255).optional(), url: z.string().optional(), secret: z.string().optional(), events: z.array(z.any()).optional(), filter: z.record(z.any()).optional(), allowed_ips: z.array(z.string()).optional(), verify_secret: z.string().optional(), active: z.boolean().optional() },
   },
   "DELETE /api/agent/sites/:siteId/webhooks/:webhookId": {
     name: "webhook_delete",
@@ -1497,6 +1497,26 @@ const TOOL_META = {
     name: "webhook_delivery_retry",
     description: { en: "Resets a failed/pending delivery and retries it immediately.", it: "Azzera una delivery fallita/pendente e la ritenta subito." },
     inputSchema: { site_id: z.number(), delivery_id: z.number() },
+  },
+  "GET /api/agent/sites/:siteId/webhooks/inbound-log": {
+    name: "webhook_inbound_log",
+    description: { en: "Lists inbound webhook attempts (accepted/filtered/ip_blocked/signature_fail/invalid_token) with reason and IP.", it: "Elenca i tentativi webhook in ingresso (accepted/filtered/ip_blocked/signature_fail/invalid_token) con motivo e IP." },
+    inputSchema: { site_id: z.number(), status: z.enum(["accepted", "filtered", "ip_blocked", "signature_fail", "invalid_token"]).optional(), webhook_id: z.number().optional(), limit: z.number().optional() },
+  },
+  "POST /api/agent/sites/:siteId/webhooks/:webhookId/rotate-token": {
+    name: "webhook_rotate_token",
+    description: { en: "Regenerates the IN webhook token (path secret). The old token stops working immediately.", it: "Rigenera il token del webhook IN (secret nel path). Il vecchio token smette di funzionare subito." },
+    inputSchema: { site_id: z.number(), webhook_id: z.number() },
+  },
+  "POST /api/agent/sites/:siteId/webhooks/:webhookId/rotate-verify-secret": {
+    name: "webhook_rotate_verify_secret",
+    description: { en: "Regenerates the HMAC verify_secret for an IN webhook.", it: "Rigenera la verify_secret HMAC per un webhook IN." },
+    inputSchema: { site_id: z.number(), webhook_id: z.number() },
+  },
+  "POST /api/agent/sites/:siteId/webhooks/:webhookId/dry-run": {
+    name: "webhook_inbound_dryrun",
+    description: { en: "Dry-run for an IN webhook: simulates payload+signature+IP against allowlist/HMAC/filter and shows the action that would execute, WITHOUT executing it.", it: "Dry-run per un webhook IN: simula payload+firma+IP contro allowlist/HMAC/filtro e mostra l'azione che eseguirebbe, SENZA eseguirla." },
+    inputSchema: { site_id: z.number(), webhook_id: z.number(), payload: z.record(z.any()).optional(), payload_raw: z.string().optional(), signature: z.string().optional(), ip: z.string().optional() },
   },
   "GET /api/agent/webhook-events": {
     name: "webhook_events_list",
