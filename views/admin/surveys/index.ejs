@@ -1,0 +1,42 @@
+<h1>Sondaggi — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<p style="color:#666;font-size:13px;margin-bottom:16px;">
+  Sondaggi sincronizzati dal CRM sorgente (sola lettura — non creabili/modificabili qui). Distinti dai "Questionari" nativi del CMS.
+</p>
+
+<% if (surveys.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun sondaggio sincronizzato per questo sito.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Slug</th><th>Stato</th><th>Risposte</th><th>Ultima risposta</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% surveys.forEach(s => { %>
+    <tr>
+      <td><%= s.name %></td>
+      <td><code><%= s.slug %></code></td>
+      <td><span class="badge"><%= s.status %></span></td>
+      <td><%= s.total %></td>
+      <td><%= s.last_submission ? new Date(s.last_submission).toLocaleString('it-IT') : '—' %></td>
+      <td>
+        <a href="/admin/surveys/<%= s.id %>/submissions?site_id=<%= siteId %>" class="btn btn-sm">Risposte</a>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

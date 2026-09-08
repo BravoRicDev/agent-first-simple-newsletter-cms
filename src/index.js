@@ -47,6 +47,7 @@ import { publicOauthRouter } from "./routes/public-oauth.js";
 import { publicPaymentsRouter } from "./routes/public-payments.js";
 import { publicTrackedLinksRouter } from "./routes/public-tracked-links.js";
 import publicSmsInboundRoutes from "./routes/public-sms-inbound.js";
+import surveysAdminRoutes from "./routes/surveys-admin.js";
 import contactsRoutes from "./routes/contacts.js";
 import apiTokensRoutes from "./routes/api-tokens.js";
 import pipelineRoutes from "./routes/pipeline.js";
@@ -307,6 +308,7 @@ async function start() {
   app.use(accessGrantsAdminRoutes);
   app.use(formsRoutes);
   app.use(quizzesRoutes);
+  app.use(surveysAdminRoutes);
   app.use(adminCrmRoutes);
   app.use(callRecordingsRoutes);
   app.use(adminClientServicesRoutes);

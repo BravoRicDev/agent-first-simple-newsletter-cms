@@ -1,0 +1,27 @@
+<h1>Risposte — <%= survey.name %></h1>
+<p><a href="/admin/surveys?site_id=<%= siteId %>">&larr; Torna ai sondaggi</a></p>
+
+<% if (submissions.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessuna risposta ricevuta ancora.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Data</th><th>Contatto</th><th>Risposte</th></tr>
+  </thead>
+  <tbody>
+    <% submissions.forEach(sub => { %>
+    <tr>
+      <td style="white-space:nowrap;"><%= new Date(sub.submitted_at).toLocaleString('it-IT') %></td>
+      <td><%= sub.contact_email || '—' %></td>
+      <td>
+        <table style="font-size:12px;">
+          <% Object.entries(sub.answers || {}).forEach(([k, v]) => { %>
+            <tr><td style="color:#666;padding-right:8px;"><%= k %></td><td><%= typeof v === 'object' ? JSON.stringify(v) : v %></td></tr>
+          <% }) %>
+        </table>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>
