@@ -59,7 +59,11 @@ export async function syncAll(ctx) {
   // marcato con "model". Nessuna paginazione osservata (106 campi in
   // un'unica risposta su un account reale).
   try {
-    const res = await client.get(`/locations/${cfg.location_id}/customFields`);
+    // sendLocationId:false — locationId è già nel path; duplicarlo in query
+    // dà 422 "property locationId should not exist" su questo endpoint
+    // (verificato dal vivo — incoerente con altri /locations/{id}/... che
+    // lo tollerano: meglio non affidarsi a una tolleranza non documentata).
+    const res = await client.get(`/locations/${cfg.location_id}/customFields`, {}, { sendLocationId: false });
     const fields = res?.customFields || res || [];
     addStat("custom-fields", "fetched", fields.length);
 

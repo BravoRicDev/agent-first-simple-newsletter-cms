@@ -87,7 +87,7 @@ export function createSourceClient(cfg) {
     lastCallAt = Date.now();
   }
 
-  async function request(path, { params = {}, method = "GET", body = null } = {}) {
+  async function request(path, { params = {}, method = "GET", body = null, sendLocationId = true } = {}) {
     await throttle();
     await consumeBudget(cfg.site_id, cfg);
 
@@ -98,7 +98,19 @@ export function createSourceClient(cfg) {
     // CRM sorgente (API attuale l'endpoint API del CRM sorgente) richiede locationId su
     // ogni chiamata: lo passiamo come query param camelCase (mai "location_id",
     // rifiutato con 422 "property location_id should not exist").
-    if (cfg.location_id) {
+    //
+    // sendLocationId: false — alcuni endpoint lo rifiutano ANCHE in query
+    // camelCase, con lo stesso 422 ("property locationId should not exist"):
+    // verificato dal vivo su GET /contacts/{id}/notes, GET /contacts/{id}/tasks
+    // (locationId non fa parte del contratto per-risorsa, il contatto è già
+    // scoped) e sui 4 endpoint /locations/{id}/... (custom-fields, tags,
+    // customValues, location) dove locationId è già nel path — duplicarlo in
+    // query dà 422 su alcuni di questi (custom-fields, tags) e viene
+    // tollerato su altri (customValues, location singola): comportamento
+    // incoerente fra endpoint "gemelli" della stessa API, meglio non
+    // affidarsi alla tolleranza non documentata e ometterlo ovunque il path
+    // lo contiene già.
+    if (sendLocationId && cfg.location_id) {
       if (!url.searchParams.has("locationId")) url.searchParams.set("locationId", String(cfg.location_id));
     }
 
@@ -134,8 +146,8 @@ export function createSourceClient(cfg) {
     }
   }
 
-  async function get(path, params = {}) {
-    const data = await request(path, { params });
+  async function get(path, params = {}, { sendLocationId = true } = {}) {
+    const data = await request(path, { params, sendLocationId });
     if (data?.items) return data.items;
     // Se non c'è 'items', prova a estrarre usando pathToKey (per risposte come {users:[...]})
     const key = pathToKey(path);

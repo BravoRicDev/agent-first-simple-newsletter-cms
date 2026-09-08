@@ -9,7 +9,10 @@ export async function syncAll(ctx) {
     // non su /tags/. La risposta è { tags: [ { id, name, locationId } ] }:
     // NESSUN campo "color", né "dateAdded"/"dateUpdated" (verificato sulle
     // pagine Get Tags / Create Tag / Get tag by id della doc 2021-07-28).
-    const res = await client.get(`/locations/${cfg.location_id}/tags`);
+    // sendLocationId:false — locationId già nel path; duplicarlo in query
+    // dà 422 "property locationId should not exist" su questo endpoint
+    // (verificato dal vivo).
+    const res = await client.get(`/locations/${cfg.location_id}/tags`, {}, { sendLocationId: false });
     const tags = res?.tags || res || [];
     addStat("tags", "fetched", tags.length);
 

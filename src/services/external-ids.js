@@ -71,6 +71,13 @@ export const WHITELIST_TABLES = {
   enrollments: true,
   social_accounts: true,
   social_posts: true,
+  // Copie in sola lettura di risorse del CRM sorgente (source-sync, doppio
+  // id ghl_id — db/120_ghl_id_columns.sql / db/124_source_sync_new_modules.sql).
+  // Prefisso "ghl_" per non collidere con le tabelle omonime del CMS (es.
+  // `workflows`, il motore Automazioni v2 nativo — tutt'altra cosa).
+  ghl_workflows: true,
+  ghl_funnels: true,
+  ghl_custom_values: true,
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

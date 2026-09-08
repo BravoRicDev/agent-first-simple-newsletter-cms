@@ -14,13 +14,24 @@ export async function syncAll(ctx) {
   const { siteId, client, cfg, dryRun, addStat, log } = ctx;
 
   try {
-    const calsResp = await client.get("/calendars", { locationId: cfg.location_id });
+    // Slash finale OBBLIGATORIO: "/calendars" (senza) risponde 404 sull'API
+    // reale, "/calendars/" risponde 200 — verificato dal vivo con probe
+    // diretto (stesso client, stesso token). I calendari non venivano mai
+    // sincronizzati prima di questo fix.
+    const calsResp = await client.get("/calendars/", { locationId: cfg.location_id });
     const cals = Array.isArray(calsResp) ? calsResp : calsResp?.calendars || [];
     addStat("calendars", "fetched", cals.length);
 
     for (const cal of cals) {
       try {
-        const slug = cal.calendarSlug || slugify(cal.name || "");
+        // Fallback quando il sorgente non fornisce calendarSlug: slugify(name)
+        // da solo collide fra calendari con nome uguale o molto simile
+        // (UNIQUE(site_id, slug) → "duplicate key value violates unique
+        // constraint calendars_site_id_slug_key", riprodotto dal vivo).
+        // Suffisso dagli ultimi 6 caratteri dell'id sorgente (sempre univoco
+        // per costruzione) per garantire unicità senza toccare i calendari
+        // che hanno già un calendarSlug proprio dal sorgente.
+        const slug = cal.calendarSlug || `${slugify(cal.name || "")}-${String(cal.id || "").slice(-6)}`;
         const cols = {
           name: cal.name || "",
           description: cal.description || "",

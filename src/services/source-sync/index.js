@@ -13,8 +13,14 @@ import { emitContactEvent } from "../events.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 const SWEEP_ORDER = [
+  // location-info PRIMA di users: se company_id non è configurato
+  // esplicitamente, lo popola da loc.companyId (richiesto da GET
+  // /users/search) sia su source_sync_config sia su ctx.cfg in memoria,
+  // sbloccando la sync utenti nello stesso run — vedi mappers/location-info.js.
+  "location-info",
   "users",
   "custom-fields",
+  "custom-values",
   "tags",
   "pipelines",
   "calendars",
@@ -23,14 +29,18 @@ const SWEEP_ORDER = [
   "surveys",
   "campaigns",
   "commerce",
+  "ghl-workflows",
+  "funnels",
 ];
 
 async function loadMappers() {
   // Import dinamici: i file mapper sono gestiti da agenti/fasi successive;
   // un modulo assente viene semplicemente saltato con warning.
   const names = {
+    "location-info": "./mappers/location-info.js",
     users: "./mappers/users.js",
     "custom-fields": "./mappers/custom-fields.js",
+    "custom-values": "./mappers/custom-values.js",
     tags: "./mappers/tags.js",
     pipelines: "./mappers/pipelines.js",
     calendars: "./mappers/calendars.js",
@@ -39,6 +49,8 @@ async function loadMappers() {
     surveys: "./mappers/surveys.js",
     campaigns: "./mappers/campaigns.js",
     commerce: "./mappers/commerce.js",
+    "ghl-workflows": "./mappers/ghl-workflows.js",
+    funnels: "./mappers/funnels.js",
   };
   const loaded = {};
   for (const [key, path] of Object.entries(names)) {

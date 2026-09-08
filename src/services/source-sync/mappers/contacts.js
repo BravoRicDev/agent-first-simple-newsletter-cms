@@ -196,7 +196,12 @@ export async function syncForContacts(ctx, extIds) {
   for (const extId of extIds) {
     // Note
     try {
-      const notesRes = await client.get(`/contacts/${extId}/notes`);
+      // sendLocationId:false — GET /contacts/{id}/notes rifiuta locationId
+      // in query con 422 "property locationId should not exist" (il
+      // contatto è già scoped dall'id nel path): verificato dal vivo su
+      // centinaia di contatti reali, causava fallimento sistematico e
+      // silenzioso di TUTTA la sync di note/task (vedi catch sotto).
+      const notesRes = await client.get(`/contacts/${extId}/notes`, {}, { sendLocationId: false });
       const notes = notesRes?.notes || notesRes || [];
       for (const n of notes) {
         try {
@@ -233,12 +238,17 @@ export async function syncForContacts(ctx, extIds) {
         }
       }
     } catch (err) {
+      // Prima non incrementava nessuno stat: un fallimento sistematico
+      // (es. il 422 locationId sopra) restava invisibile nelle stats del
+      // run, fetched===0 senza errors a segnalarlo.
+      addStat("contacts", "errors", 1);
       log(`syncForContacts notes ${extId}: ${err.message}`);
     }
 
     // Tasks
     try {
-      const tasksRes = await client.get(`/contacts/${extId}/tasks`);
+      // sendLocationId:false — stesso motivo di /notes sopra.
+      const tasksRes = await client.get(`/contacts/${extId}/tasks`, {}, { sendLocationId: false });
       const tasks = tasksRes?.tasks || tasksRes || [];
       for (const t of tasks) {
         try {
@@ -277,6 +287,7 @@ export async function syncForContacts(ctx, extIds) {
         }
       }
     } catch (err) {
+      addStat("contacts", "errors", 1);
       log(`syncForContacts tasks ${extId}: ${err.message}`);
     }
   }
