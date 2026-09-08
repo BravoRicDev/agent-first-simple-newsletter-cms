@@ -63,16 +63,14 @@ async function syncUsersPage(ctx, users) {
       // Postgres: duplicate key value violates unique constraint "users_email_key"
       if (err.message?.includes("duplicate key") && err.message?.includes("email")) {
         const existing = (
-          await query("SELECT id, external_id FROM users WHERE email = $1 LIMIT 1", [u.email])
+          await query("SELECT id, ghl_id FROM users WHERE email = $1 LIMIT 1", [u.email])
         ).rows[0];
         // S1 v2: adotta il record locale esistente (stessa email) quando il
-        // suo external_id NON è quello sorgente (migrazione 090: external_id
-        // locale è un UUID sempre valorizzato → il vecchio check
-        // "!existing.external_id" non scattava mai e l'utente GHL non veniva
-        // importato).
-        if (existing && existing.external_id !== u.id) {
+        // suo ghl_id NON è quello sorgente (doppio id: db/120_ghl_id_columns.sql
+        // — external_id resta l'id locale, mai toccato dal source-sync).
+        if (existing && existing.ghl_id !== u.id) {
           if (!dryRun) {
-            await query("UPDATE users SET external_id = $1 WHERE id = $2", [u.id, existing.id]);
+            await query("UPDATE users SET ghl_id = $1 WHERE id = $2", [u.id, existing.id]);
           }
           addStat("users", "updated", 1);
           continue;

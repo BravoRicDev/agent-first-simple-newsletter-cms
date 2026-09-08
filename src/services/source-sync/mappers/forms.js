@@ -93,7 +93,7 @@ export async function syncAll(ctx) {
           const existing = !dryRun
             ? (
                 await query(
-                  "SELECT id, created_at FROM form_submissions WHERE external_id = $1 AND site_id = $2 LIMIT 1",
+                  "SELECT id, created_at FROM form_submissions WHERE ghl_id = $1 AND site_id = $2 LIMIT 1",
                   [sub.id, siteId]
                 )
               ).rows[0]
@@ -104,7 +104,7 @@ export async function syncAll(ctx) {
           } else {
             if (!dryRun) {
               await query(
-                `INSERT INTO form_submissions (site_id, external_id, form_slug, data, created_at)
+                `INSERT INTO form_submissions (site_id, ghl_id, form_slug, data, created_at)
                  VALUES ($1, $2, $3, $4, $5)`,
                 [siteId, sub.id, sub.formId || "", JSON.stringify(sub), sub.createdAt || new Date()]
               );

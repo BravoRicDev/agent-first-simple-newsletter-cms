@@ -26,24 +26,21 @@ async function upsertContact(ctx, extId, contact) {
     // Adozione S1: cerca contatto email same-site (case-insensitive)
     const existing = (
       await query(
-        "SELECT id, external_id FROM contacts WHERE site_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
+        "SELECT id, ghl_id FROM contacts WHERE site_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1",
         [siteId, email]
       )
     ).rows[0];
 
     // S1: si "adotta" un record locale esistente (stessa email) quando il suo
-    // external_id NON è quello sorgente che stiamo per scrivere.
-    //
-    // Prima della migrazione 090 i record creati dal CMS avevano external_id
-    // NULL: bastava controllare "!existing.external_id". Con 090
-    // (DEFAULT gen_random_uuid()) l'external_id locale è SEMPRE valorizzato,
-    // quindi quella condizione non scattava più e l'import dello stesso
-    // contatto presente anche in GHL falliva sul vincolo UNIQUE(site_id,email)
-    // (INSERT con email duplicata → errore 23505). L'adozione prevale quando
-    // l'id locale non coincide col sorgente: lo sovrascrive con l'id GHL.
-    // Se external_id === extId il record è già nostro: si prosegue verso
-    // l'upsert normale che gestisce skip-if-unchanged/update correttamente.
-    const shouldAdopt = existing && existing.external_id !== extId;
+    // ghl_id NON è quello sorgente che stiamo per scrivere (doppio id: vedi
+    // db/120_ghl_id_columns.sql — external_id resta SEMPRE l'id locale
+    // dell'oggetto CMS, mai scritto/letto dal source-sync; ghl_id è l'id
+    // esatto della risorsa su GoHighLevel, stringa non-uuid). Un record
+    // creato dal CMS ha ghl_id = '' (default): l'adozione prevale quando
+    // l'id GHL locale non coincide col sorgente, sovrascrivendolo con
+    // quello reale. Se ghl_id === extId il record è già nostro: si
+    // prosegue verso l'upsert normale (skip-if-unchanged/update).
+    const shouldAdopt = existing && existing.ghl_id !== extId;
     const cols = {
       email,
       status: contact.status || "",
@@ -63,7 +60,7 @@ async function upsertContact(ctx, extId, contact) {
     if (shouldAdopt) {
       const upd = (
         await query(
-          `UPDATE contacts SET external_id = $1, email = $2, status = $3, notes = $4, tags = $5::text[], updated_at = $6 WHERE id = $7 RETURNING *`,
+          `UPDATE contacts SET ghl_id = $1, email = $2, status = $3, notes = $4, tags = $5::text[], updated_at = $6 WHERE id = $7 RETURNING *`,
           [extId, email, cols.status, cols.notes, contact.tags || [], timestamps.updatedAt || new Date(), existing.id]
         )
       ).rows[0];
@@ -115,11 +112,11 @@ async function storeProfiles(ctx, contactId, contact) {
       // — MAI { key, field_value } come letto prima (fieldKey era sempre
       // undefined, quindi i custom field non venivano MAI sincronizzati).
       // "id" è l'id CRM sorgente della DEFINIZIONE campo: va risolto sul field_key
-      // locale già salvato da mappers/custom-fields.js (external_id).
+      // locale già salvato da mappers/custom-fields.js (ghl_id, non external_id).
       let fieldKey = cf.key || cf.field_key;
       if (!fieldKey && cf.id) {
         const def = (await query(
-          "SELECT field_key FROM custom_fields WHERE external_id = $1 AND site_id = $2 LIMIT 1",
+          "SELECT field_key FROM custom_fields WHERE ghl_id = $1 AND site_id = $2 LIMIT 1",
           [cf.id, siteId]
         )).rows[0];
         fieldKey = def?.field_key || null;

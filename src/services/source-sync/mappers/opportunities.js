@@ -29,21 +29,21 @@ export async function syncForContacts(ctx, extIds) {
               pipelineId = await findInternalId("pipelines", siteId, opp.pipelineId);
             }
 
-            // Risolvi stage: pipelineStageId → pipeline_stages.external_id → key
+            // Risolvi stage: pipelineStageId → pipeline_stages.ghl_id → key
             // oppure lazy-create con key=label
             let stage = "";
             if (opp.pipelineStageId && pipelineId) {
               const stageRow = (await query(
-                "SELECT key FROM pipeline_stages WHERE external_id=$1 AND pipeline_id=$2",
+                "SELECT key FROM pipeline_stages WHERE ghl_id=$1 AND pipeline_id=$2",
                 [opp.pipelineStageId, pipelineId]
               )).rows[0];
               if (stageRow) {
                 stage = stageRow.key;
               } else if (opp.stage) {
                 const newStage = (await query(
-                  `INSERT INTO pipeline_stages (pipeline_id, key, label, external_id)
+                  `INSERT INTO pipeline_stages (pipeline_id, key, label, ghl_id)
                    VALUES ($1, $2, $2, $3)
-                   ON CONFLICT (pipeline_id, key) DO UPDATE SET external_id=$3
+                   ON CONFLICT (pipeline_id, key) DO UPDATE SET ghl_id=$3
                    RETURNING key`,
                   [pipelineId, opp.stage, opp.pipelineStageId]
                 )).rows[0];
@@ -63,7 +63,7 @@ export async function syncForContacts(ctx, extIds) {
             // Risolvi contact_email dal contatto locale
             let contactEmail = "";
             const contactRow = (await query(
-              "SELECT email FROM contacts WHERE external_id=$1 AND site_id=$2",
+              "SELECT email FROM contacts WHERE ghl_id=$1 AND site_id=$2",
               [contactExtId, siteId]
             )).rows[0];
             if (contactRow) {

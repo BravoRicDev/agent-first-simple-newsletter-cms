@@ -53,12 +53,12 @@ export async function syncAll(ctx) {
         // Sync calendar_members dal teamMembers[]
         if (!dryRun && cal.teamMembers && Array.isArray(cal.teamMembers)) {
           const calendarId = (await query(
-            "SELECT id FROM calendars WHERE external_id=$1 AND site_id=$2",
+            "SELECT id FROM calendars WHERE ghl_id=$1 AND site_id=$2",
             [cal.id, siteId]
           )).rows[0]?.id;
 
           if (calendarId) {
-            // Risolvi utenti per external_id
+            // Risolvi utenti per ghl_id
             for (const member of cal.teamMembers) {
               try {
                 const userId = await findInternalId("users", siteId, member.id);
@@ -114,7 +114,7 @@ export async function syncAppointmentsForContacts(ctx, extIds) {
 
         for (const apt of apts) {
           try {
-            // Risolvi calendar_id da calendarId (sorgente) → calendars.external_id → id
+            // Risolvi calendar_id da calendarId (sorgente) → calendars.ghl_id → id
             let calendarId = null;
             if (apt.calendarId) {
               calendarId = await findInternalId("calendars", siteId, apt.calendarId);
@@ -122,7 +122,7 @@ export async function syncAppointmentsForContacts(ctx, extIds) {
 
             // Risolvi contact_email dal contatto locale
             const contactRow = (await query(
-              "SELECT email FROM contacts WHERE external_id=$1 AND site_id=$2",
+              "SELECT email FROM contacts WHERE ghl_id=$1 AND site_id=$2",
               [contactExtId, siteId]
             )).rows[0];
 

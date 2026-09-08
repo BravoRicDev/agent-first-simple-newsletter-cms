@@ -245,7 +245,7 @@ export async function syncAll(ctx) {
               const itemId = item.id || item._id;
               const existing = (
                 await query(
-                  "SELECT id FROM invoice_items WHERE external_id = $1 LIMIT 1",
+                  "SELECT id FROM invoice_items WHERE ghl_id = $1 LIMIT 1",
                   [itemId]
                 )
               ).rows[0];
@@ -255,7 +255,7 @@ export async function syncAll(ctx) {
                 const unit = parseFloat(item.amount ?? item.unitPrice ?? 0);
                 const tot = parseFloat(item.total ?? item.amount ?? item.unitPrice ?? 0);
                 await query(
-                  `INSERT INTO invoice_items (external_id, invoice_id, description, quantity, unit_price, total, created_at)
+                  `INSERT INTO invoice_items (ghl_id, invoice_id, description, quantity, unit_price, total, created_at)
                    VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                   [
                     itemId,

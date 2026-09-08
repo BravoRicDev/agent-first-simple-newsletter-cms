@@ -36,7 +36,7 @@ export async function syncAll(ctx) {
           const status = mapStatus(campaign.status);
           const existing = (
             await query(
-              "SELECT id FROM newsletter_campaigns WHERE external_id = $1 AND site_id = $2 LIMIT 1",
+              "SELECT id FROM newsletter_campaigns WHERE ghl_id = $1 AND site_id = $2 LIMIT 1",
               [campaign.id, siteId]
             )
           ).rows[0];
@@ -45,7 +45,7 @@ export async function syncAll(ctx) {
           if (!existing) {
             row = (
               await query(
-                `INSERT INTO newsletter_campaigns (site_id, external_id, subject, html_content, status, created_at)
+                `INSERT INTO newsletter_campaigns (site_id, ghl_id, subject, html_content, status, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
                 [siteId, campaign.id, campaign.name || "", campaign.content || "", status, campaign.dateAdded || new Date()]
               )

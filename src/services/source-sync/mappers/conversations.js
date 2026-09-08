@@ -55,7 +55,7 @@ export async function syncForContacts(ctx, extIds) {
           try {
             // Risolvi contact_email dal contatto locale
             const contactRow = (await query(
-              "SELECT email FROM contacts WHERE external_id=$1 AND site_id=$2",
+              "SELECT email FROM contacts WHERE ghl_id=$1 AND site_id=$2",
               [contactExtId, siteId]
             )).rows[0];
 

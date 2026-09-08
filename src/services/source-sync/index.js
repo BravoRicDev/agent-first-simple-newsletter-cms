@@ -1,3 +1,4 @@
+import util from "util";
 import { query, getClient } from "../../db.js";
 import { logger } from "../logger.js";
 import { loadConfig, createSourceClient, SourceBudgetError } from "./client.js";
@@ -67,17 +68,25 @@ function makeCtx(siteId, cfg, client, { dryRun }) {
      *  (previene loop infiniti se il sorgente continua a referenziarli) */
     failedContacts: new Set(),
     addStat,
-    /** uuid sorgente dei contatti presenti localmente */
+    /** ghl_id (id GHL, non uuid) dei contatti già presenti localmente */
     knownContacts: new Set(),
     /** contatti scoperti (submission) ancora non cacciati */
     discoveredContacts: new Set(),
-    log: (...a) => logger.info(`source-sync[${siteId}]:`, ...a),
+    // NB: NON logger.info(prefix, ...a) — senza printf-token nel primo
+    // argomento, winston.format.splat() non concatena gli argomenti extra
+    // nel messaggio: li sparge come proprietà indicizzate sull'oggetto info
+    // (spread di stringa → {0:'c',1:'o',...}), e senza splat() vengono
+    // scartati in silenzio (il bug osservato: righe di log vuote per ogni
+    // errore reale del source-sync). util.format costruisce UNA stringa
+    // già pronta, indipendente dalla configurazione di winston.
+    log: (...a) => logger.info(util.format(`source-sync[${siteId}]:`, ...a)),
   };
 }
 
 async function loadKnownContacts(siteId) {
-  const r = await query("SELECT external_id FROM contacts WHERE site_id = $1 AND external_id IS NOT NULL", [siteId]);
-  return new Set(r.rows.map((x) => x.external_id));
+  // ghl_id, non external_id: doppio id, vedi db/120_ghl_id_columns.sql.
+  const r = await query("SELECT ghl_id FROM contacts WHERE site_id = $1 AND ghl_id <> ''", [siteId]);
+  return new Set(r.rows.map((x) => x.ghl_id));
 }
 
 /**

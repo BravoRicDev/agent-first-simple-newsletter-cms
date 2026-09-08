@@ -139,15 +139,16 @@ async function loadContactForPush(siteId, id) {
   let cv = row.custom_values || {};
   if (typeof cv === "string") { try { cv = JSON.parse(cv); } catch { cv = {}; } }
 
-  // Mappa field_key → external_id (id definizione GHL) caricata UNA volta:
-  // prima ogni chiave custom faceva partire una query dedicata (N+1).
+  // Mappa field_key → ghl_id (id definizione GHL, doppio id: vedi
+  // db/120_ghl_id_columns.sql) caricata UNA volta: prima ogni chiave custom
+  // faceva partire una query dedicata (N+1).
   const fieldDefs = (
     await query(
-      "SELECT field_key, external_id FROM custom_fields WHERE site_id = $1 AND object_key = 'contact' AND external_id IS NOT NULL",
+      "SELECT field_key, ghl_id FROM custom_fields WHERE site_id = $1 AND object_key = 'contact' AND ghl_id <> ''",
       [siteId]
     )
   ).rows;
-  const externalIdByKey = new Map(fieldDefs.map((r) => [r.field_key, r.external_id]));
+  const externalIdByKey = new Map(fieldDefs.map((r) => [r.field_key, r.ghl_id]));
 
   const custom = [];
   for (const [key, value] of Object.entries(cv)) {
@@ -179,7 +180,7 @@ async function loadContactForPush(siteId, id) {
 async function loadOpportunityForPush(siteId, id) {
   const row = (
     await query(
-      `SELECT o.*, p.external_id AS pipeline_ext_id
+      `SELECT o.*, p.ghl_id AS pipeline_ext_id
        FROM opportunities o
        LEFT JOIN pipelines p ON p.id = o.pipeline_id
        WHERE o.id = $1 AND o.site_id = $2`,
@@ -192,11 +193,11 @@ async function loadOpportunityForPush(siteId, id) {
   if (row.pipeline_id && row.stage) {
     const st = (
       await query(
-        "SELECT external_id FROM pipeline_stages WHERE pipeline_id = $1 AND key = $2 AND external_id IS NOT NULL LIMIT 1",
+        "SELECT ghl_id FROM pipeline_stages WHERE pipeline_id = $1 AND key = $2 AND ghl_id <> '' LIMIT 1",
         [row.pipeline_id, row.stage]
       )
     ).rows[0];
-    pipelineStageExtId = st?.external_id || "";
+    pipelineStageExtId = st?.ghl_id || "";
   }
 
   const contact =
@@ -210,9 +211,9 @@ async function loadOpportunityForPush(siteId, id) {
   let ownerExtId = "";
   if (row.owner_id) {
     const u = (
-      await query("SELECT external_id FROM users WHERE id = $1 AND external_id IS NOT NULL LIMIT 1", [row.owner_id])
+      await query("SELECT ghl_id FROM users WHERE id = $1 AND ghl_id <> '' LIMIT 1", [row.owner_id])
     ).rows[0];
-    ownerExtId = u?.external_id || "";
+    ownerExtId = u?.ghl_id || "";
   }
 
   return {

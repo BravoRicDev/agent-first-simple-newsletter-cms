@@ -3,8 +3,24 @@ import { WHITELIST_TABLES } from "../external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Upsert fedele per il source sync (docs/SOURCE_SYNC_PLAN.md).
-// external_id = ID della risorsa sul sorgente; created_at/updated_at FORZATE
-// ai valori del sorgente (dateAdded/dateUpdated) per rifletterne lo stato.
+//
+// DOPPIO ID (db/120_ghl_id_columns.sql): il parametro `externalId` qui sotto
+// è l'ID ESATTO della risorsa sul CRM sorgente (stile GoHighLevel: stringa
+// alfanumerica di 20 caratteri, es. "eMjqNVexkS7CyIM2qdtg") e viene
+// scritto/letto sulla colonna `ghl_id` (VARCHAR, default ''), MAI su
+// `external_id`. `external_id` è una colonna UUID separata (migrazione 090,
+// DEFAULT gen_random_uuid()) per un identificatore locale usato altrove
+// (clone API, src/services/external-ids.js) e resta sempre di competenza
+// del CMS: il source-sync non la legge né la scrive mai, in nessuna tabella.
+// Prima di questa migrazione il source-sync scriveva l'id sorgente proprio
+// in external_id, che essendo tipizzata uuid rifiutava qualunque valore non
+// nella forma 8-4-4-4-12 con "invalid input syntax for type uuid" — ogni
+// upsert falliva silenziosamente (mascherato da un bug separato nel logger,
+// vedi index.js). Nome parametro/funzione lasciati invariati per non dover
+// toccare tutti i call-site nei mapper: cambia solo la colonna scritta.
+//
+// created_at/updated_at FORZATE ai valori del sorgente (dateAdded/dateUpdated)
+// per rifletterne lo stato.
 //
 // Strategia select-then-write (niente ON CONFLICT: indici parziali eterogenei)
 // → { row, action: 'inserted'|'updated'|'unchanged' }.
@@ -36,7 +52,9 @@ function sameInstant(a, b) {
  * @param {object} p
  * @param {string} p.table      tabella (whitelist external-ids.js)
  * @param {number} p.siteId
- * @param {string} p.externalId uuid della risorsa SORGENTE
+ * @param {string} p.externalId id della risorsa sul CRM SORGENTE (scritto
+ *                              nella colonna ghl_id, MAI in external_id —
+ *                              vedi commento in testa al file)
  * @param {object} p.cols       colonne DB → valori (solo nomi colonna validi!)
  * @param {{createdAt?:Date|string, updatedAt?:Date|string}} [p.timestamps]
  */
@@ -56,10 +74,10 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
 
   // Alcune tabelle figlie (es. pipeline_stages) non hanno una colonna
   // site_id propria: il tenant è derivato tramite il genitore (pipeline_id),
-  // e external_id è comunque univoco a livello globale (indice unico
-  // parziale). Scopiamo per site_id solo se la colonna esiste davvero,
-  // altrimenti la query fallirebbe con "column site_id does not exist" e
-  // l'errore verrebbe silenziosamente inghiottito dal try/catch del caller.
+  // e ghl_id è comunque univoco a livello globale (indice unico parziale).
+  // Scopiamo per site_id solo se la colonna esiste davvero, altrimenti la
+  // query fallirebbe con "column site_id does not exist" e l'errore
+  // verrebbe silenziosamente inghiottito dal try/catch del caller.
   const hasSiteId = tableCols.has("site_id");
   // Idem per created_at/updated_at: alcune tabelle legacy (es. contact_notes,
   // pipelines, tasks) non hanno tutte e due le colonne — selezionarle a
@@ -70,8 +88,8 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
   const existing = (
     await query(
       hasSiteId
-        ? `SELECT ${selectCols.join(", ")} FROM ${table} WHERE external_id = $1 AND site_id = $2 LIMIT 1`
-        : `SELECT ${selectCols.join(", ")} FROM ${table} WHERE external_id = $1 LIMIT 1`,
+        ? `SELECT ${selectCols.join(", ")} FROM ${table} WHERE ghl_id = $1 AND site_id = $2 LIMIT 1`
+        : `SELECT ${selectCols.join(", ")} FROM ${table} WHERE ghl_id = $1 LIMIT 1`,
       hasSiteId ? [externalId, siteId] : [externalId]
     )
   ).rows[0];
@@ -101,7 +119,7 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
       names.push("site_id");
       values.push(siteId);
     }
-    names.push("external_id");
+    names.push("ghl_id");
     values.push(externalId);
     for (const [k, v] of entries) {
       names.push(k);
@@ -162,14 +180,14 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
   return { row, action: "updated" };
 }
 
-/** Risolve un uuid esterno in id interno della tabella (scope sito). */
+/** Risolve un id GHL (ghl_id, doppio id) in id interno della tabella (scope sito). */
 export async function findInternalId(table, siteId, externalId) {
   if (!externalId) return null;
   if (!WHITELIST_TABLES[table]) {
     throw new Error(`Tabella non autorizzata per source-sync: ${table}`);
   }
   const r = await query(
-    `SELECT id FROM ${table} WHERE external_id = $1 AND site_id = $2 LIMIT 1`,
+    `SELECT id FROM ${table} WHERE ghl_id = $1 AND site_id = $2 LIMIT 1`,
     [externalId, siteId]
   );
   return r.rows[0]?.id ?? null;
