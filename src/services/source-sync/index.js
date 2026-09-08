@@ -184,7 +184,14 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
         } catch (err) {
           if (err instanceof SourceBudgetError) throw err;
           logger.error(`source-sync: mapper ${key} fallito: ${err.message}`);
-          ctx.addStat(key, "errors", 1);
+          // NON ctx.addStat(key, "errors", 1) qui: OGNI mapper (verificato
+          // su tutti quelli esistenti) già chiama addStat(key,"errors",1)
+          // nel proprio catch esterno di syncAll prima di ri-lanciare
+          // l'errore — un secondo addStat qui contava lo stesso fallimento
+          // 2 volte (osservato dal vivo: commerce con un solo errore reale
+          // mostrava "errors": 2 nel risultato del run). Il log resta qui
+          // come rete di sicurezza per un futuro mapper che non seguisse
+          // il pattern (throw senza aver già contato l'errore da solo).
         }
       }
 

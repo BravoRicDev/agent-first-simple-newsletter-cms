@@ -82,8 +82,11 @@ export async function syncAll(ctx) {
 
   try {
     // ── Products ─────────────────────────────────────────────────────────
-    // GET /products?locationId (doc 2021-07-28). Response { products: [...] }.
-    const productsRes = await client.get("/products", { locationId: cfg.location_id });
+    // GET /products/?locationId (doc 2021-07-28). Response { products: [...] }.
+    // Slash finale OBBLIGATORIO come /calendars/ (commit 8cbed5b): "/products"
+    // senza risponde 404 sull'API reale, "/products/" risponde 200 —
+    // verificato dal vivo con probe diretto.
+    const productsRes = await client.get("/products/", { locationId: cfg.location_id });
     const products = Array.isArray(productsRes) ? productsRes : productsRes?.products || [];
     addStat("commerce", "fetched", products.length);
 
@@ -170,9 +173,20 @@ export async function syncAll(ctx) {
     // ── Invoices ──────────────────────────────────────────────────────────
     // GET /invoices/ (doc 2021-07-28, Version header obbligatorio): richiede
     // altId + altType (NON locationId). Response { invoices: [...], total }.
-    const invoicesRes = await client.get("/invoices", {
+    // Slash finale OBBLIGATORIO ("/invoices" → 404, "/invoices/" → risposta
+    // valida, stesso pattern di /products e /calendars). A differenza di
+    // products/payments, questo endpoint RICHIEDE SEMPRE limit+offset come
+    // STRINGHE anche per una singola chiamata non paginata: senza, risponde
+    // 422 ("limit should not be empty", "limit must be a string", ecc.) —
+    // verificato dal vivo. Qui leggiamo solo la prima pagina (max 100
+    // fatture, coerente con products/payments in questo mapper, nessuno dei
+    // due paginato): un account con più di 100 fatture richiederebbe una
+    // paginazione reale (client.paginateOffset), fuori scope per questo fix.
+    const invoicesRes = await client.get("/invoices/", {
       altId: cfg.location_id,
       altType: "location",
+      limit: "100",
+      offset: "0",
     });
     const invoices = Array.isArray(invoicesRes) ? invoicesRes : invoicesRes?.invoices || [];
     addStat("commerce", "fetched", invoices.length);
@@ -287,7 +301,20 @@ export async function syncAll(ctx) {
     // ⚠️ DA VERIFICARE CON DATI LIVE: la doc ufficiale 2021-07-28 NON espone
     // un GET /payments con questa shape (payment_links). Mantenuto per non
     // peggiorare; i nomi campo seguono l'assunto storico del mapper.
-    const paymentsRes = await client.get("/payments", { locationId: cfg.location_id });
+    //
+    // BLOCCANTE, NON RISOLVIBILE LATO CLIENT (verificato dal vivo): anche
+    // con lo slash finale (per coerenza con /products/, /invoices/) e con
+    // credenziali valide, l'endpoint risponde SEMPRE 401 "This route is not
+    // yet supported by the IAM Service. Please update your IAM config." —
+    // conferma il dubbio sopra: non è (più?) raggiungibile con l'attuale
+    // configurazione IAM del CRM sorgente per questo account/token, non un
+    // problema di URL o di codice nostro. Serve che il sorgente abiliti la
+    // rotta, o va trovato l'endpoint corretto per la versione IAM attuale.
+    // Lasciato nel try/catch esistente: non impedisce a Products/Invoices
+    // di completare prima nello stesso run; "commerce" continuerà a
+    // mostrare questo errore nelle stats finché non si risolve lato sorgente
+    // — comportamento corretto, segnala un problema reale.
+    const paymentsRes = await client.get("/payments/", { locationId: cfg.location_id });
     const payments = Array.isArray(paymentsRes) ? paymentsRes : paymentsRes?.payments || [];
     addStat("commerce", "fetched", payments.length);
 
