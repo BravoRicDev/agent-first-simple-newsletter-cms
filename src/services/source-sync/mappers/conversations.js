@@ -142,26 +142,30 @@ export async function syncForContacts(ctx, extIds) {
                     const direction = msg.direction === "outbound" ? "out" : "in";
                     const sourceMessageId = String(msg.id || "").slice(0, 255);
 
-                    // ON CONFLICT sul source_message_id globale (indice 110):
-                    // stesso messaggio ri-sincronizzato → no-op. Prima senza
-                    // vincolo l'intera cronologia veniva reinserita ad ogni
-                    // full sync (crescita illimitata di duplicati).
+                    // ON CONFLICT sul indice composito UNIQUE(conversation_id, source_message_id)
+                    // db/127_conversation_messages_per_conversation.sql: stesso messaggio
+                    // ri-sincronizzato → no-op. Importante: l'indice originale era su
+                    // source_message_id da solo (globale, indice 110): con due siti sullo
+                    // stesso account GHL (db/126_ghl_id_per_site.sql) lo stesso
+                    // source_message_id clonato in una seconda conversazione veniva scartato
+                    // in silenzio dal DO NOTHING, mai osservato prima perché mai esistito un
+                    // secondo sito sullo stesso CRM sorgente.
                     await query(
-                      `INSERT INTO conversation_messages
-                       (conversation_id, direction, body, subject, meta, created_at, source_message_id)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7)
-                       ON CONFLICT (source_message_id) WHERE source_message_id IS NOT NULL
-                       DO NOTHING`,
-                      [
-                        conversationId,
-                        direction,
-                        msg.body || msg.message || "",
-                        msg.subject || "",
-                        JSON.stringify({ type: msg.type, status: msg.status } || {}),
-                        msg.dateAdded,
-                        sourceMessageId || null,
-                      ]
-                    );
+  `INSERT INTO conversation_messages
+   (conversation_id, direction, body, subject, meta, created_at, source_message_id)
+   VALUES ($1, $2, $3, $4, $5, $6, $7)
+   ON CONFLICT (conversation_id, source_message_id) WHERE source_message_id IS NOT NULL
+   DO NOTHING`,
+  [
+    conversationId,
+    direction,
+    msg.body || msg.message || "",
+    msg.subject || "",
+    JSON.stringify({ type: msg.type, status: msg.status } || {}),
+    msg.dateAdded,
+    sourceMessageId || null,
+  ]
+);
                     addStat("conversations", "upserted", 1);
                   } catch (err) {
                     // Ignora duplicati: il messaggio potrebbe già esistere

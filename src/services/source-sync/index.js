@@ -3,6 +3,7 @@ import { query, getClient } from "../../db.js";
 import { logger } from "../logger.js";
 import { loadConfig, createSourceClient, SourceBudgetError } from "./client.js";
 import * as contactsMapper from "./mappers/contacts.js";
+import { findSiblingWithContacts, cloneContactsFromSibling } from "./clone-sibling.js";
 import { emitContactEvent } from "../events.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -167,6 +168,19 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
 
       const mappers = await loadMappers();
 
+      // Sito "gemello": stesso account/location GHL già sincronizzato da un
+      // altro sito CMS (db/126_ghl_id_per_site.sql — richiesta cliente:
+      // "i contatti di site_21 e site_22 sono gli stessi... non serve
+      // [risincronizzarli], altrimenti rischiamo di saturare le api di ghl
+      // per niente"). Se esiste, contatti+note+task+opportunità+
+      // conversazioni+appuntamenti vengono COPIATI in locale (zero chiamate
+      // GHL) invece che ri-scaricati — è di gran lunga la parte più
+      // costosa del budget API (O(numero contatti) chiamate).
+      const siblingSiteId = !dryRun ? await findSiblingWithContacts(siteId, cfg) : null;
+      if (siblingSiteId) {
+        logger.info(`source-sync[${siteId}]: sito gemello ${siblingSiteId} trovato (stesso account GHL) — contatti/note/task/opportunità/conversazioni/appuntamenti copiati in locale, non ri-scaricati`);
+      }
+
       // Sweep principale nell'ordine di dipendenza. contacts usa una hook di
       // pagina: dopo ogni pagina caccia subito le figlie (memoria costante).
       for (const key of SWEEP_ORDER) {
@@ -174,7 +188,9 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
         const mod = mappers[key];
         if (!mod || typeof mod.syncAll !== "function") continue;
         try {
-          if (key === "contacts") {
+          if (key === "contacts" && siblingSiteId) {
+            await cloneContactsFromSibling(ctx, siblingSiteId);
+          } else if (key === "contacts") {
             await mod.syncAll(ctx, async (pageExtIds) => {
               await huntSubresources(mappers, ctx, pageExtIds);
             });
