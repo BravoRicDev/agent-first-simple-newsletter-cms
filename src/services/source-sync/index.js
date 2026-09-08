@@ -297,12 +297,49 @@ function hashtext(str) {
   return Math.abs(h);
 }
 
+// ── Pulizia run orfani ("running" lasciati da un processo precedente) ──
+// Un container ricreato a metà run lascia la riga source_sync_runs in
+// status='running' per sempre: nessun codice la marcava 'error'/
+// 'interrupted' al riavvio (osservato in produzione: righe accumulate da
+// mesi). cleanupOrphanRunsOnce() gira una sola volta per avvio processo
+// (flag in memoria), al primo tick dello scheduler.
+//
+// NON un UPDATE incondizionato su tutte le 'running': db/migrate.js
+// documenta esplicitamente che più istanze del CMS possono girare in
+// parallelo sullo stesso cluster Postgres (deploy multi-nodo), e
+// runSync() stesso usa un advisory lock PER SITO (hashtext, sotto) proprio
+// per coordinarsi fra istanze concorrenti — non "un solo processo Node
+// serve tutti i siti". Un UPDATE senza soglia temporale, al boot di
+// un'istanza, rischierebbe di marcare 'interrupted' un run genuinamente in
+// corso su un'ALTRA istanza ancora viva (es. sovrapposizione durante un
+// deploy rolling), rompendo la garanzia stessa che l'advisory lock esiste
+// per dare. Usiamo perciò la STESSA soglia di staleness già stabilita da
+// isRunning() sotto (6 ore): solo righe più vecchie di quella finestra,
+// che isRunning() già considera "non più bloccanti", vengono chiuse.
+let orphanCleanupDone = false;
+async function cleanupOrphanRunsOnce() {
+  if (orphanCleanupDone) return;
+  orphanCleanupDone = true;
+  try {
+    const r = await query(
+      `UPDATE source_sync_runs SET status='interrupted', finished_at=NOW()
+       WHERE status='running' AND started_at <= NOW() - interval '6 hours'`
+    );
+    if (r.rowCount > 0) {
+      logger.warn(`source-sync: ${r.rowCount} run 'running' orfani (>6h) marcati 'interrupted' all'avvio`);
+    }
+  } catch (err) {
+    logger.error(`source-sync: cleanup run orfani fallito: ${err.message}`);
+  }
+}
+
 // ── Cron S4: siti con sync abilitato e intervallo scaduto ───────────────
 // Chiamata dallo scheduler a ogni tick; avvia al massimo un run per sito
 // (in-memory set + advisory lock in runSync come seconda barriera).
 const activeSites = new Set();
 
 export async function runSourceSyncDue() {
+  await cleanupOrphanRunsOnce();
   const due = (
     await query(
       `SELECT c.site_id
