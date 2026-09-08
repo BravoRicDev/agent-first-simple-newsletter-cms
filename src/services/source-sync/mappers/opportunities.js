@@ -13,10 +13,19 @@ export async function syncForContacts(ctx, extIds) {
         // per questi due parametri — a differenza di /contacts (camelCase
         // locationId). Verificato sulla doc ufficiale: contact_id/location_id,
         // non contactId/locationId.
+        // sendLocationId:false — client.js aggiunge SEMPRE anche un locationId
+        // (camelCase) di default: l'endpoint vede ENTRAMBI i parametri insieme
+        // e rifiuta con 422 "property locationId should not exist", anche con
+        // location_id (quello giusto, snake_case) presente e corretto.
+        // Verificato dal vivo: 100% di fallimento su ogni contatto, nessuna
+        // opportunità mai sincronizzata da quando esiste questo modulo, prima
+        // di questo fix (bug mai emerso prima perché "opportunities" non è
+        // in SWEEP_ORDER — parte solo da huntSubresources durante un giro
+        // contatti completo, mai coperta da un run scoped su risorse singole).
         const oppsResp = await client.get("/opportunities/search", {
           contact_id: contactExtId,
           location_id: cfg.location_id
-        });
+        }, { sendLocationId: false });
 
         const opps = Array.isArray(oppsResp) ? oppsResp : oppsResp?.opportunities || [];
         addStat("opportunities", "fetched", opps.length);
@@ -86,7 +95,16 @@ export async function syncForContacts(ctx, extIds) {
               source: opp.source || "",
               last_status_change: opp.lastStatusChangeAt,
               expected_close_at: opp.forecastExpectedCloseDate,
-              probability: opp.forecastProbability,
+              // ?? 0, non || 0: il sorgente restituisce forecastProbability
+              // ESPLICITAMENTE null (non lo omette). upsertByExternalId
+              // filtra dai cols solo i valori undefined, non null: un null
+              // esplicito arriva fino alla INSERT/UPDATE e viola il vincolo
+              // NOT NULL di opportunities.probability (colonna con DEFAULT
+              // 0, ma il default si applica solo quando la colonna è
+              // OMESSA, non quando è passata esplicitamente a NULL).
+              // Verificato dal vivo: 3/3 opportunità fallite con questo
+              // errore una volta risolto il 422 di sendLocationId sopra.
+              probability: opp.forecastProbability ?? 0,
               contact_email: contactEmail,
               contact_name: opp.contact?.name || ""
             };
