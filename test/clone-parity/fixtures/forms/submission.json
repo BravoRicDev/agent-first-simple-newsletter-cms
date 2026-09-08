@@ -1,0 +1,14 @@
+{
+  "id": "660e8400-e29b-41d4-a716-446655440000",
+  "formId": "550e8400-e29b-41d4-a716-446655440000",
+  "contactId": "770e8400-e29b-41d4-a716-446655440000",
+  "submittedAt": "2026-08-25T12:15:00.000Z",
+  "name": "Mario Rossi",
+  "submission": {
+    "firstName": "Mario",
+    "lastName": "Rossi",
+    "email": "mario.rossi@example.com",
+    "phone": "333-1234567",
+    "message": "Interessato ai vostri servizi"
+  }
+}

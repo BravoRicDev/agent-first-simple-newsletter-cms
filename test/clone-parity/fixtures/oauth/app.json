@@ -1,0 +1,11 @@
+{
+  "app": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "clientId": "8f7c5a9d3e2b1c0f",
+    "clientSecret": "9e8f7a6d5c4b3a2f1e0d9c8b7a6f5e4d",
+    "name": "Example OAuth App",
+    "redirectUris": ["https://app.example.com/callback", "https://app.example.com/redirect"],
+    "scopes": ["contacts.readonly", "opportunities.write", "campaigns.read"],
+    "locationId": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}

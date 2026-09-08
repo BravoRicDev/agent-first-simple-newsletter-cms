@@ -1,0 +1,10 @@
+{
+  "id": "650e8400-e29b-41d4-a716-446655440000",
+  "locationId": "550e8400-e29b-41d4-a716-446655440001",
+  "type": "Email",
+  "name": "Newsletter Base",
+  "subject": "Newsletter {{month}}",
+  "bodyHtml": "<h1>{{title}}</h1><p>{{content}}</p>",
+  "dateAdded": "2026-08-24T09:00:00Z",
+  "dateUpdated": "2026-08-24T09:00:00Z"
+}

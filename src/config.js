@@ -72,4 +72,14 @@ export default {
   twitterBearerToken: process.env.TWITTER_BEARER_TOKEN || "",
   linkedinAccessToken: process.env.LINKEDIN_ACCESS_TOKEN || "",
   facebookPageToken: process.env.FACEBOOK_PAGE_TOKEN || "",
+
+  // Versioni API supportate dal clone API (dialetto "moderno", vedi
+  // middleware/api-dialect.js) — stessa versione richiesta/inviata dal
+  // source-sync (src/services/source-sync/client.js VERSION_HEADER) e
+  // l'unica documentata in docs/API_COMPAT.md. Senza questa chiave,
+  // api-dialect.js legge `undefined` e va in crash con un TypeError non
+  // gestito su OGNI richiesta col dialetto moderno (config.
+  // supportedApiVersions[supported.length-1] su undefined) — bug trovato
+  // testando il clone API dal vivo per la prima volta (2026-09-08).
+  supportedApiVersions: (process.env.API_CLONE_SUPPORTED_VERSIONS || "2021-07-28").split(",").map((v) => v.trim()),
 };

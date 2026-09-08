@@ -249,6 +249,21 @@ export async function sendTestEmail(siteId, toEmail, subject, rawHtml, signature
 // una quota oraria per sito (newsletter_settings.rate_per_hour) invece di
 // spedire tutto in un colpo solo.
 export async function sendCampaignBatch() {
+  // Promuove le campagne 'scheduled' il cui scheduled_at è arrivato: senza
+  // questo passo restano per sempre in status 'scheduled' (la query sotto
+  // raccoglie solo status='sending') — nessun altro codice nel repo fa
+  // questa transizione. Bug trovato testando dal vivo la funzionalità di
+  // scheduling del clone API (test/clone-parity/campaigns.test.js): una
+  // campagna schedulata non partiva MAI da sola.
+  try {
+    await query(
+      `UPDATE newsletter_campaigns SET status = 'sending'
+       WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()`
+    );
+  } catch (err) {
+    logger.error(`Newsletter: promozione campagne schedulate fallita: ${err.message}`);
+  }
+
   let campaigns;
   try {
     campaigns = (await query(

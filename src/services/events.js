@@ -73,7 +73,22 @@ export async function emitContactEvent(siteId, email, eventType, payload = {}, {
     (async () => {
       try {
         const { enqueueForEvent } = await import("./webhooks.js");
-        await enqueueForEvent(siteId, eventType, payload || {}, { origin });
+        // payload.email SOLO se il payload non ne porta già uno: molti
+        // chiamanti (es. contacts.js "tag_added": { tag: t }) non includono
+        // MAI contact_id/email nel payload — solo l'`email` di questa
+        // funzione, usata per contact_events/workflow/scoring ma mai
+        // propagata alla coda webhook. Risultato (trovato testando il
+        // webhook OUT dal vivo, 2026-09-08): webhooks.js enrichPayload() ha
+        // già un fallback "contact per email" (payload.email, poco sotto in
+        // questo stesso file) pensato apposta per questo caso, ma nessun
+        // chiamante valorizzava mai payload.email — il fallback non
+        // scattava mai. Qui lo alimentiamo, senza toccare i chiamanti che
+        // già passano contact_id/email espliciti nel payload.
+        const enrichedPayload = { ...(payload || {}) };
+        if (!enrichedPayload.contact_id && !enrichedPayload.email) {
+          enrichedPayload.email = normalized;
+        }
+        await enqueueForEvent(siteId, eventType, enrichedPayload, { origin });
       } catch (err) {
         logger.error(`Webhook out enqueue fallito (site=${siteId}, ${eventType}): ${err.message}`);
       }

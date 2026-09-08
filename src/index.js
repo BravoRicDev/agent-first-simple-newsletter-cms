@@ -10,6 +10,8 @@ import { requestId } from "./middleware/request-id.js";
 import { csrfProtection } from "./middleware/csrf.js";
 import { i18nMiddleware } from "./middleware/i18n.js";
 import { attachEnabledModules } from "./middleware/modules.js";
+import { apiHostMiddleware } from "./middleware/api-host.js";
+import apiCloneRoutes from "./routes/api-clone/index.js";
 import { Router as _adminRouter } from "express";
 
 const adminAgentBuilderRouter = _adminRouter();
@@ -44,6 +46,7 @@ import { publicWebhookRouter } from "./routes/public-webhooks.js";
 import { publicOauthRouter } from "./routes/public-oauth.js";
 import { publicPaymentsRouter } from "./routes/public-payments.js";
 import { publicTrackedLinksRouter } from "./routes/public-tracked-links.js";
+import publicSmsInboundRoutes from "./routes/public-sms-inbound.js";
 import contactsRoutes from "./routes/contacts.js";
 import apiTokensRoutes from "./routes/api-tokens.js";
 import pipelineRoutes from "./routes/pipeline.js";
@@ -197,6 +200,15 @@ async function start() {
   app.use(i18nMiddleware);
   app.use(express.urlencoded({ extended: false, limit: "50mb" }));
   app.use(express.json({ limit: "50mb" }));
+
+  // Clone API vhost (docs/API_CLONE_MASTER_PLAN.md): se req.hostname
+  // corrisponde a un sites.api_domain configurato, l'intera richiesta viene
+  // deviata al router clone root-level (GET /contacts, ecc.) PRIMA di
+  // csrf/sessioni/tutto il resto — auth Bearer stateless, nessun cookie.
+  // Hostname che non matchano: next() immediato, zero impatto sul routing
+  // esistente (vedi middleware/api-host.js).
+  app.use(apiHostMiddleware(apiCloneRoutes));
+
   app.use(csrfProtection);
 
   // Session ID per statistiche page views
@@ -305,6 +317,10 @@ async function start() {
   app.use(publicOauthRouter);
   app.use(publicPaymentsRouter);
   app.use(publicTrackedLinksRouter);
+  // Webhook inbound SMS pubblico (Onda F): esisteva già (src/routes/public-
+  // sms-inbound.js), mai montato — stesso problema già trovato per il
+  // router clone e per public-oauth-provider.js in questa sessione.
+  app.use(publicSmsInboundRoutes);
   app.use(contactsRoutes);
   app.use(apiTokensRoutes);
   app.use(pipelineRoutes);

@@ -1,0 +1,33 @@
+{
+  "invoice": {
+    "id": "550e8400-e29b-41d4-a716-446655440020",
+    "locationId": "550e8400-e29b-41d4-a716-446655440001",
+    "invoiceNumber": "SITE1-0001",
+    "contactId": "550e8400-e29b-41d4-a716-446655440030",
+    "status": "draft",
+    "currency": "EUR",
+    "issueDate": "2026-08-25",
+    "dueDate": "2026-09-25",
+    "paidAt": null,
+    "total": 250.00,
+    "notes": "Invoice for client services",
+    "items": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440040",
+        "description": "Web Design Services",
+        "quantity": 1,
+        "unitPrice": 200.00,
+        "total": 200.00
+      },
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440041",
+        "description": "Hosting Fee",
+        "quantity": 2,
+        "unitPrice": 25.00,
+        "total": 50.00
+      }
+    ],
+    "dateAdded": "2026-08-25T10:00:00Z",
+    "dateUpdated": "2026-08-25T10:00:00Z"
+  }
+}

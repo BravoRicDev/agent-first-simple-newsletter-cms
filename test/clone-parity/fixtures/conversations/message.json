@@ -1,0 +1,9 @@
+{
+  "id": "550e8400-e29b-41d4-a716-446655440003",
+  "conversationId": "550e8400-e29b-41d4-a716-446655440000",
+  "body": "Hello from test",
+  "direction": "outbound",
+  "type": "SMS",
+  "status": "sent",
+  "dateAdded": "2026-08-25T10:30:00Z"
+}

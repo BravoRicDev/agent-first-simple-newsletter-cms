@@ -108,7 +108,7 @@ async function sendReviewReminders() {
   }
 }
 
-async function schedulerTick() {
+async function schedulerTick({ webhookAllowPrivate = false } = {}) {
   if (tickRunning) {
     logger.warn("Scheduler: tick precedente ancora in corso, salto questo giro");
     return;
@@ -206,7 +206,7 @@ async function schedulerTick() {
     // advisory lock globale + claim atomico, vedi services/webhooks.js).
     try {
       const { deliverPending } = await import("./webhooks.js");
-      const dw = await deliverPending(50);
+      const dw = await deliverPending(50, { allowPrivate: webhookAllowPrivate });
       if (dw.delivered > 0) logger.info(`Webhook out: ${dw.delivered} delivery inviate, ${dw.remaining} rimaste`);
     } catch (err) {
       logger.error(`Webhook out deliver tick fallito: ${err.message}`);
@@ -234,6 +234,16 @@ async function schedulerTick() {
     tickRunning = false;
   }
 }
+
+// Esportata per i test (test/webhook-flush.test.js, test/clone-parity/
+// campaigns.test.js): entrambi importavano `runSchedulerTick` da questo
+// modulo, ma la funzione interna era `schedulerTick` senza alcun export —
+// SyntaxError "does not provide an export named 'runSchedulerTick'" che
+// impediva a node:test di caricare il file (nessun test in quei file
+// veniva mai eseguito). Nome pubblico distinto dal nome interno per
+// chiarezza (schedulerTick = usata dal timer, runSchedulerTick = trigger
+// manuale per i test).
+export const runSchedulerTick = schedulerTick;
 
 export function startScheduler() {
   if (schedulerInterval) return;

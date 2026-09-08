@@ -1,0 +1,47 @@
+{
+  "survey": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "locationId": "550e8400-e29b-41d4-a716-446655440001",
+    "name": "Test Survey",
+    "status": "draft",
+    "questions": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440100",
+        "position": 0,
+        "type": "TEXT",
+        "label": "What is your name?",
+        "required": true,
+        "options": [],
+        "showIf": null
+      },
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440101",
+        "position": 1,
+        "type": "RADIO",
+        "label": "Rate your experience",
+        "required": true,
+        "options": [
+          { "value": "excellent", "label": "Excellent" },
+          { "value": "good", "label": "Good" },
+          { "value": "fair", "label": "Fair" }
+        ],
+        "showIf": null
+      },
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440102",
+        "position": 2,
+        "type": "DATE",
+        "label": "Visit date",
+        "required": false,
+        "options": [],
+        "showIf": {
+          "questionId": "550e8400-e29b-41d4-a716-446655440101",
+          "operator": "equals",
+          "value": "excellent"
+        }
+      }
+    ],
+    "dateAdded": "2026-08-25T10:00:00.000Z",
+    "dateUpdated": "2026-08-25T10:00:00.000Z"
+  }
+}

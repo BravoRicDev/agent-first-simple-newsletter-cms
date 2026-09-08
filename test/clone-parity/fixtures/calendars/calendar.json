@@ -1,0 +1,12 @@
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "locationId": "550e8400-e29b-41d4-a716-446655440001",
+  "name": "Consulenza",
+  "description": "Slot per consulenze",
+  "slug": "consulenza",
+  "isActive": true,
+  "teamMembers": ["550e8400-e29b-41d4-a716-446655440002"],
+  "timezone": "Europe/Rome",
+  "dateAdded": "2026-08-25T10:30:00.000Z",
+  "dateUpdated": "2026-08-25T10:30:00.000Z"
+}

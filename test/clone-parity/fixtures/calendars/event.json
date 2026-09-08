@@ -1,0 +1,12 @@
+{
+  "eventId": "660e8400-e29b-41d4-a716-446655440000",
+  "calendarId": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "Appuntamento consulenza",
+  "status": "confirmed",
+  "startTime": "2026-08-26T14:00:00.000Z",
+  "endTime": "2026-08-26T15:00:00.000Z",
+  "address": null,
+  "assignedTo": null,
+  "contactId": null,
+  "dateAdded": "2026-08-25T10:30:00.000Z"
+}

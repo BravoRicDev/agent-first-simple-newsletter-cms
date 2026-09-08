@@ -1,0 +1,7 @@
+{
+  "access_token": "oat_550e8400e29b41d4a716446655440000abc123def456",
+  "refresh_token": "ort_660f9511f30c52e5b827557766551111xyz789uvw012",
+  "expires_in": 3600,
+  "token_type": "Bearer",
+  "scope": "contacts.readonly opportunities.write"
+}

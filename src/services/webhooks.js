@@ -583,6 +583,99 @@ export async function enrichPayload(delivery) {
   }
 }
 
+// ── Trasformazione payload "target" (docs/API_CLONE_MASTER_PLAN.md Onda I) ──
+// Converte event_type/payload interni nella shape flat del CRM sorgente:
+// {type, eventId, eventName, locationId, <risorsa>:{...}}. Applicata SOLO se
+// webhook.payload_format === 'target' (default resta {event_type, payload},
+// per non cambiare comportamento ai webhook già configurati con quella
+// shape). Bug trovato testando dal vivo il compat-harness (2026-09-08):
+// payload_format era già una colonna configurabile (UI + DB) ma NESSUN
+// codice la leggeva mai in fase di invio — ogni webhook "target" riceveva
+// in realtà sempre la shape legacy.
+//
+// Mappatura event_type → eventName: solo i tipi che questo CMS emette
+// davvero (vedi services/events.js/emitContactEvent, grep dei chiamanti).
+// Nomi scelti per coerenza con gli esempi già citati nel master plan
+// (ContactCreate/ContactUpdate/ContactTagAdded/OpportunityStatusUpdate/
+// FormSubmitted/SurveySubmitted/AppointmentNew) — i tipi senza un
+// equivalente noto del CRM sorgente (segment_entered, agent_runtime_*,
+// source_sync_completed: eventi puramente interni a questo CMS, non hanno
+// un corrispettivo nel target) restano passati come-sono nel campo `type`.
+const TARGET_EVENT_NAMES = {
+  contact_created: "ContactCreate",
+  contact_updated: "ContactUpdate",
+  contact_deleted: "ContactDelete",
+  tag_added: "ContactTagAdded",
+  custom_field_updated: "ContactUpdate",
+  stage_changed: "ContactUpdate",
+  form_submitted: "FormSubmitted",
+  quiz_completed: "SurveySubmitted",
+  booking_created: "AppointmentNew",
+  booking_cancelled: "AppointmentDelete",
+  opportunity_created: "OpportunityCreate",
+  opportunity_stage_changed: "OpportunityStageUpdate",
+  opportunity_status_changed: "OpportunityStatusUpdate",
+  opportunity_deleted: "OpportunityDelete",
+  payment_paid: "InvoicePaid",
+};
+
+async function buildTargetPayload(delivery) {
+  const eventName = TARGET_EVENT_NAMES[delivery.event_type] || delivery.event_type;
+  const site = (await query(
+    "SELECT location_external_id, external_id FROM sites WHERE id = $1",
+    [delivery.site_id]
+  )).rows[0];
+  const locationId = site?.location_external_id || site?.external_id || null;
+
+  const base = {
+    type: eventName,
+    eventId: crypto.randomUUID(),
+    eventName,
+    locationId: locationId ? String(locationId) : "",
+  };
+
+  // Risorsa allegata: riusa il serializer del clone API (stessa shape delle
+  // risposte REST — id uuid, dateAdded/dateUpdated, customFields array — non
+  // lo shape interno CMS di loadFullContact/enrichPayload) quando la
+  // risorsa è risolvibile dal payload arricchito.
+  const contactId = delivery.payload?.contact?.id;
+  if (contactId) {
+    try {
+      const row = (await query("SELECT external_id FROM contacts WHERE id = $1", [contactId])).rows[0];
+      if (row?.external_id) {
+        const { getContact } = await import("./contacts-clone.js");
+        base.contact = await getContact(delivery.site_id, row.external_id);
+      }
+    } catch (err) {
+      logger.error(`webhook target payload: serializzazione contatto fallita (delivery=${delivery.id}): ${err.message}`);
+    }
+  }
+
+  const opportunityId = delivery.payload?.opportunity?.id;
+  if (opportunityId) {
+    try {
+      const row = (await query("SELECT external_id FROM opportunities WHERE id = $1", [opportunityId])).rows[0];
+      if (row?.external_id) {
+        const { getOpportunity } = await import("./opportunities-clone.js");
+        base.opportunity = await getOpportunity(delivery.site_id, row.external_id);
+      }
+    } catch (err) {
+      logger.error(`webhook target payload: serializzazione opportunità fallita (delivery=${delivery.id}): ${err.message}`);
+    }
+  }
+
+  // Fallback: nessuna risorsa nota risolta sopra (evento non contact/
+  // opportunity, es. form_submitted/booking_*) — allega il payload
+  // arricchito così com'è sotto una chiave generica, meglio di perderlo,
+  // ma NON è garantita la shape identica del target per questi tipi
+  // (richiederebbe un serializer dedicato per ciascuno, fuori scope qui).
+  if (!base.contact && !base.opportunity && delivery.payload && Object.keys(delivery.payload).length > 0) {
+    base.data = delivery.payload;
+  }
+
+  return base;
+}
+
 // Eventi che vanno arricchiti con dati completi contatto/opportunità.
 function shouldEnrich(eventType) {
   return CONTACT_EVENT_TYPES.has(eventType)
@@ -663,7 +756,7 @@ export async function deliverPending(limit = 50, { siteId = null, allowPrivate =
 if (ids.length > 0) {
         const detail = await lockClient.query(
           `SELECT d.id, d.webhook_id, d.site_id, d.event_type, d.payload, d.attempts,
-                  w.url, w.secret, w.payload_template
+                  w.url, w.secret, w.payload_template, w.payload_format
            FROM webhook_deliveries d
            JOIN webhooks w ON w.id = d.webhook_id
            WHERE d.id = ANY($1::int[])`,
@@ -691,7 +784,12 @@ if (ids.length > 0) {
           delivery.payload = renderTemplate(delivery.payload_template, delivery.payload);
         }
 
-        const body = JSON.stringify({ event_type: delivery.event_type, payload: delivery.payload });
+        const targetBody = delivery.payload_format === "target"
+          ? await buildTargetPayload(delivery)
+          : null;
+        const body = targetBody
+          ? JSON.stringify(targetBody)
+          : JSON.stringify({ event_type: delivery.event_type, payload: delivery.payload });
         const headers = {
           "Content-Type": "application/json",
           "X-Webhook-Event": delivery.event_type,
