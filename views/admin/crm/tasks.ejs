@@ -18,14 +18,14 @@
 <% } %>
 
 <div class="actions">
-  <a href="/admin/tasks?site_id=<%= siteId %>&status=open" class="btn btn-sm <%= !req.query.status || req.query.status === 'open' ? '' : 'btn-secondary' %>">Aperte</a>
+  <a href="/admin/tasks?site_id=<%= siteId %>&status=open" class="btn btn-sm <%= !status || status === 'open' ? '' : 'btn-secondary' %>">Aperte</a>
   <a href="/admin/tasks?site_id=<%= siteId %>&status=done" class="btn btn-sm">Fatte</a>
 </div>
 
 <div style="display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap;">
   <div style="flex:1;min-width:300px;">
     <% if (tasks.length === 0) { %>
-      <p style="color:#999;font-size:14px;">Nessuna task <%= req.query.status === 'done' ? 'completata' : 'aperta' %>.</p>
+      <p style="color:#999;font-size:14px;">Nessuna task <%= status === 'done' ? 'completata' : 'aperta' %>.</p>
     <% } else { %>
     <table>
       <thead><tr><th>Titolo</th><th>Contatto</th><th>Assegnata a</th><th>Scadenza</th><th></th></tr></thead>

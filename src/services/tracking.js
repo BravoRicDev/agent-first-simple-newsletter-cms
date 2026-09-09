@@ -311,7 +311,7 @@ export function injectTrackingIntoStandalone(html, { head = "", body = "" } = {}
 export async function getPageTrackingOverride(pageId) {
   if (!pageId) return {};
   const result = await query(
-    `SELECT pixel_enabled, track_pageview, track_lead, consent_cookie_hours
+    `SELECT pixel_enabled, track_pageview, track_lead, consent_cookie_hours, track_complete_registration
      FROM page_tracking_overrides WHERE page_id = $1`,
     [pageId]
   );
@@ -322,6 +322,7 @@ export async function getPageTrackingOverride(pageId) {
     track_pageview: row.track_pageview ?? null,
     track_lead: row.track_lead ?? null,
     consent_cookie_hours: row.consent_cookie_hours ?? null,
+    track_complete_registration: row.track_complete_registration ?? null,
   };
 }
 
@@ -337,6 +338,7 @@ export async function setPageTrackingOverride(pageId, fields) {
     trackPageview: { col: "track_pageview", type: "boolean" },
     trackLead: { col: "track_lead", type: "boolean" },
     consentCookieHours: { col: "consent_cookie_hours", type: "integer" },
+    trackCompleteRegistration: { col: "track_complete_registration", type: "boolean" },
   };
 
   const cols = [];
@@ -403,12 +405,22 @@ export async function getEffectiveTrackingConfig(siteId, pageId) {
     effective.trackPageview = siteConfig.hasAnyTracking;
   }
 
-  // leadOverride: true|false|null (null = nessun override, usa logica leadPages client-side)
-  // Questo serve solo per FORZARE on/off il Lead indipendentemente dal match leadPages
-  if (pageOverride.track_lead !== undefined && pageOverride.track_lead !== null) {
+// leadOverride: true|false|null (null = nessun override, usa logica leadPages client-side)
+// Questo serve solo per FORZARE on/off il Lead indipendentemente dal match leadPages
+if (pageOverride.track_lead !== undefined && pageOverride.track_lead !== null) {
     effective.leadOverride = pageOverride.track_lead;
   } else {
     effective.leadOverride = null;
+  }
+
+  // completeRegistrationOverride: true|false/null (null = nessun override,
+  // default "non sparare" — nessun trigger automatico sito-livello come
+  // leadPages, l'evento CompleteRegistration lato client pixel parte SOLO
+  // se il campo è esplicitamente true per quella pagina)
+  if (pageOverride.track_complete_registration !== undefined && pageOverride.track_complete_registration !== null) {
+    effective.completeRegistrationOverride = pageOverride.track_complete_registration;
+  } else {
+    effective.completeRegistrationOverride = null;
   }
 
   // consentCookieHours: default dal sito (già normalizzato a un intero > 0

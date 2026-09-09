@@ -164,6 +164,7 @@ router.get("/admin/pages/:id/edit", requireAuth, resolveSite, authorize("pages",
       tracking_pixel_enabled: trackingOverride.pixel_enabled ?? null,
       tracking_track_pageview: trackingOverride.track_pageview ?? null,
       tracking_track_lead: trackingOverride.track_lead ?? null,
+      tracking_track_complete_registration: trackingOverride.track_complete_registration ?? null,
       tracking_consent_cookie_hours: trackingOverride.consent_cookie_hours ?? null,
     };
 
@@ -270,6 +271,7 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
       pixelEnabled: parseTri(req.body.tracking_pixel_enabled),
       trackPageview: parseTri(req.body.tracking_track_pageview),
       trackLead: parseTri(req.body.tracking_track_lead),
+      trackCompleteRegistration: parseTri(req.body.tracking_track_complete_registration),
       consentCookieHours: cookieHoursRaw ? cookieHoursRaw : null,
     }).catch(() => {});
 

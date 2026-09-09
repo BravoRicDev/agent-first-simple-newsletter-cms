@@ -52,7 +52,7 @@
     <% } %>
   </div>
 
-  <% if (showDelayed && delayedActions && delayedActions.length > 0) { %>
+  <% if (typeof showDelayed !== "undefined" && showDelayed && delayedActions && delayedActions.length > 0) { %>
   <div style="flex:1;min-width:340px;background:#e2e8f0;border-left:4px solid #63b3ed;padding:16px;margin-left:30px;border-radius:6px;">
     <h2 style="font-size:16px;margin-bottom:12px;">Azioni differite in attesa</h2>
     <% const pending = delayedActions.filter(a => a.status === 'pending'); %>
@@ -77,11 +77,12 @@
     <% delayedActions.forEach(a => { %>
     <% if (a.status !== 'pending') { %>
     <p style="font-size:11px;color:#b91c1c;margin:6px 0;">ID <%= a.id %>: <%= a.action_type %> per <%= a.email %> - scaduto il <%= a.run_at.toLocaleString() %> - <%= a.status %> <%= a.executed_at ? '(eseguita)' : '' %></p>
-    <% } <% }) %>
+    <% } %>
+<% }) %>
   </div>
   <% } %>
 
-  <% if (showAnalytics && workflowAnalytics) { %>
+  <% if (typeof showAnalytics !== "undefined" && showAnalytics && workflowAnalytics) { %>
   <div style="flex:1;min-width:340px;background:#eef2ff;border-left:4px solid #6366f1;padding:16px;margin-left:30px;border-radius:6px;">
     <h2 style="font-size:16px;margin-bottom:12px;">📊 Analytics workflow</h2>
     <p style="font-size:12px;color:#666;margin-bottom:12px;">Success rate, tempi di esecuzione e SLA per le automazioni.</p>

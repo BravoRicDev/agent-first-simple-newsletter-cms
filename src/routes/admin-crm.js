@@ -253,6 +253,7 @@ router.get("/admin/webhooks", requireAuth, authorize("forms", "read"), async (re
     res.render("admin/crm/webhooks", {
       webhooks, deliveries, recentDeliveries, inboundLog, site, sites, siteId, isSuperadmin,
       saved: req.query.saved === "1", events: WEBHOOK_EVENTS, filterableFields: FILTERABLE_FIELDS,
+      showFailedDeliveries: false, failedDeliveries: [],
     });
   } catch (err) { next(err); }
 });
@@ -449,7 +450,7 @@ router.get("/admin/tasks", requireAuth, authorize("forms", "read"), async (req, 
     const tasks = await listTasks(siteId, { status: req.query.status || null, assigneeId: req.query.assignee_id || null });
     const users = (await query("SELECT id, name, email FROM users WHERE site_id = $1 OR role = 'superadmin' ORDER BY name", [siteId])).rows;
     const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
-    res.render("admin/crm/tasks", { tasks, users, site, sites, siteId, isSuperadmin, saved: req.query.saved === "1" });
+    res.render("admin/crm/tasks", { tasks, users, site, sites, siteId, isSuperadmin, saved: req.query.saved === "1", status: req.query.status || null });
   } catch (err) { next(err); }
 });
 

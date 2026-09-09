@@ -280,6 +280,50 @@
 })();
 </script>
 <% } %>
+<% if (typeof completeRegistrationOverride !== 'undefined' && completeRegistrationOverride === true) { %>
+<!-- Evento Meta Pixel CompleteRegistration.
+     Sparato SOLO con consenso marketing (Consent Mode v2), una volta per
+     PAGE LOAD (non per sessione: decisione esplicita del cliente, vedi
+     commento su window.__cmsCompleteRegFired sotto). Evento fisso:
+     "CompleteRegistration". Nessuna lista PAGES / matchesPage() (qui non
+     esiste un equivalente site-wide). L'override esplicito è sempre
+     necessario, nessun trigger automatico via lista pagine. -->
+<script>
+(function () {
+  var EVENT_NAME = "CompleteRegistration";
+  var COMPLETE_REG_OVERRIDE = <%- _jsonScript(typeof completeRegistrationOverride !== 'undefined' ? completeRegistrationOverride : null) %>;
+
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function shouldFire() {
+    if (COMPLETE_REG_OVERRIDE === true) return true;
+    if (COMPLETE_REG_OVERRIDE === false) return false;
+    return false;
+  }
+  function fireOnce() {
+    if (window.__cmsCompleteRegFired) return;
+    if (getCookie("consent_marketing") !== "1") return;
+    if (!(window.fbq && typeof window.fbq === 'function')) return;
+
+    window.__cmsCompleteRegFired = true;
+
+    // Fire the event
+    fbq('track', EVENT_NAME);
+
+    // Log for debugging
+    try {
+      console.log('[CompleteRegistration] ✓', EVENT_NAME, '→', location.pathname);
+    } catch (e) {}
+  }
+  // Visitatore di ritorno con consenso già presente.
+  fireOnce();
+  // Consenso concesso durante QUESTA visita.
+  window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
 <% if ((_consentProvider === 'library' || _consentProvider === 'external') && typeof consentLibUrl !== 'undefined' && consentLibUrl && typeof consentScriptUrl !== 'undefined' && consentScriptUrl) { %>
 <!-- Provider "library" (settings tracking_consent_provider=library): libreria
      cookieconsent condivisa, asset serviti staticamente dal repo

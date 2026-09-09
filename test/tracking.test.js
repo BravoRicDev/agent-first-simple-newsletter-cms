@@ -239,6 +239,24 @@ describe("tracking: override per-pagina (pixel/pageview/lead opzionali)", () => 
     assert.equal(effective.leadOverride, null);
   });
 
+  test("trackCompleteRegistration: override per-pagina salvato e letto correttamente", async () => {
+    // Test set + get override
+    await setPageTrackingOverride(page.id, { trackCompleteRegistration: true });
+    const o = await getPageTrackingOverride(page.id);
+    assert.equal(o.track_complete_registration, true, "override true salvato");
+
+    const effective = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective.completeRegistrationOverride, true, "override true efficace");
+
+    // Test null reset
+    await setPageTrackingOverride(page.id, { trackCompleteRegistration: null });
+    const o2 = await getPageTrackingOverride(page.id);
+    assert.equal(o2.track_complete_registration, null, "reset a null");
+
+    const effective2 = await getEffectiveTrackingConfig(site.id, page.id);
+    assert.equal(effective2.completeRegistrationOverride, null, "reset a null eredita");
+  });
+
   test("consentCookieHours: override per-pagina vince sul default di sito", async () => {
     await setSiteTrackingConfig(site.id, { consentCookieHours: "24" });
     await setPageTrackingOverride(page.id, { consentCookieHours: "4" });
