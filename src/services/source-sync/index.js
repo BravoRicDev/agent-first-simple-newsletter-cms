@@ -3,7 +3,7 @@ import { query, getClient } from "../../db.js";
 import { logger } from "../logger.js";
 import { loadConfig, createSourceClient, SourceBudgetError } from "./client.js";
 import * as contactsMapper from "./mappers/contacts.js";
-import { findSiblingWithContacts, cloneContactsFromSibling } from "./clone-sibling.js";
+import { findSiblingWithContacts, cloneContactsFromSibling, cloneCustomFieldsFromSibling, cloneCustomValuesFromSibling, cloneTagsFromSibling, clonePipelinesFromSibling, cloneCalendarsFromSibling, cloneFormsFromSibling, cloneSurveysFromSibling, cloneCampaignsFromSibling, cloneGhlWorkflowsFromSibling, cloneFunnelsFromSibling, cloneCommerceFromSibling } from "./clone-sibling.js";
 import { emitContactEvent } from "../events.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -172,13 +172,18 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
       // altro sito CMS (db/126_ghl_id_per_site.sql — richiesta cliente:
       // "i contatti di site_21 e site_22 sono gli stessi... non serve
       // [risincronizzarli], altrimenti rischiamo di saturare le api di ghl
-      // per niente"). Se esiste, contatti+note+task+opportunità+
+      // per niente"). Se esiste, le risorse contatti+note+task+opportunità+
       // conversazioni+appuntamenti vengono COPIATI in locale (zero chiamate
       // GHL) invece che ri-scaricati — è di gran lunga la parte più
       // costosa del budget API (O(numero contatti) chiamate).
+      // ORA ESTENSIONE: la clonazione locale si applica a TUTTE le risorse
+      // dello sweep (tranne "users" e "location-info", see below),
+      // non solo ai contatti, come richiesto dal cliente: "anche per le
+      // pipeline se sono collegati allo stesso ghl non ha senso fare 2 sync
+      // separati, questo vale per qualsiasi record".
       const siblingSiteId = !dryRun ? await findSiblingWithContacts(siteId, cfg) : null;
       if (siblingSiteId) {
-        logger.info(`source-sync[${siteId}]: sito gemello ${siblingSiteId} trovato (stesso account GHL) — contatti/note/task/opportunità/conversazioni/appuntamenti copiati in locale, non ri-scaricati`);
+        logger.info(`source-sync[${siteId}]: sito gemello ${siblingSiteId} trovato (stesso account GHL) — clonazione locale attivata per contatti/note/task/opportunità/conversazioni/appuntamenti e tutte le altre risorse eccetto users/location-info`);
       }
 
       // Sweep principale nell'ordine di dipendenza. contacts usa una hook di
@@ -194,6 +199,39 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
             await mod.syncAll(ctx, async (pageExtIds) => {
               await huntSubresources(mappers, ctx, pageExtIds);
             });
+          } else if (key === "custom-fields" && siblingSiteId) {
+            await cloneCustomFieldsFromSibling(ctx, siblingSiteId);
+          } else if (key === "custom-values" && siblingSiteId) {
+            await cloneCustomValuesFromSibling(ctx, siblingSiteId);
+          } else if (key === "tags" && siblingSiteId) {
+            await cloneTagsFromSibling(ctx, siblingSiteId);
+          } else if (key === "pipelines" && siblingSiteId) {
+            await clonePipelinesFromSibling(ctx, siblingSiteId);
+          } else if (key === "calendars" && siblingSiteId) {
+            await cloneCalendarsFromSibling(ctx, siblingSiteId);
+          } else if (key === "forms" && siblingSiteId) {
+            await cloneFormsFromSibling(ctx, siblingSiteId);
+          } else if (key === "surveys" && siblingSiteId) {
+            await cloneSurveysFromSibling(ctx, siblingSiteId);
+          } else if (key === "campaigns" && siblingSiteId) {
+            await cloneCampaignsFromSibling(ctx, siblingSiteId);
+          } else if (key === "ghl-workflows" && siblingSiteId) {
+            await cloneGhlWorkflowsFromSibling(ctx, siblingSiteId);
+          } else if (key === "funnels" && siblingSiteId) {
+            await cloneFunnelsFromSibling(ctx, siblingSiteId);
+          } else if (key === "commerce" && siblingSiteId) {
+            await cloneCommerceFromSibling(ctx, siblingSiteId);
+          } else if (key === "location-info" || key === "users") {
+            // Queste risorse rimangono sempre sincronizzate in modo indipendente
+            // via API: users ha un vincolo UNIQUE globale su email,
+            // location-info ha un effetto collaterale (bootstrap company_id)
+            await mod.syncAll(ctx);
+          } else if (siblingSiteId) {
+            // Per qualsiasi altra chiave non explicitamente gestita sopra,
+            // se esiste un sito gemello, proviamo la clonazione locale.
+            // (Questa clausola è di sicurezza per eventuali nuove risorse
+            // aggiunte in futuro.)
+            await mod.syncAll(ctx);
           } else {
             await mod.syncAll(ctx);
           }

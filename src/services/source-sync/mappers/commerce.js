@@ -58,7 +58,7 @@ function normalizeInvoiceStatus(v) {
   return "draft";
 }
 
-async function ensureUniqueInvoiceNumber(baseNumber) {
+export async function ensureUniqueInvoiceNumber(baseNumber) {
   let invoiceNumber = baseNumber;
   let attempt = 0;
   while (attempt < 100) {
