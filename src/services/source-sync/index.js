@@ -46,6 +46,8 @@ async function loadMappers() {
     pipelines: "./mappers/pipelines.js",
     calendars: "./mappers/calendars.js",
     contacts: "./mappers/contacts.js",
+    opportunities: "./mappers/opportunities.js",
+    conversations: "./mappers/conversations.js",
     forms: "./mappers/forms.js",
     surveys: "./mappers/surveys.js",
     campaigns: "./mappers/campaigns.js",
