@@ -188,6 +188,15 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
         logger.info(`source-sync[${siteId}]: sito gemello ${siblingSiteId} trovato (stesso account GHL) — clonazione locale attivata per contatti/note/task/opportunità/conversazioni/appuntamenti e tutte le altre risorse eccetto users/location-info`);
       }
 
+      // Risorse la cui syncAll/clone di QUESTO giro è stata interrotta da
+      // un'eccezione (qualsiasi, non solo SourceBudgetError — vedi guardia
+      // sotto). NON basarsi su ctx.stats[res].errors per questo: quel
+      // contatore include anche errori "normali" per-item (es. un singolo
+      // /notes o /tasks che risponde 422 durante huntSubresources) che NON
+      // significano che il giro principale della risorsa si sia fermato a
+      // metà — solo un vero throw catturato qui sotto lo significa.
+      const incompleteResources = new Set();
+
       // Sweep principale nell'ordine di dipendenza. contacts usa una hook di
       // pagina: dopo ogni pagina caccia subito le figlie (memoria costante).
       for (const key of SWEEP_ORDER) {
@@ -239,6 +248,13 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
           }
         } catch (err) {
           if (err instanceof SourceBudgetError) throw err;
+          // GUARDIA sync incrementale contatti (vedi mappers/contacts.js):
+          // un'interruzione non-budget di QUESTA risorsa in QUESTO giro
+          // deve impedire che last_status diventi 'ok' più sotto, altrimenti
+          // il prossimo giro potrebbe attivare l'early-stop credendo (a
+          // torto) che questo giro abbia completato l'intero walk — perdita
+          // dati silenziosa e permanente per i contatti mai raggiunti.
+          incompleteResources.add(key);
           logger.error(`source-sync: mapper ${key} fallito: ${err.message}`);
           // NON ctx.addStat(key, "errors", 1) qui: OGNI mapper (verificato
           // su tutti quelli esistenti) già chiama addStat(key,"errors",1)
@@ -275,14 +291,19 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
         await huntSubresources(mappers, ctx, fresh);
       }
 
-      // Watermark/statistiche per risorsa
+      // Watermark/statistiche per risorsa. last_status resta 'ok' SOLO se la
+      // risorsa non è tra quelle interrotte da un'eccezione in questo giro
+      // (vedi incompleteResources sopra) — chi legge last_status='ok' come
+      // "giro completo affidabile" (es. l'early-stop di mappers/contacts.js)
+      // deve poterselo fidare davvero.
       for (const res of Object.keys(ctx.stats)) {
+        const resStatus = incompleteResources.has(res) ? "error" : "ok";
         await query(
           `INSERT INTO source_sync_state (site_id, resource_type, watermark, last_run_at, last_status, last_counts)
-           VALUES ($1,$2,NOW(),NOW(),'ok',$3)
+           VALUES ($1,$2,NOW(),NOW(),$4,$3)
            ON CONFLICT (site_id, resource_type) DO UPDATE SET
-             watermark = NOW(), last_run_at = NOW(), last_status = 'ok', last_counts = $3`,
-          [siteId, res, JSON.stringify(ctx.stats[res])]
+             watermark = NOW(), last_run_at = NOW(), last_status = $4, last_counts = $3`,
+          [siteId, res, JSON.stringify(ctx.stats[res]), resStatus]
         );
       }
     } catch (err) {

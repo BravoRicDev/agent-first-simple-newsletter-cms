@@ -137,13 +137,57 @@ async function storeProfiles(ctx, contactId, contact) {
   }
 }
 
+// Soglia di conferma per lo stop anticipato: più di una pagina piena di
+// record consecutivi già sincronizzati (non solo 1, per margine di
+// sicurezza contro casi limite di ordinamento/tie-break).
+const EARLY_STOP_THRESHOLD = 25;
+
 export async function syncAll(ctx, onPage) {
   const { siteId, client, cfg, dryRun, addStat, knownContacts, log } = ctx;
 
+  // Sync incrementale (richiesta cliente 2026-09-09: "ordinate per data di
+  // update, i più recenti prima; non appena raggiunge un record già
+  // sincronizzato sa che da lì in poi è tutto ok e si ferma").
+  //
+  // Verificato dal vivo contro il CRM sorgente reale (site 21, 2026-09-09):
+  // POST /contacts/search supporta sort=[{field:"dateUpdated",direction:
+  // "desc"}] con cursore searchAfter — GET /contacts/ (usato in precedenza)
+  // NON supporta alcun ordinamento, solo paginazione per id di inserimento.
+  // Vedi client.js:paginateSearchSorted per i dettagli della verifica.
+  //
+  // Con l'ordinamento decrescente, appena si incontra una SERIE di record
+  // già sincronizzati (stesso dateUpdated locale, azione "unchanged"), tutto
+  // ciò che segue è per costruzione meno recente ⇒ già sincronizzato anche
+  // quello ⇒ si può fermare la paginazione senza continuare a scaricare
+  // l'intero storico ad ogni run.
+  //
+  // GUARDIA DI SICUREZZA: lo stop anticipato si attiva SOLO se l'ULTIMO run
+  // per questo sito ha completato l'intera sync (source_sync_state.
+  // last_status='ok' per la risorsa "contacts" — scritto da index.js solo
+  // quando l'intero sweep finisce senza eccezioni, vedi runSync). Se il
+  // sito non ha mai completato un giro, o l'ultimo è stato interrotto
+  // (budget esaurito/errore), NON ci si può fidare che "già visto" implichi
+  // "tutto il resto è già sincronizzato" — quel giro potrebbe non essere
+  // mai arrivato fino a un certo contatto. In quel caso si fa un giro
+  // completo (comportamento previo, sempre corretto anche se più costoso),
+  // e lo stop anticipato torna disponibile dal prossimo run se questo
+  // completa con successo.
+  let earlyStopEnabled = false;
+  if (!dryRun) {
+    const prev = (
+      await query(
+        "SELECT last_status FROM source_sync_state WHERE site_id = $1 AND resource_type = 'contacts'",
+        [siteId]
+      )
+    ).rows[0];
+    earlyStopEnabled = prev?.last_status === "ok";
+  }
+  let consecutiveUnchanged = 0;
+
   try {
-    await client.paginate(
-      "/contacts/",
-      { locationId: cfg.location_id },
+    await client.paginateSearchSorted(
+      "/contacts/search",
+      { locationId: cfg.location_id, pageLimit: 100, sortField: "dateUpdated", sortDirection: "desc" },
       async (pageContacts) => {
         addStat("contacts", "fetched", pageContacts.length);
         const pageExtIds = [];
@@ -151,10 +195,10 @@ export async function syncAll(ctx, onPage) {
         for (const c of pageContacts) {
           try {
             const { row, action } = await upsertContact(ctx, c.id, c);
-            if (action === "inserted") addStat("contacts", "upserted", 1);
-            else if (action === "updated") addStat("contacts", "updated", 1);
-            else if (action === "adopted") addStat("contacts", "updated", 1);
-            else addStat("contacts", "skipped", 1);
+            if (action === "inserted") { addStat("contacts", "upserted", 1); consecutiveUnchanged = 0; }
+            else if (action === "updated") { addStat("contacts", "updated", 1); consecutiveUnchanged = 0; }
+            else if (action === "adopted") { addStat("contacts", "updated", 1); consecutiveUnchanged = 0; }
+            else { addStat("contacts", "skipped", 1); consecutiveUnchanged++; }
 
             if (row && row.id) {
               pageExtIds.push(c.id);
@@ -164,23 +208,19 @@ export async function syncAll(ctx, onPage) {
           } catch (err) {
             addStat("contacts", "errors", 1);
             log(`contact ${c.id}: ${err.message}`);
+            consecutiveUnchanged = 0; // un errore non conta come "già sincronizzato" confermato
           }
         }
 
         if (onPage && pageExtIds.length > 0) {
           await onPage(pageExtIds);
         }
-      },
-      {
-        // GET /contacts/ (doc CRM sorgente 2021-07-28) non restituisce alcun campo
-        // "meta": il cursore per la pagina successiva va ricavato dall'ULTIMO
-        // contatto della pagina corrente (startAfterId = suo id, startAfter =
-        // il suo dateAdded in epoch ms). Prima di questa fix il client leggeva
-        // un fantomatico meta.nextPage, causando un ciclo in produzione.
-        cursorFrom: (lastContact) => ({
-          startAfterId: lastContact?.id,
-          startAfter: lastContact?.dateAdded ? new Date(lastContact.dateAdded).getTime() : undefined,
-        }),
+
+        if (earlyStopEnabled && consecutiveUnchanged >= EARLY_STOP_THRESHOLD) {
+          log(`sync incrementale: ${consecutiveUnchanged} contatti consecutivi già sincronizzati (ordine dateUpdated desc) — stop anticipato`);
+          return false; // segnala a paginateSearchSorted di fermare la paginazione
+        }
+        return undefined;
       }
     );
   } catch (err) {

@@ -288,7 +288,66 @@ export function createSourceClient(cfg) {
     return request(path, { method, params, body });
   }
 
-  return { get, paginate, paginateOffset, raw: request, write };
+  /**
+   * Paginazione per endpoint di ricerca POST (es. /contacts/search) con
+   * ordinamento esplicito e cursore searchAfter. Verificato dal vivo contro
+   * il CRM sorgente reale (site 21, 2026-09-09):
+   *   POST /contacts/search
+   *   body: { locationId, pageLimit, sort: [{ field, direction }], searchAfter? }
+   *   risposta: { contacts: [...], total, traceId }
+   *   ogni item include un campo "searchAfter" (array [timestamp, id]) da
+   *   passare per la pagina successiva — continuità verificata (nessun
+   *   overlap/gap tra pagine consecutive). "sort" accetta un array di
+   *   { field, direction }; field errato → 400 "Invalid field <nome>"
+   *   (verificato: "dateUpdated" valido, "date_updated"/"updatedAt" NON
+   *   validi — il nome campo è quello della risposta, camelCase).
+   *
+   * onPage(items) può ritornare `false` per fermare la paginazione PRIMA di
+   * aver esaurito i risultati (early-stop): usato per il sync incrementale
+   * quando, ordinando per dateUpdated desc, si incontra un tratto di record
+   * già sincronizzati — tutto ciò che segue è per forza meno recente.
+   * sendLocationId è sempre false: locationId va nel body per questo
+   * endpoint, non in query (la duplicazione è tollerata dall'API ma il
+   * codice preferisce non affidarsi a tolleranze non documentate, come da
+   * convenzione già in uso nel resto di questo file).
+   */
+  async function paginateSearchSorted(path, { locationId, pageLimit = 100, sortField, sortDirection = "desc", extraBody = {} } = {}, onPage) {
+    const MAX_PAGES = 10000;
+    let searchAfter = null;
+    let fetched = 0;
+    let pages = 0;
+    for (;;) {
+      if (pages >= MAX_PAGES) {
+        logger.warn(`source-sync: paginateSearchSorted raggiunto MAX_PAGES=${MAX_PAGES} per ${path}`);
+        break;
+      }
+      const body = {
+        locationId,
+        pageLimit,
+        sort: [{ field: sortField, direction: sortDirection }],
+        ...extraBody,
+      };
+      if (searchAfter) body.searchAfter = searchAfter;
+      const res = await request(path, { method: "POST", body, sendLocationId: false });
+      const items = Array.isArray(res) ? res : res?.[pathToKey(path)] || [];
+      if (!Array.isArray(items) || items.length === 0) break;
+      pages++;
+      fetched += items.length;
+
+      const stop = onPage ? await onPage(items) : undefined;
+      if (stop === false) break;
+
+      if (Number.isFinite(res?.total) && fetched >= res.total) break;
+      if (items.length < pageLimit) break; // pagina non piena: non ce n'è un'altra
+
+      const last = items[items.length - 1];
+      if (!last?.searchAfter) break;
+      searchAfter = last.searchAfter;
+    }
+    return { fetched, pages };
+  }
+
+  return { get, paginate, paginateOffset, paginateSearchSorted, raw: request, write };
 }
 
 function pathToKey(path) {

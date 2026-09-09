@@ -39,6 +39,12 @@ export async function createMockSource(fixture, { onCall } = {}) {
   }
 
   const server = http.createServer((req, res) => {
+    let rawBody = "";
+    req.on("data", (chunk) => { rawBody += chunk; });
+    req.on("end", () => onRequest(req, res, rawBody));
+  });
+
+  function onRequest(req, res, rawBody) {
     const u = new URL(req.url, "http://mock");
     const q = Object.fromEntries(u.searchParams.entries());
     const path = u.pathname.replace(/\/+$/, "");
@@ -80,6 +86,41 @@ export async function createMockSource(fixture, { onCall } = {}) {
       return ok({ pipelines: fixture.pipelines || [] });
     if (path === "/calendars") return send(res, "calendars", fixture.calendars || [], q);
     if (path === "/contacts") return send(res, "contacts", fixture.contacts || [], q);
+    // POST /contacts/search — verificato dal vivo (2026-09-09): body
+    // {locationId, pageLimit, sort:[{field,direction}], searchAfter?},
+    // risposta {contacts, total}. Ordinamento reale per "field" della
+    // richiesta (solo "dateUpdated" verificato come valido sull'API reale,
+    // altri nomi rispondono 400 "Invalid field <nome>" — il mock imita solo
+    // il caso supportato, usato dal mapper contatti). Cursore searchAfter
+    // = [timestamp dateUpdated in ms, id], coerente col comportamento reale
+    // osservato (continuità tra pagine senza overlap/gap).
+    if (path === "/contacts/search" && req.method === "POST") {
+      let body = {};
+      try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
+      const sortSpec = Array.isArray(body.sort) ? body.sort[0] : null;
+      if (sortSpec && sortSpec.field !== "dateUpdated") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ message: `Invalid field ${sortSpec.field}`, statusCode: 400 }));
+      }
+      const direction = sortSpec?.direction === "asc" ? "asc" : "desc";
+      const all = [...(fixture.contacts || [])].sort((a, b) => {
+        const ta = new Date(a.dateUpdated || a.dateAdded || 0).getTime();
+        const tb = new Date(b.dateUpdated || b.dateAdded || 0).getTime();
+        return direction === "desc" ? tb - ta : ta - tb;
+      });
+      let startIdx = 0;
+      if (Array.isArray(body.searchAfter)) {
+        const [, afterId] = body.searchAfter;
+        const idx = all.findIndex((c) => c.id === afterId);
+        if (idx >= 0) startIdx = idx + 1;
+      }
+      const pageLimit = Math.min(100, parseInt(body.pageLimit || 100, 10));
+      const pageItems = all.slice(startIdx, startIdx + pageLimit).map((c) => ({
+        ...c,
+        searchAfter: [new Date(c.dateUpdated || c.dateAdded || 0).getTime(), c.id],
+      }));
+      return ok({ contacts: pageItems, total: all.length });
+    }
     if (path === "/forms") return send(res, "forms", fixture.forms || [], q);
     // GET /forms/submissions (doc CRM sorgente 2021-07-28): risposta
     // { submissions: [...], meta: { total, currentPage, nextPage, prevPage } }.
@@ -196,7 +237,7 @@ export async function createMockSource(fixture, { onCall } = {}) {
 
     res.writeHead(404);
     res.end("{}");
-  });
+  }
 
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return {
