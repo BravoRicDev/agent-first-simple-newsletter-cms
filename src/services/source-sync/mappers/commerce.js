@@ -257,10 +257,15 @@ export async function syncAll(ctx) {
             try {
               if (typeof item === "string") continue; // lista ritorna solo ID
               const itemId = item.id || item._id;
+              // Scopato per invoice_id (db/126_ghl_id_per_site.sql:
+              // UNIQUE(invoice_id, ghl_id), invoice_items non ha site_id
+              // proprio): stesso bug di pipeline_stages, vedi upsert.js —
+              // due siti sullo stesso account GHL con lo stesso ghl_id
+              // articolo altrimenti si "rubano" la riga a vicenda.
               const existing = (
                 await query(
-                  "SELECT id FROM invoice_items WHERE ghl_id = $1 LIMIT 1",
-                  [itemId]
+                  "SELECT id FROM invoice_items WHERE ghl_id = $1 AND invoice_id = $2 LIMIT 1",
+                  [itemId, row?.id || null]
                 )
               ).rows[0];
 

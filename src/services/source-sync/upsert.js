@@ -57,8 +57,15 @@ function sameInstant(a, b) {
  *                              vedi commento in testa al file)
  * @param {object} p.cols       colonne DB → valori (solo nomi colonna validi!)
  * @param {{createdAt?:Date|string, updatedAt?:Date|string}} [p.timestamps]
+ * @param {string} [p.scopeCol]   per tabelle figlie senza site_id (es.
+ *   pipeline_stages, invoice_items): colonna del genitore che scopa
+ *   ghl_id, es. "pipeline_id" — deve rispecchiare l'indice UNIQUE(parent,
+ *   ghl_id) di db/126_ghl_id_per_site.sql. Ignorato se la tabella ha
+ *   site_id proprio.
+ * @param {*} [p.scopeValue]      valore della colonna di scope (es.
+ *   pipelineRow.id) — richiesto se scopeCol è passato.
  */
-export async function upsertByExternalId({ table, siteId, externalId, cols, timestamps = {} }) {
+export async function upsertByExternalId({ table, siteId, externalId, cols, timestamps = {}, scopeCol = null, scopeValue = null }) {
   if (!WHITELIST_TABLES[table]) {
     throw new Error(`Tabella non autorizzata per source-sync: ${table}`);
   }
@@ -72,13 +79,21 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
     ([k, v]) => v !== undefined && tableCols.has(k)
   );
 
-  // Alcune tabelle figlie (es. pipeline_stages) non hanno una colonna
-  // site_id propria: il tenant è derivato tramite il genitore (pipeline_id),
-  // e ghl_id è comunque univoco a livello globale (indice unico parziale).
-  // Scopiamo per site_id solo se la colonna esiste davvero, altrimenti la
-  // query fallirebbe con "column site_id does not exist" e l'errore
-  // verrebbe silenziosamente inghiottito dal try/catch del caller.
+  // Alcune tabelle figlie (es. pipeline_stages, invoice_items) non hanno una
+  // colonna site_id propria: il tenant è derivato tramite il genitore
+  // (pipeline_id/invoice_id). db/126_ghl_id_per_site.sql ha reso l'indice
+  // ghl_id di QUESTE tabelle UNIQUE(parent_id, ghl_id) — NON più globale —
+  // proprio per permettere a due siti sullo stesso account GHL (stessi
+  // ghl_id sorgente) di avere ciascuno le proprie righe figlie. Se la
+  // lookup qui sotto non scopa allo stesso modo (parent_id, non solo
+  // ghl_id), due siti gemelli con lo stesso ghl_id finiscono per
+  // AGGIORNARE LA STESSA RIGA a turno, "rubandosela" l'uno con l'altro
+  // (bug reale trovato dal vivo in produzione: pipeline_stages di un sito
+  // svuotate dal sync dell'altro sito gemello). Va quindi passato
+  // scopeCol/scopeValue dal chiamante per queste tabelle — vedi
+  // mappers/pipelines.js.
   const hasSiteId = tableCols.has("site_id");
+  const hasScope = !hasSiteId && scopeCol && tableCols.has(scopeCol);
   // Idem per created_at/updated_at: alcune tabelle legacy (es. contact_notes,
   // pipelines, tasks) non hanno tutte e due le colonne — selezionarle a
   // prescindere farebbe fallire la query con "column ... does not exist".
@@ -89,8 +104,10 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
     await query(
       hasSiteId
         ? `SELECT ${selectCols.join(", ")} FROM ${table} WHERE ghl_id = $1 AND site_id = $2 LIMIT 1`
+        : hasScope
+        ? `SELECT ${selectCols.join(", ")} FROM ${table} WHERE ghl_id = $1 AND ${scopeCol} = $2 LIMIT 1`
         : `SELECT ${selectCols.join(", ")} FROM ${table} WHERE ghl_id = $1 LIMIT 1`,
-      hasSiteId ? [externalId, siteId] : [externalId]
+      hasSiteId ? [externalId, siteId] : hasScope ? [externalId, scopeValue] : [externalId]
     )
   ).rows[0];
 
@@ -170,6 +187,9 @@ export async function upsertByExternalId({ table, siteId, externalId, cols, time
   if (hasSiteId) {
     where += ` AND site_id = $${i++}`;
     whereValues.push(siteId);
+  } else if (hasScope) {
+    where += ` AND ${scopeCol} = $${i++}`;
+    whereValues.push(scopeValue);
   }
   const row = (
     await query(

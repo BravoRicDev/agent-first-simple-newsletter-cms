@@ -81,12 +81,22 @@ export async function syncAll(ctx) {
             };
 
             if (!dryRun) {
+              // scopeCol/scopeValue: pipeline_stages non ha site_id, il
+              // tenant è il genitore. Con due siti sullo stesso account GHL
+              // (stesso ghl_id di stage) e lookup non scopata per
+              // pipeline_id, il sync dell'uno "ruba" la riga di stage
+              // dell'altro ripuntandola alla propria pipeline_id — bug
+              // reale trovato dal vivo in produzione (site 22: 0 stage
+              // dopo il sync di site 21 sullo stesso account). Vedi
+              // upsert.js.
               await upsertByExternalId({
                 table: "pipeline_stages",
                 siteId,
                 externalId: s.id,
                 cols: { ...stageCols, pipeline_id: pipelineRow.id },
                 timestamps: stageTimestamps,
+                scopeCol: "pipeline_id",
+                scopeValue: pipelineRow.id,
               });
             }
           } catch (err) {
