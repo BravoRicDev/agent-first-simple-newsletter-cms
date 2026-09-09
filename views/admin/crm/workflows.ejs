@@ -189,6 +189,9 @@
       <div class="form-group">
         <label>Azioni (in sequenza)</label>
         <div id="actions_list"></div>
+        <!-- Inizio pannello Mappa campi: il markup viene generato lato client da
+             buildFieldPanelHTML()/refreshFieldPanel() (script in fondo alla pagina),
+             che lo inseriscono subito dopo #actions_list. -->
         <button type="button" class="btn btn-sm" onclick="addActionRow()" style="margin-top:6px;">+ Aggiungi azione</button>
         <div style="font-size:11px;color:#999;margin-top:6px;">
           <strong>send_webhook</strong>: importa {url, secret, event_type, payload} — ponte per n8n.<br>
@@ -202,7 +205,142 @@
 </div>
 
 <script>
-// Tipi di azione con descrizione e campi JSON tipici
+// ── Mappa campi CRM — placeholder {{campo}} da inserire nel JSON config ────────
+//
+// Campo cliccato → inserisce {{path}} nella posizione del cursore dell'input
+// "action-cfg" attualmente in focus. Se nessun input ha focus, si usa l'ultimo
+// aggiunto. Sintassi mustache {{path}}, coerente con renderTemplate() in
+// src/services/webhooks.js.
+//
+// IMPORTANTE: i placeholder qui sotto NON sono nomi di campo generici del
+// CRM — sono le chiavi REALI presenti nel "payload" passato a
+// emitContactEvent() per ciascun trigger (verificate leggendo i call-site in
+// src/services/*.js, es. opportunities.js, contacts.js, booking.js). Il
+// contesto disponibile in executeAction (src/services/workflows.js) è
+// { ...payload, email, event }: è FLAT, non esistono chiavi annidate tipo
+// "contact.email" o "opportunity.title" — usarle avrebbe SEMPRE risolto a
+// stringa vuota. Per questo i campi sono raggruppati per trigger_type: solo
+// quelli del trigger selezionato nel form hanno senso per il workflow in
+// creazione. "email" ed "event" sono gli unici due SEMPRE disponibili
+// (aggiunti esplicitamente al contesto da executeAction indipendentemente
+// dal payload del trigger).
+//
+// ⚠️ I placeholder vengono risolti al momento dell'esecuzione del workflow
+// (in executeAction di src/services/workflows.js), non al submit del form.
+//
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Inserisce testo 'text' nella posizione del cursore dell'input focused.
+// Se nessun input .action-cfg ha focus, agisce sull'ultimo .action-cfg.
+function insertPlaceholderAtCursor(text) {
+  const inputs = document.querySelectorAll('.action-cfg');
+  if (inputs.length === 0) return;
+  let target = null;
+  // Cerca un input che abbia il focus attivo
+  for (const inp of inputs) {
+    if (document.activeElement === inp) { target = inp; break; }
+  }
+  // Se nulla ha focus, usa l'ultimo
+  if (!target) target = inputs[inputs.length - 1];
+  if (!target) return;
+  const start = target.selectionStart;
+  const end = target.selectionEnd;
+  const value = target.value;
+  target.value = value.slice(0, start) + text + value.slice(end);
+  // Posiziona il cursore dopo il testo inserito
+  target.selectionStart = target.selectionEnd = start + text.length;
+}
+
+// Campi SEMPRE disponibili, indipendentemente dal trigger (aggiunti da
+// executeAction al contesto, non fanno parte del payload del trigger).
+const COMMON_FIELDS = {
+  'Email contatto': '{{email}}',
+  'Tipo evento': '{{event}}',
+};
+
+// Campi per trigger_type: chiavi REALI del payload passato a
+// emitContactEvent() per ciascun evento (verificate nel codice sorgente,
+// non inventate). Trigger non elencati qui non hanno campi payload noti
+// oltre a COMMON_FIELDS (es. "manual", "contact_created" passa solo
+// {source} interno, non utile da esporre).
+const FIELD_MAP_BY_TRIGGER = {
+  form_submitted: { 'Slug del form': '{{form_slug}}' },
+  tag_added: { 'Tag aggiunto': '{{tag}}' },
+  stage_changed: { 'Nuovo stadio pipeline': '{{to_stage}}' },
+  opportunity_stage_changed: {
+    'ID opportunità': '{{opportunity_id}}',
+    'Titolo opportunità': '{{title}}',
+    'Nuovo stadio': '{{to_stage}}',
+    'Stadio precedente': '{{from_stage}}',
+  },
+  call_status_changed: {
+    'Stato chiamata': '{{status}}',
+    'ID chiamata': '{{call_id}}',
+  },
+  segment_entered: { 'ID segmento': '{{segment_id}}' },
+  quote_signed: {
+    'ID preventivo': '{{quote_id}}',
+    'Numero preventivo': '{{quote_number}}',
+    'Titolo preventivo': '{{title}}',
+  },
+};
+
+// Costruisce l'HTML del pannello mappa campi per il trigger_type corrente
+function buildFieldPanelHTML() {
+  const triggerSel = document.getElementById('trigger_type');
+  const currentTrigger = triggerSel ? triggerSel.value : '';
+  const specific = FIELD_MAP_BY_TRIGGER[currentTrigger] || {};
+  const allFields = { ...COMMON_FIELDS, ...specific };
+
+  const rows = [];
+  for (const [label, path] of Object.entries(allFields)) {
+    rows.push(`
+      <button type="button" class="btn btn-sm" style="padding:4px 8px;margin:2px;white-space:normal;text-align:left;background:#eef2ff;color:#3730a3;"
+          onclick="insertPlaceholderAtCursor('${path}')" title="Clicca per inserire ${path} nel campo config dell'azione attiva">
+        ${label}
+      </button>
+    `);
+  }
+  const noSpecific = Object.keys(specific).length === 0;
+  return `
+    <div id="field-map-panel" style="position:relative;z-index:100;margin-top:16px;">
+      <h3 style="font-size:13px;margin:0 0 6px 0;">🗺️ Mappa campi (trigger: ${currentTrigger || '—'})</h3>
+      <div style="background:#f8f9fa;border:1px solid #e3e6e9;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:#495057;">
+        Clicca un campo per inserirlo nel punto del cursore dell'input "Config JSON" dell'azione selezionata (o dell'ultima aggiunta, se nessuna è a fuoco).
+        ${noSpecific ? '<br><em>Questo trigger non espone campi specifici oltre a quelli sempre disponibili.</em>' : ''}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:2px;">
+        ${rows.join('')}
+      </div>
+    </div>
+  `;
+}
+
+// Ridisegna il pannello (usato sia al load sia al cambio di trigger_type)
+function refreshFieldPanel() {
+  const existing = document.getElementById('field-map-panel');
+  if (existing) existing.remove();
+  const actionsList = document.getElementById('actions_list');
+  if (actionsList) {
+    actionsList.insertAdjacentHTML('afterend', buildFieldPanelHTML());
+  }
+}
+
+// Inizializza il pannello mappa campi e lo aggiorna quando cambia il trigger
+document.addEventListener('DOMContentLoaded', () => {
+  refreshFieldPanel();
+  const triggerSel = document.getElementById('trigger_type');
+  if (triggerSel) triggerSel.addEventListener('change', refreshFieldPanel);
+});
+
+// Delegazione click: click fuori dal pannello chiude la attenzione (semplicità: non chiudiamo nulla,
+// il pannello resta visibile finché l'utente interagisce altrove)
+document.addEventListener('click', (e) => {
+  // Impedisce che il click su un bottone campo chiuda o interferisca con altro
+  if (e.target.closest('#field-map-panel')) return;
+  // Opzionale: chiudi il pannello click ovunque fuori (disabilitato per semplicità)
+});
+
 const ACTION_HELP = {
   add_tag: { help: '{ "tag": "lead-caldo" }' },
   remove_tag: { help: '{ "tag": "vecchio-tag" }' },

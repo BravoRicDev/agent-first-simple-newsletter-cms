@@ -44,6 +44,57 @@ function getPathVal(obj, path) {
   return String(path).split(".").reduce((cur, p) => (cur === null || cur === undefined ? undefined : cur[p]), obj);
 }
 
+// ── Interpolazione placeholder {{path}} — mustache-like ──────────────────────
+// Sostituisce {{field.path}} coi valori reali del contesto al momento
+// dell'esecuzione dell'azione. La sintassi è coerente con renderTemplate()
+// in src/services/webhooks.js.
+//
+// Il contesto disponibile in executeAction è:
+//   { ...(payload || {}), email, event: eventType }
+//
+// Il contesto è FLAT (spread diretto del payload del trigger, non annidato
+// sotto chiavi "contact"/"opportunity"): i percorsi disponibili dipendono dal
+// trigger_type che ha generato l'evento. Sempre disponibili: {{email}},
+// {{event}}. Per trigger specifici, es. opportunity_stage_changed:
+// {{opportunity_id}}, {{title}}, {{to_stage}}, {{from_stage}} (vedi
+// FIELD_MAP_BY_TRIGGER in views/admin/crm/workflows.ejs per l'elenco
+// completo per trigger, ricavato dai reali call-site di emitContactEvent).
+function interpolatePlaceholders(cfg, context) {
+  if (!cfg || typeof cfg !== "object") return cfg;
+  // Deep clone per non mutare l'originale
+  const result = JSON.parse(JSON.stringify(cfg));
+
+  function walkValue(val) {
+    if (typeof val === "string") {
+      return val.replace(/\{\{([^}]+)\}\}/g, (_, path) => {
+        const parts = path.trim().split(".");
+        let cur = context;
+        for (const p of parts) {
+          if (cur === null || cur === undefined) return "";
+          cur = cur[p];
+        }
+        return cur === undefined || cur === null ? "" : String(cur);
+      });
+    }
+    if (Array.isArray(val)) {
+      return val.map(walkValue);
+    }
+    if (typeof val === "object" && val !== null) {
+      const rendered = {};
+      for (const [k, v] of Object.entries(val)) {
+        rendered[k] = walkValue(v);
+      }
+      return rendered;
+    }
+    return val;
+  }
+
+  for (const [k, v] of Object.entries(result)) {
+    result[k] = walkValue(v);
+  }
+  return result;
+}
+
 export function evalCondition(cond, context) {
   if (!cond || typeof cond !== "object" || Object.keys(cond).length === 0) return true;
   const field = String(cond.field || "");
@@ -249,7 +300,11 @@ function matchTriggerConfig(config, eventType, payload, siteId, email) {
 }
 
 async function executeAction(siteId, workflow, action, email, eventType, payload, { depth } = {}) {
-  const cfg = action.action_config || {};
+  // Costruisce il contesto disponibile per l'interpolazione placeholder
+  const context = { ...(payload || {}), email, event: eventType };
+  // Risolve eventuali {{path}} presenti nei valori di action_config,
+  // sostituendoli coi dati reali del contesto (contatto, opportunità, email, evento).
+  const cfg = interpolatePlaceholders(action.action_config || {}, context);
   switch (action.action_type) {
     case "add_tag": {
       const tag = String(cfg.tag || "").trim();
