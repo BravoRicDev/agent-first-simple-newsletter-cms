@@ -1,9 +1,16 @@
 import { query } from "../db.js";
-import { ensureExternalId, findByExternalId } from "./external-ids.js";
+import { ensureExternalId, findByAnyId, publicId } from "./external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda D: Surveys — sondaggi multi-domanda con risposte. Contratto camelCase
 // UUID, paginazione cursore, logica condizionale show_if, answers key-value.
+//
+// Parity ghl_id: id survey/submission/contatto collegato preferiscono il
+// ghl_id reale del CRM sorgente quando presente, con fallback all'UUID
+// interno — stesso pattern già applicato a contatti/opportunità/calendari/
+// conversazioni/tag/custom field/form. survey_questions NON ha ghl_id (mai
+// sincronizzata da GHL come risorsa a sé, è il modello normalizzato interno
+// usato solo dal clone-API) — resta UUID-only via ensureExternalId.
 // ─────────────────────────────────────────────────────────────────────────
 
 function sanitizeFieldKey(label) {
@@ -37,7 +44,7 @@ async function serializeSurvey(row, locationId) {
   );
 
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.name,
     status: row.status,
@@ -50,13 +57,21 @@ async function serializeSurvey(row, locationId) {
 async function serializeSubmission(row, locationId) {
   let contactExternalId = null;
   if (row.contact_id) {
-    contactExternalId = await ensureExternalId("contacts", row.contact_id);
+    const contactRow = (await query(
+      "SELECT ghl_id, external_id FROM contacts WHERE id = $1",
+      [row.contact_id]
+    )).rows[0];
+    contactExternalId = contactRow ? publicId(contactRow) : null;
   }
 
-  const surveyExternalId = await ensureExternalId("surveys", row.survey_id);
+  const surveyRow = (await query(
+    "SELECT ghl_id, external_id FROM surveys WHERE id = $1",
+    [row.survey_id]
+  )).rows[0];
+  const surveyExternalId = surveyRow ? publicId(surveyRow) : null;
 
   return {
-    id: row.external_id,
+    id: publicId(row),
     surveyId: surveyExternalId,
     contactId: contactExternalId,
     submittedAt: row.submitted_at ? row.submitted_at.toISOString() : null,
@@ -71,8 +86,11 @@ export async function listSurveys(siteId, { limit = 20, startAfterId = null }, l
   const params = [siteId];
 
   if (startAfterId) {
-    sql += " AND id > (SELECT id FROM surveys WHERE external_id = $2 LIMIT 1)";
-    params.push(startAfterId);
+    const afterRow = await findByAnyId("surveys", siteId, startAfterId);
+    if (afterRow) {
+      sql += ` AND id > $${params.length + 1}`;
+      params.push(afterRow.id);
+    }
   }
 
   sql += " ORDER BY id ASC LIMIT $" + (params.length + 1);
@@ -87,7 +105,7 @@ export async function listSurveys(siteId, { limit = 20, startAfterId = null }, l
 
   let nextStartAfterId = null;
   if (result.rows.length > limit && rows.length > 0) {
-    nextStartAfterId = rows[rows.length - 1].external_id;
+    nextStartAfterId = publicId(rows[rows.length - 1]);
   }
 
   const surveys = await Promise.all(
@@ -110,9 +128,6 @@ export async function createSurvey(siteId, { name, questions = [] }, locationId)
   );
 
   const surveyRow = result.rows[0];
-  if (!surveyRow.external_id) {
-    await ensureExternalId("surveys", surveyRow.id);
-  }
 
   // Inserisci domande se fornite
   for (let i = 0; i < questions.length; i++) {
@@ -138,14 +153,14 @@ export async function createSurvey(siteId, { name, questions = [] }, locationId)
 }
 
 export async function getSurvey(siteId, surveyExternalId, locationId) {
-  const row = await findByExternalId("surveys", surveyExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("surveys", siteId, surveyExternalId);
+  if (!row) return null;
   return serializeSurvey(row, locationId);
 }
 
 export async function updateSurvey(siteId, surveyExternalId, { name, status, questions }, locationId) {
-  const row = await findByExternalId("surveys", surveyExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("surveys", siteId, surveyExternalId);
+  if (!row) return null;
 
   const updates = {};
   if (name !== undefined) updates.name = name;
@@ -190,8 +205,8 @@ export async function updateSurvey(siteId, surveyExternalId, { name, status, que
 }
 
 export async function deleteSurvey(siteId, surveyExternalId) {
-  const row = await findByExternalId("surveys", surveyExternalId);
-  if (!row || row.site_id !== siteId) return 0;
+  const row = await findByAnyId("surveys", siteId, surveyExternalId);
+  if (!row) return 0;
 
   const result = await query("DELETE FROM surveys WHERE id = $1", [row.id]);
   return result.rowCount;
@@ -208,8 +223,11 @@ export async function listSurveySubmissions(siteId, surveyId, { limit = 20, star
   const params = [surveyId];
 
   if (startAfterId) {
-    sql += " AND id > (SELECT id FROM survey_submissions WHERE external_id = $2 LIMIT 1)";
-    params.push(startAfterId);
+    const afterRow = await findByAnyId("survey_submissions", siteId, startAfterId);
+    if (afterRow) {
+      sql += ` AND id > $${params.length + 1}`;
+      params.push(afterRow.id);
+    }
   }
 
   sql += " ORDER BY id ASC LIMIT $" + (params.length + 1);
@@ -224,7 +242,7 @@ export async function listSurveySubmissions(siteId, surveyId, { limit = 20, star
 
   let nextStartAfterId = null;
   if (result.rows.length > limit && rows.length > 0) {
-    nextStartAfterId = rows[rows.length - 1].external_id;
+    nextStartAfterId = publicId(rows[rows.length - 1]);
   }
 
   const submissions = await Promise.all(
@@ -240,13 +258,13 @@ export async function listSurveySubmissions(siteId, surveyId, { limit = 20, star
 
 export async function createSurveySubmission(siteId, surveyRef, { email, contactId, answers = {} }, locationId) {
   // surveyRef può essere l'id interno (già risolto dalla route) oppure un
-  // uuid esterno: gestiamo entrambi per robustezza.
+  // id esterno (uuid o ghl_id reale): gestiamo entrambi per robustezza.
   let found;
   if (typeof surveyRef === "number" || /^\d+$/.test(String(surveyRef))) {
     const r = await query("SELECT * FROM surveys WHERE id = $1", [parseInt(surveyRef, 10)]);
     found = r.rows[0] || null;
   } else {
-    found = await findByExternalId("surveys", String(surveyRef));
+    found = await findByAnyId("surveys", siteId, String(surveyRef));
   }
   if (!found || found.site_id !== siteId) return null;
   const surveyId = found.id;
@@ -257,9 +275,9 @@ export async function createSurveySubmission(siteId, surveyRef, { email, contact
 
   let finalContactId = null;
   if (contactId) {
-    // contactId è un uuid esterno: risolvilo all'id interno
-    const c = await findByExternalId("contacts", contactId);
-    if (!c || c.site_id !== siteId) return null;
+    // contactId è un id esterno (uuid o ghl_id reale): risolvilo all'id interno
+    const c = await findByAnyId("contacts", siteId, contactId);
+    if (!c) return null;
     finalContactId = c.id;
   }
 
@@ -289,9 +307,5 @@ export async function createSurveySubmission(siteId, surveyRef, { email, contact
   );
 
   const row = result.rows[0];
-  if (!row.external_id) {
-    await ensureExternalId("survey_submissions", row.id);
-  }
-
   return serializeSubmission(row, locationId);
 }

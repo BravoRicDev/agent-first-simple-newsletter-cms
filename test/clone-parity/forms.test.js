@@ -259,4 +259,63 @@ describe("Onda C — Forms clone", () => {
     // Gli ID devono essere diversi (slug diverso)
     assert.notEqual(form1.id, form2.id);
   });
+
+  // Parity ghl_id: round-trip su form (submission id reale esposto quando
+  // presente, id malformato/inesistente gestiti correttamente).
+  test("Parity ghl_id: round-trip GET/PUT/DELETE form col ghl_id reale", async () => {
+    const createRes = await fetch(`${baseUrl}/forms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "RtForm" }),
+    });
+    const created = (await createRes.json()).form;
+    assert.ok(created.id, "uuid assente");
+
+    const realGhlId = "ghlFORMparity001";
+    await query(`UPDATE forms SET ghl_id = $1 WHERE external_id = $2`, [realGhlId, created.id]);
+
+    const getRes = await fetch(`${baseUrl}/forms/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    const got = (await getRes.json()).form;
+    assert.equal(got.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    const putRes = await fetch(`${baseUrl}/forms/${realGhlId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "RtFormUpdated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal((await putRes.json()).form.name, "RtFormUpdated");
+
+    const deleteRes = await fetch(`${baseUrl}/forms/${realGhlId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+
+    const getAfterDel = await fetch(`${baseUrl}/forms/${realGhlId}`);
+    assert.equal(getAfterDel.status, 404);
+  });
+
+  test("Parity ghl_id: id form malformato (300 char) → 400", async () => {
+    const res = await fetch(`${baseUrl}/forms/${"x".repeat(300)}`);
+    assert.equal(res.status, 400);
+  });
+
+  test("Parity ghl_id: id form formato valido ma inesistente → 404", async () => {
+    const res = await fetch(`${baseUrl}/forms/nonexistent-ghl-id`);
+    assert.equal(res.status, 404);
+  });
+
+  test("Parity ghl_id: submission espone formId/contactId reali quando presenti", async () => {
+    const realFormGhlId = "ghlFORMforsub001";
+    const realContactGhlId = "ghlCONTACTforsub001";
+    await query(`UPDATE forms SET ghl_id = $1 WHERE id = $2`, [realFormGhlId, form.id]);
+    await query(`UPDATE contacts SET ghl_id = $1 WHERE id = $2`, [realContactGhlId, contact.id]);
+
+    const res = await fetch(`${baseUrl}/forms/submissions`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const sub = body.submissions.find((s) => s.id === submission1.externalId);
+    assert.ok(sub, "submission1 deve essere in lista");
+    assert.equal(sub.formId, realFormGhlId);
+    assert.equal(sub.contactId, realContactGhlId);
+  });
 });

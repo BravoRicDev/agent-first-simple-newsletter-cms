@@ -5,7 +5,7 @@
 
 import crypto from "crypto";
 import { query } from "../db.js";
-import { ensureExternalId } from "./external-ids.js";
+import { ensureExternalId, findByAnyId, publicId } from "./external-ids.js";
 
 // ── LOCATIONS (Sites) ────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ export async function createUser({ siteId, firstName, lastName, email, roles }) 
   const result = await query(
     `INSERT INTO users (email, name, role, site_id, status)
      VALUES ($1, $2, $3, $4, 'active')
-     RETURNING id, external_id, email, name, role, created_at`,
+     RETURNING id, external_id, ghl_id, email, name, role, created_at`,
     [email, name, role, siteId]
   );
 
@@ -92,7 +92,7 @@ export async function createUser({ siteId, firstName, lastName, email, roles }) 
   const [first, ...rest] = row.name.split(" ");
 
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId: null, // Sarà assegnato separatamente
     firstName: first,
     lastName: rest.join(" "),
@@ -107,8 +107,11 @@ export async function getUsersByLocationId(siteId, limit = 20, startAfterId = nu
   const params = [siteId];
 
   if (startAfterId) {
-    sql += " AND external_id > $2";
-    params.push(startAfterId);
+    const afterRow = await findByAnyId("users", siteId, startAfterId);
+    if (afterRow) {
+      sql += " AND external_id > $2";
+      params.push(afterRow.external_id);
+    }
   }
 
   sql += " ORDER BY external_id ASC LIMIT $" + (params.length + 1);
@@ -118,12 +121,12 @@ export async function getUsersByLocationId(siteId, limit = 20, startAfterId = nu
   const rows = result.rows.slice(0, limit);
   const total = await query("SELECT COUNT(*)::INTEGER as cnt FROM users WHERE site_id = $1", [siteId]);
   const hasMore = result.rows.length > limit;
-  const nextId = hasMore ? result.rows[limit].external_id : null;
+  const nextId = hasMore ? publicId(result.rows[limit]) : null;
 
   const users = rows.map((row) => {
     const [first, ...rest] = row.name.split(" ");
     return {
-      id: row.external_id,
+      id: publicId(row),
       locationId: null,
       firstName: first,
       lastName: rest.join(" "),
@@ -147,7 +150,7 @@ export async function getUserById(siteId, userId) {
 
   const [first, ...rest] = row.name.split(" ");
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId: null,
     firstName: first,
     lastName: rest.join(" "),
@@ -188,7 +191,7 @@ export async function updateUser(siteId, userId, { firstName, lastName, roles })
 
   const [first, ...rest] = row.name.split(" ");
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId: null,
     firstName: first,
     lastName: rest.join(" "),
@@ -212,7 +215,7 @@ export async function searchUsersByEmail(siteId, email) {
   return result.rows.map((row) => {
     const [first, ...rest] = row.name.split(" ");
     return {
-      id: row.external_id,
+      id: publicId(row),
       locationId: null,
       firstName: first,
       lastName: rest.join(" "),

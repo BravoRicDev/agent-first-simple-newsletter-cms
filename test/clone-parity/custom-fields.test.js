@@ -288,4 +288,53 @@ describe("Clone API — Custom Fields (Onda A)", () => {
     const deleted = await deleteRes.json();
     assert.equal(deleted.deleted, true);
   });
+
+  // Parity ghl_id: round-trip su custom field (le folder NON hanno ghl_id,
+  // sono una feature puramente locale mai sincronizzata da GHL — nessun fix
+  // necessario lì).
+  test("Parity ghl_id: round-trip GET/PUT/DELETE col ghl_id reale + id esposto", async () => {
+    const createRes = await fetch(url("/custom-fields"), {
+      method: "POST",
+      headers: auth(),
+      body: JSON.stringify({ name: "RtField", dataType: "TEXT" }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()).customField;
+    assert.ok(created.id, "uuid assente");
+
+    const realGhlId = "ghlFIELDparity001";
+    await query(`UPDATE custom_fields SET ghl_id = $1 WHERE external_id = $2`, [realGhlId, created.id]);
+
+    const getRes = await fetch(url(`/custom-fields/${realGhlId}`), { headers: auth() });
+    assert.equal(getRes.status, 200);
+    const got = (await getRes.json()).customField;
+    assert.equal(got.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    const putRes = await fetch(url(`/custom-fields/${realGhlId}`), {
+      method: "PUT",
+      headers: auth(),
+      body: JSON.stringify({ name: "RtFieldUpdated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal((await putRes.json()).customField.name, "RtFieldUpdated");
+
+    const deleteRes = await fetch(url(`/custom-fields/${realGhlId}`), {
+      method: "DELETE",
+      headers: auth(),
+    });
+    assert.equal(deleteRes.status, 200);
+
+    const getAfterDel = await fetch(url(`/custom-fields/${realGhlId}`), { headers: auth() });
+    assert.equal(getAfterDel.status, 404);
+  });
+
+  test("Parity ghl_id: id malformato (300 char) → 400", async () => {
+    const res = await fetch(url(`/custom-fields/${"x".repeat(300)}`), { headers: auth() });
+    assert.equal(res.status, 400);
+  });
+
+  test("Parity ghl_id: id formato valido ma inesistente → 404", async () => {
+    const res = await fetch(url("/custom-fields/nonexistent-ghl-id"), { headers: auth() });
+    assert.equal(res.status, 404);
+  });
 });

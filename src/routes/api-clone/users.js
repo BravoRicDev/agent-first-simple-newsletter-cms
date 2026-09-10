@@ -20,8 +20,8 @@ import {
   updateTeam,
   deleteTeam,
 } from "../../services/agency-clone.js";
-import { sendError, requireUuid, isValidUuid, getPaging, sendList, getLocationId } from "./_helpers.js";
-import { findByExternalId } from "../../services/external-ids.js";
+import { sendError, requireUuid, requireAnyId, getPaging, sendList, getLocationId } from "./_helpers.js";
+import { findByExternalId, findByAnyId } from "../../services/external-ids.js";
 
 const router = Router();
 
@@ -149,10 +149,10 @@ router.post("/users/search", async (req, res, next) => {
 router.get("/users/:userId", async (req, res, next) => {
   try {
     const { userId } = req.params;
-    if (!requireUuid(userId, res)) return;
+    if (!requireAnyId(userId, res)) return;
 
-    const userRow = await findByExternalId("users", userId);
-    if (!userRow || userRow.site_id !== req.tenant.siteId) {
+    const userRow = await findByAnyId("users", req.tenant.siteId, userId);
+    if (!userRow) {
       return sendError(res, 404, "Utente non trovato");
     }
 
@@ -174,10 +174,10 @@ router.get("/users/:userId", async (req, res, next) => {
 router.put("/users/:userId", async (req, res, next) => {
   try {
     const { userId } = req.params;
-    if (!requireUuid(userId, res)) return;
+    if (!requireAnyId(userId, res)) return;
 
-    const userRow = await findByExternalId("users", userId);
-    if (!userRow || userRow.site_id !== req.tenant.siteId) {
+    const userRow = await findByAnyId("users", req.tenant.siteId, userId);
+    if (!userRow) {
       return sendError(res, 404, "Utente non trovato");
     }
 
@@ -199,10 +199,10 @@ router.put("/users/:userId", async (req, res, next) => {
 router.delete("/users/:userId", async (req, res, next) => {
   try {
     const { userId } = req.params;
-    if (!requireUuid(userId, res)) return;
+    if (!requireAnyId(userId, res)) return;
 
-    const userRow = await findByExternalId("users", userId);
-    if (!userRow || userRow.site_id !== req.tenant.siteId) {
+    const userRow = await findByAnyId("users", req.tenant.siteId, userId);
+    if (!userRow) {
       return sendError(res, 404, "Utente non trovato");
     }
 

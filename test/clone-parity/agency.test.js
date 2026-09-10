@@ -200,6 +200,48 @@ describe("Onda G — Agency clone", () => {
     assert.equal(res.data.statusCode, 400);
   });
 
+  // Parity ghl_id: round-trip su utente (le location/team NON hanno ghl_id,
+  // restano fuori scope).
+  test("Parity ghl_id: round-trip GET/PUT/DELETE utente col ghl_id reale", async () => {
+    const createRes = await fetch("/users", {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: "Rt",
+        lastName: "User",
+        email: `rtuser-${crypto.randomBytes(4).toString("hex")}@test.local`,
+        roles: ["collaboratore"],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = createRes.data.user;
+    assert.ok(created.id, "uuid assente");
+
+    const realGhlId = "ghlUSERparity001";
+    await query("UPDATE users SET ghl_id = $1 WHERE external_id = $2", [realGhlId, created.id]);
+
+    const getRes = await fetch(`/users/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.user.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    const putRes = await fetch(`/users/${realGhlId}`, {
+      method: "PUT",
+      body: JSON.stringify({ firstName: "RtUpdated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal(putRes.data.user.firstName, "RtUpdated");
+
+    const deleteRes = await fetch(`/users/${realGhlId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+
+    const getAfterDel = await fetch(`/users/${realGhlId}`);
+    assert.equal(getAfterDel.status, 404);
+  });
+
+  test("Parity ghl_id: id utente malformato (300 char) → 400", async () => {
+    const res = await fetch(`/users/${"x".repeat(300)}`);
+    assert.equal(res.status, 400);
+  });
+
   // ── TEAMS ────────────────────────────────────────────────────────────
 
   test("Team: create con member → list meta → get → update members → delete", async () => {

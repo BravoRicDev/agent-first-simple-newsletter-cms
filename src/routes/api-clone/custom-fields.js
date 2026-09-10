@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { sendError, sendList, requireUuid, getPaging, getLocationId } from "./_helpers.js";
+import { sendError, sendList, requireUuid, getPaging, getLocationId, requireAnyId } from "./_helpers.js";
 import * as customFieldsService from "../../services/custom-fields.js";
 import * as customFieldFoldersService from "../../services/custom-field-folders.js";
-import { findByExternalId } from "../../services/external-ids.js";
+import { findByExternalId, findByAnyId } from "../../services/external-ids.js";
 import { serializeCustomField, serializeCustomFieldList } from "../../serializers/custom-field.js";
 import { serializeFolder, serializeFolderList } from "../../serializers/custom-field-folder.js";
+import { publicId } from "../../services/external-ids.js";
 
 // Onda A — Custom fields/values/folders clone.
 // Contratto: docs/API_CLONE_MASTER_PLAN.md §5 onda A.
@@ -41,11 +42,12 @@ router.get("/custom-fields", async (req, res, next) => {
 
     let startIndex = 0;
     if (startAfterId) {
-      const idx = all.findIndex((r) => r.external_id === startAfterId);
+      const idx = all.findIndex((r) => r.external_id === startAfterId || (r.ghl_id && r.ghl_id === startAfterId));
       startIndex = idx >= 0 ? idx + 1 : 0;
     }
     const page = all.slice(startIndex, startIndex + limit);
-    const nextStartAfterId = startIndex + limit < total ? page[page.length - 1]?.external_id ?? null : null;
+    const lastRow = page[page.length - 1];
+    const nextStartAfterId = startIndex + limit < total ? (lastRow ? publicId(lastRow) : null) : null;
 
     const locationId = await getLocationId(req.tenant);
     const serialized = serializeCustomFieldList(page, locationId);
@@ -177,13 +179,13 @@ router.delete("/custom-fields/folder/:id", async (req, res, next) => {
   }
 });
 
-// GET /custom-fields/:id - Ottieni custom field per uuid esterno
+// GET /custom-fields/:id - Ottieni custom field per uuid esterno o ghl_id
 router.get("/custom-fields/:id", async (req, res, next) => {
   try {
-    const externalId = requireUuid(req.params.id, res);
+    const externalId = requireAnyId(req.params.id, res);
     if (!externalId) return;
 
-    const row = await findByExternalId("custom_fields", externalId);
+    const row = await findByAnyId("custom_fields", req.tenant.siteId, externalId);
     if (!row) {
       return sendError(res, 404, "Custom field non trovato");
     }
@@ -206,10 +208,10 @@ router.get("/custom-fields/:id", async (req, res, next) => {
 // PUT /custom-fields/:id - Aggiorna custom field
 router.put("/custom-fields/:id", async (req, res, next) => {
   try {
-    const externalId = requireUuid(req.params.id, res);
+    const externalId = requireAnyId(req.params.id, res);
     if (!externalId) return;
 
-    const row = await findByExternalId("custom_fields", externalId);
+    const row = await findByAnyId("custom_fields", req.tenant.siteId, externalId);
     if (!row) {
       return sendError(res, 404, "Custom field non trovato");
     }
@@ -259,10 +261,10 @@ router.put("/custom-fields/:id", async (req, res, next) => {
 // DELETE /custom-fields/:id - Elimina custom field
 router.delete("/custom-fields/:id", async (req, res, next) => {
   try {
-    const externalId = requireUuid(req.params.id, res);
+    const externalId = requireAnyId(req.params.id, res);
     if (!externalId) return;
 
-    const row = await findByExternalId("custom_fields", externalId);
+    const row = await findByAnyId("custom_fields", req.tenant.siteId, externalId);
     if (!row) {
       return sendError(res, 404, "Custom field non trovato");
     }

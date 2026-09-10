@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, buildMeta, sendList, getLocationId,
+  sendError, httpError, requireAnyId, getPaging, buildMeta, sendList, getLocationId,
 } from "./_helpers.js";
 import * as formsClone from "../../services/forms-clone.js";
 
@@ -52,12 +52,12 @@ router.get("/forms/submissions", async (req, res, next) => {
     const locationId = await getLocationId(req.tenant);
     const { limit, startAfterId } = getPaging(req.query);
 
-    // Risolvi formIds (CSV di uuid)
+    // Risolvi formIds (CSV di uuid o ghl_id reale)
     let formIds = [];
     if (req.query.formIds) {
       formIds = req.query.formIds.split(",").map(s => s.trim()).filter(s => s);
       for (const id of formIds) {
-        if (!isValidUuid(id)) return sendError(res, 400, "FormId non valido");
+        if (id.length > 255) return sendError(res, 400, "FormId non valido");
       }
     }
 
@@ -81,7 +81,7 @@ router.get("/forms/submissions", async (req, res, next) => {
 router.get("/forms/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const form = await formsClone.getForm(req.tenant.siteId, id, locationId);
@@ -95,7 +95,7 @@ router.get("/forms/:id", async (req, res, next) => {
 router.put("/forms/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -112,7 +112,7 @@ router.put("/forms/:id", async (req, res, next) => {
 
 router.delete("/forms/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await formsClone.deleteForm(req.tenant.siteId, id);

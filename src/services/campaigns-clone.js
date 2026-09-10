@@ -1,15 +1,23 @@
 import { query } from "../db.js";
-import { ensureExternalId, findByExternalId } from "./external-ids.js";
+import { findByAnyId, publicId } from "./external-ids.js";
 import { logger } from "./logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda E: Campagne broadcast, templates, subscriptions — clone API.
 // Serializzazione camelCase UUID, paginazione cursore, scheduling.
+//
+// Parity ghl_id: campagne e template accettano/espongono il ghl_id reale
+// del CRM sorgente quando presente — stesso pattern già applicato a
+// contatti/opportunità/calendari/conversazioni/tag/custom field/form/
+// survey/utenti. campaign_subscriptions NON ha ghl_id (relazione puramente
+// locale, mai sincronizzata come risorsa a sé da GHL): il suo id resta
+// UUID-only, ma campaignId/contactId nella risposta preferiscono comunque
+// il ghl_id reale della campagna/contatto collegato.
 // ─────────────────────────────────────────────────────────────────────────
 
 function serializeCampaign(row, locationId) {
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.clone_name || row.subject || "",
     subject: row.subject || "",
@@ -23,7 +31,7 @@ function serializeCampaign(row, locationId) {
 
 function serializeTemplate(row, locationId) {
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     type: row.type === "SMS" ? "SMS" : "Email",
     name: row.name || "",
@@ -37,8 +45,8 @@ function serializeTemplate(row, locationId) {
 function serializeSubscription(row) {
   return {
     id: row.external_id,
-    campaignId: row.campaign_external_id,
-    contactId: row.contact_external_id,
+    campaignId: row.campaign_public_id,
+    contactId: row.contact_public_id,
     status: row.status,
     addedAt: row.added_at ? row.added_at.toISOString() : null,
   };
@@ -51,9 +59,11 @@ export async function listCampaigns(siteId, { limit = 20, startAfterId = null },
   const params = [siteId];
 
   if (startAfterId) {
-    // Cursore: id > startAfterId (ordering by id, non by created_at)
-    sql += " AND id > (SELECT id FROM newsletter_campaigns WHERE external_id = $2 LIMIT 1)";
-    params.push(startAfterId);
+    const afterRow = await findByAnyId("newsletter_campaigns", siteId, startAfterId);
+    if (afterRow) {
+      sql += ` AND id > $${params.length + 1}`;
+      params.push(afterRow.id);
+    }
   }
 
   sql += " ORDER BY id ASC LIMIT $" + (params.length + 1);
@@ -68,7 +78,7 @@ export async function listCampaigns(siteId, { limit = 20, startAfterId = null },
 
   let nextStartAfterId = null;
   if (result.rows.length > limit && rows.length > 0) {
-    nextStartAfterId = rows[rows.length - 1].external_id;
+    nextStartAfterId = publicId(rows[rows.length - 1]);
   }
 
   return {
@@ -89,25 +99,18 @@ export async function createCampaign(siteId, { name, subject, content }, locatio
     [siteId, subjectVal, content || "", cloneName]
   );
 
-  const row = result.rows[0];
-  // Ensure external_id
-  if (!row.external_id) {
-    const externalId = await ensureExternalId("newsletter_campaigns", row.id);
-    row.external_id = externalId;
-  }
-
-  return serializeCampaign(row, locationId);
+  return serializeCampaign(result.rows[0], locationId);
 }
 
 export async function getCampaign(siteId, campaignExternalId, locationId) {
-  const row = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!row) return null;
   return serializeCampaign(row, locationId);
 }
 
 export async function updateCampaign(siteId, campaignExternalId, { subject, content }, locationId) {
-  const row = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!row) return null;
 
   const updates = {};
   if (subject !== undefined) updates.subject = subject;
@@ -131,16 +134,16 @@ export async function updateCampaign(siteId, campaignExternalId, { subject, cont
 }
 
 export async function deleteCampaign(siteId, campaignExternalId) {
-  const row = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!row || row.site_id !== siteId || row.status !== "draft") return 0;
+  const row = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!row || row.status !== "draft") return 0;
 
   const result = await query("DELETE FROM newsletter_campaigns WHERE id = $1", [row.id]);
   return result.rowCount;
 }
 
 export async function scheduleCampaign(siteId, campaignExternalId, scheduledAtIso, locationId) {
-  const row = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!row) return null;
 
   const scheduledAt = new Date(scheduledAtIso);
   const result = await query(
@@ -154,8 +157,8 @@ export async function scheduleCampaign(siteId, campaignExternalId, scheduledAtIs
 }
 
 export async function unscheduleCampaign(siteId, campaignExternalId, locationId) {
-  const row = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!row) return null;
 
   const result = await query(
     `UPDATE newsletter_campaigns SET status = 'draft', scheduled_at = NULL
@@ -168,8 +171,8 @@ export async function unscheduleCampaign(siteId, campaignExternalId, locationId)
 }
 
 export async function sendCampaignNow(siteId, campaignExternalId, locationId) {
-  const row = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!row || row.site_id !== siteId || (row.status !== "draft" && row.status !== "scheduled")) {
+  const row = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!row || (row.status !== "draft" && row.status !== "scheduled")) {
     return null;
   }
 
@@ -195,8 +198,11 @@ export async function listTemplates(siteId, { type = null, limit = 20, startAfte
   }
 
   if (startAfterId) {
-    sql += " AND id > (SELECT id FROM marketing_templates WHERE external_id = $" + (params.length + 1) + " LIMIT 1)";
-    params.push(startAfterId);
+    const afterRow = await findByAnyId("marketing_templates", siteId, startAfterId);
+    if (afterRow) {
+      sql += ` AND id > $${params.length + 1}`;
+      params.push(afterRow.id);
+    }
   }
 
   sql += " ORDER BY id ASC LIMIT $" + (params.length + 1);
@@ -215,7 +221,7 @@ export async function listTemplates(siteId, { type = null, limit = 20, startAfte
 
   let nextStartAfterId = null;
   if (result.rows.length > limit && rows.length > 0) {
-    nextStartAfterId = rows[rows.length - 1].external_id;
+    nextStartAfterId = publicId(rows[rows.length - 1]);
   }
 
   return {
@@ -235,24 +241,18 @@ export async function createTemplate(siteId, { name, type, subject, bodyHtml }, 
     [siteId, typeVal, name || "", subject || "", bodyHtml || ""]
   );
 
-  const row = result.rows[0];
-  if (!row.external_id) {
-    const externalId = await ensureExternalId("marketing_templates", row.id);
-    row.external_id = externalId;
-  }
-
-  return serializeTemplate(row, locationId);
+  return serializeTemplate(result.rows[0], locationId);
 }
 
 export async function getTemplate(siteId, templateExternalId, locationId) {
-  const row = await findByExternalId("marketing_templates", templateExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("marketing_templates", siteId, templateExternalId);
+  if (!row) return null;
   return serializeTemplate(row, locationId);
 }
 
 export async function updateTemplate(siteId, templateExternalId, { name, type, subject, bodyHtml }, locationId) {
-  const row = await findByExternalId("marketing_templates", templateExternalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("marketing_templates", siteId, templateExternalId);
+  if (!row) return null;
 
   const updates = {};
   if (name !== undefined) updates.name = name;
@@ -278,8 +278,8 @@ export async function updateTemplate(siteId, templateExternalId, { name, type, s
 }
 
 export async function deleteTemplate(siteId, templateExternalId) {
-  const row = await findByExternalId("marketing_templates", templateExternalId);
-  if (!row || row.site_id !== siteId) return 0;
+  const row = await findByAnyId("marketing_templates", siteId, templateExternalId);
+  if (!row) return 0;
 
   const result = await query("DELETE FROM marketing_templates WHERE id = $1", [row.id]);
   return result.rowCount;
@@ -288,11 +288,11 @@ export async function deleteTemplate(siteId, templateExternalId) {
 // Subscriptions
 
 export async function addContactToCampaign(siteId, contactExternalId, campaignExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
-  if (!contact || contact.site_id !== siteId) return null;
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
+  if (!contact) return null;
 
-  const campaign = await findByExternalId("newsletter_campaigns", campaignExternalId);
-  if (!campaign || campaign.site_id !== siteId) return null;
+  const campaign = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
+  if (!campaign) return null;
 
   const result = await query(
     `INSERT INTO campaign_subscriptions (site_id, campaign_id, contact_id, status)
@@ -302,21 +302,16 @@ export async function addContactToCampaign(siteId, contactExternalId, campaignEx
     [siteId, campaign.id, contact.id]
   );
 
-  const row = result.rows[0];
-  if (!row.external_id) {
-    await ensureExternalId("campaign_subscriptions", row.id);
-  }
-
   return serializeSubscription({
-    ...row,
-    campaign_external_id: campaign.external_id,
-    contact_external_id: contact.external_id,
+    ...result.rows[0],
+    campaign_public_id: publicId(campaign),
+    contact_public_id: publicId(contact),
   });
 }
 
 export async function listContactCampaigns(siteId, contactExternalId, locationId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
-  if (!contact || contact.site_id !== siteId) {
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
+  if (!contact) {
     return { campaigns: [], meta: { total: 0, nextPage: null, prevPage: null } };
   }
 
@@ -340,10 +335,10 @@ export async function listContactCampaigns(siteId, contactExternalId, locationId
 }
 
 export async function removeContactFromCampaign(siteId, contactExternalId, campaignExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
-  const campaign = await findByExternalId("newsletter_campaigns", campaignExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
+  const campaign = await findByAnyId("newsletter_campaigns", siteId, campaignExternalId);
 
-  if (!contact || contact.site_id !== siteId || !campaign || campaign.site_id !== siteId) {
+  if (!contact || !campaign) {
     return 0;
   }
 
@@ -356,8 +351,8 @@ export async function removeContactFromCampaign(siteId, contactExternalId, campa
 }
 
 export async function removeAllContactCampaigns(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
-  if (!contact || contact.site_id !== siteId) return 0;
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
+  if (!contact) return 0;
 
   const result = await query(
     "DELETE FROM campaign_subscriptions WHERE site_id = $1 AND contact_id = $2",

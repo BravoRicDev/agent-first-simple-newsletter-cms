@@ -258,4 +258,81 @@ describe("Onda E — Campagne clone", () => {
     assert.equal(checkRes.status, 200);
     assert.equal(checkRes.data.campaign.status, "sending");
   });
+
+  // ── Parity ghl_id ─────────────────────────────────────────────────────
+
+  test("Parity ghl_id: round-trip GET/PUT/DELETE campagna col ghl_id reale", async () => {
+    const createRes = await fetch("/campaigns", {
+      method: "POST",
+      body: JSON.stringify({ name: "RtCampaign", subject: "Rt Subject", content: "Rt" }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = createRes.data.campaign;
+    assert.ok(created.id, "uuid assente");
+
+    const realGhlId = "ghlCAMPAIGNparity001";
+    await query("UPDATE newsletter_campaigns SET ghl_id = $1 WHERE external_id = $2", [realGhlId, created.id]);
+
+    const getRes = await fetch(`/campaigns/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.campaign.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    const putRes = await fetch(`/campaigns/${realGhlId}`, {
+      method: "PUT",
+      body: JSON.stringify({ subject: "Rt Subject Updated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal(putRes.data.campaign.subject, "Rt Subject Updated");
+
+    const deleteRes = await fetch(`/campaigns/${realGhlId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+
+    const getAfterDel = await fetch(`/campaigns/${realGhlId}`);
+    assert.equal(getAfterDel.status, 404);
+  });
+
+  test("Parity ghl_id: id campagna malformato (300 char) → 400", async () => {
+    const res = await fetch(`/campaigns/${"x".repeat(300)}`);
+    assert.equal(res.status, 400);
+  });
+
+  test("Parity ghl_id: round-trip GET/PUT/DELETE template col ghl_id reale", async () => {
+    const createRes = await fetch("/templates", {
+      method: "POST",
+      body: JSON.stringify({ name: "RtTemplate", type: "Email", subject: "Rt", bodyHtml: "<p>Rt</p>" }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = createRes.data.template;
+    assert.ok(created.id, "uuid assente");
+
+    const realGhlId = "ghlTEMPLATEparity001";
+    await query("UPDATE marketing_templates SET ghl_id = $1 WHERE external_id = $2", [realGhlId, created.id]);
+
+    const getRes = await fetch(`/templates/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.template.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    const deleteRes = await fetch(`/templates/${realGhlId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+  });
+
+  test("Parity ghl_id: subscription espone campaignId/contactId reali quando presenti", async () => {
+    const campRes = await fetch("/campaigns", {
+      method: "POST",
+      body: JSON.stringify({ name: "SubGhl", subject: "Sub", content: "Test" }),
+    });
+    const created = campRes.data.campaign;
+    const realCampaignGhlId = "ghlCAMPAIGNforsub001";
+    await query("UPDATE newsletter_campaigns SET ghl_id = $1 WHERE external_id = $2", [realCampaignGhlId, created.id]);
+
+    const realContactGhlId = "ghlCONTACTforsub001";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE id = $2", [realContactGhlId, contact.id]);
+
+    const addRes = await fetch(`/contacts/${realContactGhlId}/campaigns/${realCampaignGhlId}`, {
+      method: "POST",
+    });
+    assert.equal(addRes.status, 201);
+    assert.equal(addRes.data.subscription.campaignId, realCampaignGhlId);
+    assert.equal(addRes.data.subscription.contactId, realContactGhlId);
+  });
 });

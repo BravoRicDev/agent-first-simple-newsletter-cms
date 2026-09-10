@@ -269,8 +269,16 @@ describe("Onda D — Surveys clone", () => {
     assert.equal(submitRes.data.submission.answers.feedback, "Good survey");
   });
 
-  test("Errore: uuid non valido → 400", async () => {
+  // Parity ghl_id: "not-a-uuid" è un formato di id valido (potrebbe essere
+  // un ghl_id reale) — requireAnyId/findByAnyId lo accettano e rispondono
+  // 404 (non trovato), non più 400.
+  test("Errore: id non-UUID ma valido come formato, nessun match → 404", async () => {
     const res = await fetch("/surveys/not-a-uuid");
+    assert.equal(res.status, 404);
+  });
+
+  test("Errore: id malformato (300 char) → 400", async () => {
+    const res = await fetch(`/surveys/${"x".repeat(300)}`);
     assert.equal(res.status, 400);
     assert(res.data.statusCode);
     assert(res.data.message);
@@ -281,5 +289,59 @@ describe("Onda D — Surveys clone", () => {
     const res = await fetch(`/surveys/${fakeId}`);
     assert.equal(res.status, 404);
     assert.equal(res.data.statusCode, 404);
+  });
+
+  test("Parity ghl_id: round-trip GET/PUT/DELETE survey col ghl_id reale", async () => {
+    const createRes = await fetch("/surveys", {
+      method: "POST",
+      body: JSON.stringify({ name: "RtSurvey" }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = createRes.data.survey;
+    assert.ok(created.id, "uuid assente");
+
+    const realGhlId = "ghlSURVEYparity001";
+    await query("UPDATE surveys SET ghl_id = $1 WHERE external_id = $2", [realGhlId, created.id]);
+
+    const getRes = await fetch(`/surveys/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.survey.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    const putRes = await fetch(`/surveys/${realGhlId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: "RtSurveyUpdated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal(putRes.data.survey.name, "RtSurveyUpdated");
+
+    const deleteRes = await fetch(`/surveys/${realGhlId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+
+    const getAfterDel = await fetch(`/surveys/${realGhlId}`);
+    assert.equal(getAfterDel.status, 404);
+  });
+
+  test("Parity ghl_id: submission espone surveyId/contactId reali quando presenti", async () => {
+    const createRes = await fetch("/surveys", {
+      method: "POST",
+      body: JSON.stringify({ name: "RtSurveyForSub" }),
+    });
+    const created = createRes.data.survey;
+    const realSurveyGhlId = "ghlSURVEYforsub001";
+    await query("UPDATE surveys SET ghl_id = $1 WHERE external_id = $2", [realSurveyGhlId, created.id]);
+
+    const realContactGhlId = "ghlCONTACTforsub001";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE id = $2", [realContactGhlId, contact.id]);
+
+    const submitRes = await fetch(`/surveys/${realSurveyGhlId}/submissions`, {
+      method: "POST",
+      body: JSON.stringify({
+        contactId: realContactGhlId,
+        answers: { feedback: "ghl_id round-trip" },
+      }),
+    });
+    assert.equal(submitRes.status, 201);
+    assert.equal(submitRes.data.submission.surveyId, realSurveyGhlId);
+    assert.equal(submitRes.data.submission.contactId, realContactGhlId);
   });
 });

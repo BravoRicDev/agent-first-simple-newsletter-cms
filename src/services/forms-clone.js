@@ -1,16 +1,21 @@
 import { query } from "../db.js";
-import { getExternalId } from "./external-ids.js";
+import { getExternalId, findByAnyId, publicId } from "./external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda C: Servizio forms per clone API.
 // Trasformazioni: camelCase (locationId, dateAdded, dateUpdated),
 // id esterno (uuid), slug autogenerato da name.
+//
+// Parity ghl_id: id form/submission/contatto collegato preferiscono il
+// ghl_id reale del CRM sorgente quando presente, con fallback all'UUID
+// interno — stesso pattern già applicato a contatti/opportunità/calendari/
+// conversazioni/tag/custom field.
 // ─────────────────────────────────────────────────────────────────────────
 
 export function serializeForm(row, locationId = null) {
   if (!row) return null;
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.name || "",
     dateAdded: row.created_at?.toISOString() || null,
@@ -25,9 +30,9 @@ export function serializeSubmission(row, locationId = null) {
   const lastName = data.lastName || data.last_name || "";
   const name = (firstName && lastName) ? `${firstName} ${lastName}` : null;
   return {
-    id: row.external_id,
-    formId: row.form_id_ext || null,
-    contactId: row.contact_id_ext || null,
+    id: publicId(row),
+    formId: publicId({ ghl_id: row.form_ghl_id, external_id: row.form_id_ext }),
+    contactId: publicId({ ghl_id: row.contact_ghl_id, external_id: row.contact_id_ext }),
     submittedAt: row.created_at?.toISOString() || null,
     name,
     submission: data,
@@ -43,13 +48,10 @@ function slugify(name) {
     .replace(/^-+|-+$/g, "");
 }
 
-// Risolvi formId uuid → form id interno.
-async function resolveFormInternalId(siteId, formIdUuid) {
-  if (!formIdUuid) return null;
-  const row = (await query(
-    `SELECT id FROM forms WHERE site_id = $1 AND external_id = $2`,
-    [siteId, formIdUuid]
-  )).rows[0];
+// Risolvi formId (UUID o ghl_id reale) → form id interno.
+async function resolveFormInternalId(siteId, formIdAny) {
+  if (!formIdAny) return null;
+  const row = await findByAnyId("forms", siteId, formIdAny);
   return row?.id || null;
 }
 
@@ -76,10 +78,7 @@ export async function listForms(siteId, filters = {}, locationId = null) {
 
   let orderClause = "ORDER BY f.id DESC";
   if (filters.startAfterId) {
-    const afterRow = (await query(
-      `SELECT id FROM forms WHERE external_id = $1 AND site_id = $2`,
-      [filters.startAfterId, siteId]
-    )).rows[0];
+    const afterRow = await findByAnyId("forms", siteId, filters.startAfterId);
     if (afterRow) {
       params.push(afterRow.id);
       where += ` AND f.id < $${params.length}`;
@@ -96,7 +95,7 @@ export async function listForms(siteId, filters = {}, locationId = null) {
   let nextStartAfterId = null;
   let items = rows.slice(0, limit);
   if (rows.length > limit) {
-    nextStartAfterId = rows[limit].external_id;
+    nextStartAfterId = publicId(rows[limit]);
   }
 
   const forms = items.map(row => serializeForm(row, locationId));
@@ -104,10 +103,7 @@ export async function listForms(siteId, filters = {}, locationId = null) {
 }
 
 export async function getForm(siteId, externalId, locationId = null) {
-  const row = (await query(
-    `SELECT * FROM forms WHERE site_id = $1 AND external_id = $2`,
-    [siteId, externalId]
-  )).rows[0];
+  const row = await findByAnyId("forms", siteId, externalId);
   return row ? serializeForm(row, locationId) : null;
 }
 
@@ -193,10 +189,10 @@ export async function listSubmissions(siteId, filters = {}, locationId = null) {
   const params = [siteId];
   let where = "fs.site_id = $1";
 
-  // Filtro formIds (CSV di uuid)
+  // Filtro formIds (CSV di uuid o ghl_id)
   if (filters.formIds && filters.formIds.length > 0) {
     const formInternalIds = await Promise.all(
-      filters.formIds.map(uuid => resolveFormInternalId(siteId, uuid))
+      filters.formIds.map(anyId => resolveFormInternalId(siteId, anyId))
     );
     const validIds = formInternalIds.filter(id => id !== null);
     if (validIds.length === 0) {
@@ -230,10 +226,7 @@ export async function listSubmissions(siteId, filters = {}, locationId = null) {
 
   let orderClause = "ORDER BY fs.created_at DESC";
   if (filters.startAfterId) {
-    const afterRow = (await query(
-      `SELECT id FROM form_submissions WHERE external_id = $1 AND site_id = $2`,
-      [filters.startAfterId, siteId]
-    )).rows[0];
+    const afterRow = await findByAnyId("form_submissions", siteId, filters.startAfterId);
     if (afterRow) {
       params.push(afterRow.id);
       where += ` AND fs.id < $${params.length}`;
@@ -244,8 +237,8 @@ export async function listSubmissions(siteId, filters = {}, locationId = null) {
   const limitParam = params.length;
   const rows = (await query(
     `SELECT fs.*,
-            f.external_id AS form_id_ext,
-            c.external_id AS contact_id_ext
+            f.external_id AS form_id_ext, f.ghl_id AS form_ghl_id,
+            c.external_id AS contact_id_ext, c.ghl_id AS contact_ghl_id
      FROM form_submissions fs
      LEFT JOIN forms f ON f.id = fs.form_id
      LEFT JOIN contacts c ON c.id = fs.contact_id
@@ -256,7 +249,7 @@ export async function listSubmissions(siteId, filters = {}, locationId = null) {
   let nextStartAfterId = null;
   let items = rows.slice(0, limit);
   if (rows.length > limit) {
-    nextStartAfterId = rows[limit].external_id;
+    nextStartAfterId = publicId(rows[limit]);
   }
 
   const submissions = items.map(row => serializeSubmission(row, locationId));

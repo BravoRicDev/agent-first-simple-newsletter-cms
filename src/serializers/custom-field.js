@@ -1,5 +1,7 @@
 // Serializer custom field: trasforma row DB in contratto API camelCase + uuid esterno + dataType enum.
 
+import { publicId } from "../services/external-ids.js";
+
 const TYPE_MAP = {
   text: "TEXT",
   textarea: "LARGE_TEXT",
@@ -32,7 +34,7 @@ function serializeOptions(options) {
 export function serializeCustomField(row, locationId) {
   if (!row) return null;
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.name,
     fieldKey: row.field_key,

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, sendList, getLocationId,
+  sendError, httpError, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as surveysClone from "../../services/surveys-clone.js";
 
@@ -42,7 +42,7 @@ router.post("/surveys", async (req, res, next) => {
 router.get("/surveys/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const survey = await surveysClone.getSurvey(req.tenant.siteId, id, locationId);
@@ -56,7 +56,7 @@ router.get("/surveys/:id", async (req, res, next) => {
 router.put("/surveys/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -75,7 +75,7 @@ router.put("/surveys/:id", async (req, res, next) => {
 
 router.delete("/surveys/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await surveysClone.deleteSurvey(req.tenant.siteId, id);
@@ -91,13 +91,13 @@ router.delete("/surveys/:id", async (req, res, next) => {
 router.get("/surveys/:id/submissions", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
-    // Recupera l'id interno del survey tramite external_id
-    const { findByExternalId } = await import("../../services/external-ids.js");
-    const surveyRow = await findByExternalId("surveys", id);
-    if (!surveyRow || surveyRow.site_id !== req.tenant.siteId) {
+    // Recupera l'id interno del survey tramite external_id o ghl_id reale
+    const { findByAnyId } = await import("../../services/external-ids.js");
+    const surveyRow = await findByAnyId("surveys", req.tenant.siteId, id);
+    if (!surveyRow) {
       return sendError(res, 404, "Sondaggio non trovato");
     }
 
@@ -118,13 +118,13 @@ router.get("/surveys/:id/submissions", async (req, res, next) => {
 router.post("/surveys/:id/submissions", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
-    // Recupera l'id interno del survey tramite external_id
-    const { findByExternalId } = await import("../../services/external-ids.js");
-    const surveyRow = await findByExternalId("surveys", id);
-    if (!surveyRow || surveyRow.site_id !== req.tenant.siteId) {
+    // Recupera l'id interno del survey tramite external_id o ghl_id reale
+    const { findByAnyId } = await import("../../services/external-ids.js");
+    const surveyRow = await findByAnyId("surveys", req.tenant.siteId, id);
+    if (!surveyRow) {
       return sendError(res, 404, "Sondaggio non trovato");
     }
 

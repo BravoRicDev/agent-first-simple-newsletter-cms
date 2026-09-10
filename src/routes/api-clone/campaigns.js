@@ -1,10 +1,10 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, sendList, getLocationId,
+  sendError, httpError, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as campaignsClone from "../../services/campaigns-clone.js";
 import { query } from "../../db.js";
-import { findByExternalId } from "../../services/external-ids.js";
+import { findByAnyId } from "../../services/external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda E: Campagne broadcast, templates, subscriptions — clone API.
@@ -45,7 +45,7 @@ router.post("/campaigns", async (req, res, next) => {
 router.get("/campaigns/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const campaign = await campaignsClone.getCampaign(req.tenant.siteId, id, locationId);
@@ -59,7 +59,7 @@ router.get("/campaigns/:id", async (req, res, next) => {
 router.put("/campaigns/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -77,7 +77,7 @@ router.put("/campaigns/:id", async (req, res, next) => {
 
 router.delete("/campaigns/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await campaignsClone.deleteCampaign(req.tenant.siteId, id);
@@ -91,7 +91,7 @@ router.delete("/campaigns/:id", async (req, res, next) => {
 router.put("/campaigns/:id/schedule", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const scheduledAt = req.body.scheduledAt;
@@ -108,7 +108,7 @@ router.put("/campaigns/:id/schedule", async (req, res, next) => {
 router.post("/campaigns/:id/unschedule", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const campaign = await campaignsClone.unscheduleCampaign(req.tenant.siteId, id, locationId);
@@ -122,7 +122,7 @@ router.post("/campaigns/:id/unschedule", async (req, res, next) => {
 router.post("/campaigns/:id/send", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const campaign = await campaignsClone.sendCampaignNow(req.tenant.siteId, id, locationId);
@@ -135,11 +135,11 @@ router.post("/campaigns/:id/send", async (req, res, next) => {
 
 router.get("/campaigns/:id/stats", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
-    const campaign = await findByExternalId("newsletter_campaigns", id);
-    if (!campaign || campaign.site_id !== req.tenant.siteId) {
+    const campaign = await findByAnyId("newsletter_campaigns", req.tenant.siteId, id);
+    if (!campaign) {
       return sendError(res, 404, "Campagna non trovata");
     }
 
@@ -206,7 +206,7 @@ router.post("/templates", async (req, res, next) => {
 router.get("/templates/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const template = await campaignsClone.getTemplate(req.tenant.siteId, id, locationId);
@@ -220,7 +220,7 @@ router.get("/templates/:id", async (req, res, next) => {
 router.put("/templates/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -240,7 +240,7 @@ router.put("/templates/:id", async (req, res, next) => {
 
 router.delete("/templates/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await campaignsClone.deleteTemplate(req.tenant.siteId, id);
@@ -257,7 +257,7 @@ router.delete("/templates/:id", async (req, res, next) => {
 router.get("/contacts/:contactId/campaigns", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const result = await campaignsClone.listContactCampaigns(req.tenant.siteId, contactId, locationId);
@@ -269,9 +269,9 @@ router.get("/contacts/:contactId/campaigns", async (req, res, next) => {
 
 router.post("/contacts/:contactId/campaigns/:campaignId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const campaignId = requireUuid(req.params.campaignId, res);
+    const campaignId = requireAnyId(req.params.campaignId, res);
     if (!campaignId) return;
 
     const subscription = await campaignsClone.addContactToCampaign(
@@ -288,7 +288,7 @@ router.post("/contacts/:contactId/campaigns/:campaignId", async (req, res, next)
 
 router.delete("/contacts/:contactId/campaigns/removeAll", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const removed = await campaignsClone.removeAllContactCampaigns(req.tenant.siteId, contactId);
@@ -300,9 +300,9 @@ router.delete("/contacts/:contactId/campaigns/removeAll", async (req, res, next)
 
 router.delete("/contacts/:contactId/campaigns/:campaignId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const campaignId = requireUuid(req.params.campaignId, res);
+    const campaignId = requireAnyId(req.params.campaignId, res);
     if (!campaignId) return;
 
     const count = await campaignsClone.removeContactFromCampaign(
