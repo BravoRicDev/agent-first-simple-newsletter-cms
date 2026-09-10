@@ -387,4 +387,85 @@ describe("Onda G — Agency clone", () => {
     const missing = await fetch("/locations/ghlLocationIdMancante");
     assert.equal(missing.status, 404);
   });
+
+  // ── Round 19: GET /locations/{id} serve il payload GHL REALE ──────────
+  // ghl_location_info.raw è la risposta integrale catturata dal source-sync
+  // dal GET /locations/{id} del sorgente (campi che la shape locale ridotta
+  // non ha: timezone, settings, social, business, brandId, currency,
+  // dateAdded, permissions...). Con sync presente va servito quello,
+  // byte-per-byte: è il caso d'uso reale (siti 21/22 sincronizzati da GHL).
+
+  test("Round 19: location sincronizzata → GET /locations/:id restituisce il raw GHL integrale", async () => {
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Sede con sync" }),
+    });
+    assert.equal(createRes.status, 201);
+    const genLocationId = createRes.data.location.id;
+
+    const siteRow = (await query(
+      "SELECT id FROM sites WHERE location_external_id = $1",
+      [genLocationId]
+    )).rows[0];
+    assert.ok(siteRow, "site appena creato deve esistere");
+
+    // Payload REALE stile risposta GHL GET /locations/{id}
+    const rawGhlLocation = {
+      id: genLocationId,
+      name: "Sede con sync",
+      address: "254 Chapman Road",
+      city: "Newark",
+      state: "Delaware",
+      postalCode: "19702",
+      country: "US",
+      phone: "+393515029767",
+      email: "sede@example.com",
+      website: "EXAMPLE LLC",
+      timezone: "Europe/Madrid",
+      currency: "EUR",
+      brandId: "oPjpulWqypReZ6qgCM72",
+      companyId: "cmpGHL000000000001",
+      social: { facebookUrl: "", googlePlacesId: "gp123" },
+      business: { city: "Newark", timezone: "Europe/Madrid" },
+      settings: { saasSettings: { saasMode: "not_activated" } },
+      dateAdded: "2026-08-01T10:00:00.000Z",
+    };
+    await query(
+      `INSERT INTO ghl_location_info
+         (site_id, ghl_id, name, address, city, state, postal_code, country,
+          phone, email, website, timezone, company_id, raw, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())`,
+      [
+        siteRow.id, genLocationId, rawGhlLocation.name, rawGhlLocation.address,
+        rawGhlLocation.city, rawGhlLocation.state, rawGhlLocation.postalCode,
+        rawGhlLocation.country, rawGhlLocation.phone, rawGhlLocation.email,
+        rawGhlLocation.website, rawGhlLocation.timezone, rawGhlLocation.companyId,
+        JSON.stringify(rawGhlLocation),
+      ]
+    );
+
+    // GET per location id → il raw INTEGRALE (deep-equal: nessun campo
+    // perduto, nessuna rinomina): parità byte-per-byte col sorgente.
+    const getRes = await fetch(`/locations/${genLocationId}`);
+    assert.equal(getRes.status, 200);
+    assert.deepEqual(getRes.data.location, rawGhlLocation, "risposta = payload GHL reale integrale");
+    // Campi che la shape locale ridotta NON avrebbe mai:
+    assert.equal(getRes.data.location.timezone, "Europe/Madrid");
+    assert.equal(getRes.data.location.settings.saasSettings.saasMode, "not_activated");
+    assert.equal(getRes.data.location.social.googlePlacesId, "gp123");
+  });
+
+  test("Round 19: location SENZA sync → fallback shape locale invariata (no regressione)", async () => {
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Sede senza sync" }),
+    });
+    assert.equal(createRes.status, 201);
+    const getRes = await fetch(`/locations/${createRes.data.location.id}`);
+    assert.equal(getRes.status, 200);
+    // Shape locale: id/locationId/name/businessInfo/dateAdded, NON i campi
+    // GHL-only (timezone ecc.) che arrivano solo col raw sincronizzato.
+    assert.ok(getRes.data.location.businessInfo, "shape locale con businessInfo");
+    assert.equal(getRes.data.location.timezone, undefined, "campi GHL-only assenti senza sync");
+  });
 });

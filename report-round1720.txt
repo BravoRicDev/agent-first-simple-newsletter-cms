@@ -1,0 +1,145 @@
+================================================================================
+REPORT ROUND 17-20 — Pacchetto ghl-parity (zip 69826ccf-ghlparityround1720.zip)
+================================================================================
+Data integrazione: 2026-09-10
+HEAD del repo al momento dell'integrazione: 728a129 "Clone-API: parità doppio
+id round 13-16" (round 13-16 GIA COMMITTATI da Claude dopo il report precedente)
+Integrazione nel working tree reale + verifica qui: SENZA commit/push/deploy.
+
+--------------------------------------------------------------------------------
+0. PRE-VERIFICA (deriva del repo — attenzione richiesta)
+--------------------------------------------------------------------------------
+Il repo si ERA evoluto rispetto all'ultimo pacchetto: i round 13-16 non erano
+più nel working tree ma erano stati COMMITTATI (HEAD 728a129). Il pacchetto
+round 17-20 dichiara base = HEAD locale opencode "2c6c3a6, il round 16" + 4
+commit. Verificato che il contenuto "before" atteso dal pacchetto coincide col
+nostro HEAD corrente per i file SOVRAPPOSTI ai round 13-16:
+ - src/routes/api-clone/index.js  : diff SOLO additivo (import+use funnels/payments);
+   il contesto mostra workflows (round 16) gia presente => base allineata.
+ - src/services/agency-clone.js   : diff toccha SOLO getLocationByIdOrExternalId
+   (aggiunge blocco raw ghl_location_info, round 19); serializeLocation/
+   resolveSiteInternalId/finder utenti (round 13-16/15) intatti nel contesto.
+ - test/clone-parity/agency.test.js: diff aggiunge SOLO i 2 test round 19; il
+   test round 15 "Parity location: id GHL reale" resta nel contesto => nessuna
+   perdita.
+ - src/routes/api-clone/custom-fields.js, src/serializers/custom-field.js,
+   test/clone-parity/custom-fields.test.js: erano fermi a round 12 (non toccati
+   da 13-16) => il diff del pacchetto parte da quello stesso stato.
+I 4 file nuovi (funnels.js, payments.js, funnels.test.js, payments.test.js) non
+esistevano. NESSUN file del pacchetto perdeva lavoro dei round 13-16.
+
+Verifica sicurezza anti-perdita-dati (come da richiesta):
+ - Il pacchetto NON contiene NESSUNO dei 3 file sensibili
+   (src/services/source-sync/clone-sibling.js, .../mappers/contacts.js,
+   .../mappers/calendars.js) NE' src/services/external-ids.js.
+ - Dopo l'applicazione `git status --short src/services/source-sync/
+   src/services/external-ids.js` = VUOTO: paginateSearchSorted,
+   earlyStopEnabled, consecutiveUnchanged, clone*FromSibling e la base
+   findByAnyId/publicId/WHITELIST_TABLES restano INVARIATI.
+
+Verifica schema (prima di scrivere, per le 4 risorse):
+ - ghl_funnels          : id, site_id, ghl_id, name, steps JSONB, created_at,
+                          updated_at; NO external_id proprio => mirror, id=ghl_id.
+ - ghl_custom_values    : id, site_id, ghl_id, name, value, ...; NO external_id
+                          proprio => id=ghl_id (customValues dentro GET customFields).
+ - ghl_location_info    : site_id PRIMARY KEY (un record per sito), raw JSONB,
+                          ghl_id, name/address/.../timezone/company_id/updated_at.
+                          => nessuna risoluzione doppio-id necessaria.
+ - payment_links        : id, site_id, external_id (UUID DEFAULT gen_random_uuid),
+                          ghl_id, title, amount, currency, contact_email, status,
+                          stripe_url, token, description, paid_at, created_at,
+                          updated_at => VERO doppio id (findByAnyId/publicId).
+   (WHITELIST_TABLES contiene gia' payment_links: findByAnyId ammesso.)
+
+--------------------------------------------------------------------------------
+1. BUG COLMATI / FIX E RISORSE AGGIUNTE (per round / file)
+--------------------------------------------------------------------------------
+
+ROUND 17 — FUNNELS (risorsa NUOVA, sola lettura)
+ - src/routes/api-clone/funnels.js (NUOVO):
+     GET /funnels (lista + cursore su ghl_id, site-scoped UNIQUE(site_id,ghl_id))
+     e GET /funnels/:funnelId; steps JSONB serviti integrali. Id pubblico =
+     ghl_id REALE diretto (mirror puro, niente findByAnyId/publicId).
+     POST/PUT/DELETE assenti (parita ingannevole: funnel = pubblicazione editor GHL).
+ - src/routes/api-clone/index.js: import + router.use(funnelsCloneRoutes).
+
+ROUND 18 — CUSTOM VALUES (integrato in endpoint ESISTENTE, nessuna nuova route)
+ - src/serializers/custom-field.js: aggiunta serializeCustomValue()
+     { id: ghl_id reale, name, value } (nessun external_id proprio).
+ - src/routes/api-clone/custom-fields.js: GET /custom-fields ora risponde
+     { customFields, customValues, meta } — customValues sempre presente (anche
+     se vuota), letto da ghl_custom_values SITE-SCOPED, ORDER BY id. Rimossa la
+     chiamata sendList e costruita la risposta a mano con buildMeta per agganciare
+     la chiave aggiuntiva senza rompere customFields/meta gia contrattualizzati.
+     (Backward-compatible: test esistenti su customFields+meta restano verdi.)
+
+ROUND 19 — LOCATION INFO (upgrade endpoint esistente)
+ - src/services/agency-clone.js: in getLocationByIdOrExternalId, DOPO la
+     risoluzione del site, se esiste una riga ghl_location_info.raw non vuota
+     per quel site_id viene SERVITO QUEL PAYLOAD GHL INTEGRALE (~20 campi extra:
+     timezone, settings, social, business, brandId, currency, dateAdded...)
+     invece della shape locale ridotta. Altrimenti fallback a serializeLocation
+     (nessuna regressione per location create via API nostra / sync mai eseguito).
+ - PUT /:id/business-info: comportamento invariato (override puramente locale),
+     documentato.
+
+ROUND 20 — PAYMENT LINKS (risorsa NUOVA, sola lettura, doppio id classico)
+ - src/routes/api-clone/payments.js (NUOVO):
+     GET /payments (lista + cursore con findByAnyId/publicId, site-scoped) e
+     GET /payments/:paymentId (risolve sia UUID interno sia ghl_id reale).
+     serializePayment espone id=publicId(row) (ghl_id preferito, fallback UUID),
+     url=stripe_url, NON espone il campo interno `token`. POST/PUT/DELETE assenti
+     (link reale emesso solo dal processor sorgente).
+ - src/routes/api-clone/index.js: import + router.use(paymentsCloneRoutes).
+
+--------------------------------------------------------------------------------
+2. OSSERVAZIONI / NOTE (non modificati)
+--------------------------------------------------------------------------------
+ - payment_links superficie PRONTA ma 0 righe in produzione: il sorgente
+   GET /payments/ e' bloccato da permesso IAM lato GHL (limitazione nota, non
+   risolvibile qui). I dati fluiranno da soli appena sbloccato, senza modifiche.
+ - ghl_custom_values sul conto sorgente al momento della verifica aveva 0 valori;
+   il comportamento di lettura e' comunque testato seminando righe locali.
+ - [PRE-ESISTENTE, non introdotto qui] GET/PUT /locations/:id risolvono la
+   location con lookup GLOBALE (external_id::text OR location_external_id) senza
+   confronto con req.tenant. Non toccato dal pacchetto ne' da questi round;
+   segnalato nel report precedente (round 13-16) come follow-up consigliato.
+ - Tutti i 4 round restano SOLA LETTURA dove il CMS non puo' produrre la stessa
+   entita' reale: scelta deliberata e coerente col pattern round 16 (workflows).
+
+--------------------------------------------------------------------------------
+3. VERIFICHE ESEGUITE
+--------------------------------------------------------------------------------
+A) node --check sui 10 file .js toccati (6 src + 4 test): OK, 0 errori.
+B) Ambiente di test ISOLATO (NESSUN impatto su produzione):
+   - Container throwaway proprio: docker run ... postgres:16-alpine
+     name=opencode-pg-r1720, host port 55462, db r1720_test.
+   - DATABASE_URL passato inline (dotenv non sovrascrive env gia' impostato):
+     il DB di produzione (gestione-siti-riccardom-db-1) MAI connesso; rimasto
+     "Up 2 days (healthy)" per tutta l'esecuzione.
+   - db/migrate.js eseguito sul throwaway: "Migrazioni completate" (fino a 128);
+     tabelle ghl_funnels/ghl_custom_values/ghl_location_info/payment_links/
+     ghl_workflows verificate presenti. Nessuna nuova migrazione richiesta.
+   - Container throwaway rimosso al termine.
+C) Suite pertinenti ai 4 round (funnels, payments, custom-fields, agency):
+   => 39 test, 4 suite, pass 39/39, fail 0.
+D) SUITE clone-parity COMPLETA (19 file): `node --test test/clone-parity/*.test.js`
+   => 189 test, 19 suite, pass 189/189, fail 0 (coerente col claim del pacchetto).
+   Include regression-guard: i test dei round 13-16 (commerce, workflows,
+   conversazioni, memberships, location round 15, ecc.) restano tutti verdi,
+   a conferma che i file sovrapposti non hanno perso nulla.
+E) Suite source-sync (conferma no-regressione sui file sensibili NON toccati):
+   => pass 14 / fail 5. STESSI 5 fallimenti PRE-ESISTENTI (mappers M1 +
+   opps/cal/conv) gia' riscontrati su baseline e9a337b/728a129; il pacchetto
+   non tocca alcun file source-sync ne' external-ids.js (verificato git status),
+   quindi non sono regressioni introdotte da questi round.
+
+--------------------------------------------------------------------------------
+4. STATO FINALE
+--------------------------------------------------------------------------------
+ - 6 file tracked MODIFICATI + 4 file NUOVI nel working tree.
+   NESSUN commit, NESSUN push, NESSUN deploy (in carico a Claude).
+ - pkg-round1720/ rimosso; zip 69826ccf-ghlparityround1720.zip rimosso;
+   cartella opencode-handoff/ rimossa (era vuota dopo il zip).
+ - Container Postgres throwaway (opencode-pg-r1720) rimosso; produzione mai toccata.
+================================================================================

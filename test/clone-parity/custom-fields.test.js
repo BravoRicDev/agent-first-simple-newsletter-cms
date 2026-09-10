@@ -337,4 +337,55 @@ describe("Clone API — Custom Fields (Onda A)", () => {
     const res = await fetch(url("/custom-fields/nonexistent-ghl-id"), { headers: auth() });
     assert.equal(res.status, 404);
   });
+
+  // ── Round 18: CUSTOM VALUES dentro GET /custom-fields ─────────────────
+  // GHL serve i custom values nella STESSA risposta di GET /customFields/
+  // (chiave `customValues`). ghl_custom_values è mirror del sorgente:
+  // nessun external_id proprio → id = ghl_id reale, niente doppio id.
+  // Nessun endpoint separato /customValues/:id in GHL → niente da fixare
+  // in lettura singola; POST/PUT/DELETE values non esposti (motivi nel
+  // commit: tabella mirror senza id scrivibile stabile + sorgente account
+  // con 0 valori, impossibile verificare una scrittura contro il reale).
+
+  test("Round 18: GET /custom-fields include customValues con ghl_id reale e scope per sito", async () => {
+    const other = await createTestSite("CF Values Other");
+
+    // ghl_id casuali per run: il volume di test persiste tra esecuzioni e
+    // ghl_custom_values ha UNIQUE(site_id, ghl_id)
+    const cv1Id = "cvA" + crypto.randomBytes(8).toString("hex");
+    const cv2Id = "cvB" + crypto.randomBytes(8).toString("hex");
+    const cvOtherId = "cvX" + crypto.randomBytes(8).toString("hex");
+
+    // 2 valori sul nostro sito (ghl_id reali stile GHL) + 1 su altro sito
+    await query(
+      `INSERT INTO ghl_custom_values (site_id, ghl_id, name, value)
+       VALUES ($1, $2, $3, $4), ($1, $5, $6, $7), ($8, $9, $10, $11)`,
+      [
+        siteA.id, cv1Id, "Provenienza", "Annuncio FB",
+        cv2Id, "Fonte", "Referral",
+        other.id, cvOtherId, "Non deve vedersi", "x",
+      ]
+    );
+
+    const res = await fetch(url("/custom-fields"), { headers: auth() });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+
+    // customFields continua a rispondere (nessuna regressione) + meta
+    assert(Array.isArray(body.customFields));
+    assert(body.meta);
+
+    // customValues presente, SOLO valori del proprio sito, id = ghl_id reale
+    assert(Array.isArray(body.customValues), "chiave customValues sempre presente (come GHL)");
+    assert.equal(body.customValues.length, 2, "solo i valori del sito corrente");
+    const v1 = body.customValues.find((v) => v.id === cv1Id);
+    assert.ok(v1, "valore presente con ghl_id REALE come id");
+    assert.equal(v1.name, "Provenienza");
+    assert.equal(v1.value, "Annuncio FB");
+    assert.equal(
+      body.customValues.some((v) => v.id === cvOtherId),
+      false,
+      "valore di altro sito NON visibile"
+    );
+  });
 });

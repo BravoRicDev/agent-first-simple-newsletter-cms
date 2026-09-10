@@ -48,3 +48,17 @@ export function serializeCustomField(row, locationId) {
 export function serializeCustomFieldList(rows, locationId) {
   return rows.map(row => serializeCustomField(row, locationId));
 }
+
+// Round 18: Custom VALUES GHL (tabella ghl_custom_values, mirror del
+// sorgente GET /locations/{id}/customValues). Verificato su schema reale:
+// nessun external_id proprio → id pubblico = ghl_id REALE di GHL, niente
+// doppio id. GHL serve i valori dentro la stessa risposta di
+// GET /customFields/ (chiave `customValues`), non ha un endpoint
+// /customValues/:id separato.
+export function serializeCustomValue(row) {
+  return {
+    id: row.ghl_id,
+    name: row.name || "",
+    value: row.value || "",
+  };
+}

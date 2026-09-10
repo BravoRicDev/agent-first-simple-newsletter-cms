@@ -54,6 +54,24 @@ export async function getLocationByIdOrExternalId(identifier) {
 
   if (!row) return null;
 
+  // Round 19 — parità col GET /locations/{id} di GHL: se il source-sync
+  // "location-info" ha catturato il payload REALE della location (tabella
+  // ghl_location_info.raw = risposta integrale del sorgente, inclusi i
+  // campi che la nostra shape ridotta NON ha: timezone, settings, social,
+  // business, brandId, currency, dateAdded...), si serve QUELLO integrale.
+  // Un'automazione che leggeva il JSON di GHL continua a funzionare
+  // cambiando solo l'endpoint. Senza sync (location create via API nostra,
+  // o sync mai eseguito) fallback alla shape locale.
+  // PUT /:id/business-info resta l'override LOCALE (endpoint nostro, non
+  // esiste in GHL): dopo il próximo giro di sync il raw torna autorità.
+  const info = (await query(
+    "SELECT raw FROM ghl_location_info WHERE site_id = $1",
+    [row.id]
+  )).rows[0];
+  if (info && info.raw && typeof info.raw === "object" && Object.keys(info.raw).length > 0) {
+    return info.raw;
+  }
+
   return serializeLocation(row);
 }
 

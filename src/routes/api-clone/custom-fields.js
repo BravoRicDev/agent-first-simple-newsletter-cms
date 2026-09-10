@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { sendError, sendList, requireUuid, getPaging, getLocationId, requireAnyId } from "./_helpers.js";
+import { query } from "../../db.js";
+import { sendError, sendList, requireUuid, getPaging, getLocationId, requireAnyId, buildMeta } from "./_helpers.js";
 import * as customFieldsService from "../../services/custom-fields.js";
 import * as customFieldFoldersService from "../../services/custom-field-folders.js";
 import { findByExternalId, findByAnyId } from "../../services/external-ids.js";
-import { serializeCustomField, serializeCustomFieldList } from "../../serializers/custom-field.js";
+import { serializeCustomField, serializeCustomFieldList, serializeCustomValue } from "../../serializers/custom-field.js";
 import { serializeFolder, serializeFolderList } from "../../serializers/custom-field-folder.js";
 import { publicId } from "../../services/external-ids.js";
 
@@ -51,7 +52,24 @@ router.get("/custom-fields", async (req, res, next) => {
 
     const locationId = await getLocationId(req.tenant);
     const serialized = serializeCustomFieldList(page, locationId);
-    sendList(res, "customFields", serialized, total, nextStartAfterId);
+
+    // Round 18: GHL serve i CUSTOM VALUES dentro la STESSA risposta di
+    // GET /customFields/ (chiave `customValues`, sempre presente anche se
+    // vuota): https://marketplace.gohighlevel.com/docs/ghl/custom-fields/custom-fields
+    // La tabella ghl_custom_values è il mirror del sorgente (mapper
+    // "custom-values"): nessun external_id proprio → id = ghl_id reale.
+    // Nessun cursore per i valori: GHL li restituisce tutti in una lista
+    // (volumi tipici: decine, mai osservata paginazione sul sorgente).
+    const valueRows = (await query(
+      "SELECT ghl_id, name, value FROM ghl_custom_values WHERE site_id = $1 ORDER BY id ASC",
+      [req.tenant.siteId]
+    )).rows;
+
+    res.json({
+      customFields: serialized,
+      customValues: valueRows.map(serializeCustomValue),
+      meta: buildMeta(total, nextStartAfterId),
+    });
   } catch (err) {
     next(err);
   }
