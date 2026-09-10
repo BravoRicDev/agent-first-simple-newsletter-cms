@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, sendList, getLocationId,
+  sendError, httpError, isValidUuid, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as invoicesClone from "../../services/invoices-clone.js";
 
@@ -49,7 +49,7 @@ router.post("/invoices", async (req, res, next) => {
 router.get("/invoices/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const invoice = await invoicesClone.getInvoice(req.tenant.siteId, id, locationId);
@@ -63,7 +63,7 @@ router.get("/invoices/:id", async (req, res, next) => {
 router.put("/invoices/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -82,7 +82,7 @@ router.put("/invoices/:id", async (req, res, next) => {
 
 router.delete("/invoices/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await invoicesClone.deleteInvoice(req.tenant.siteId, id);

@@ -1,14 +1,16 @@
 import { query } from "../db.js";
-import { ensureExternalId, findByExternalId } from "./external-ids.js";
+import { findByAnyId, publicId } from "./external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda H: Invoices — CRUD con items, coupon discount come riga negativa.
 // Numero progressivo per sito: 'SITE<id>-<counter>'.
+// "Doppio id": ghl_id reale preferito all'UUID interno in output e in
+// accettazione input (findByAnyId/publicId).
 // ─────────────────────────────────────────────────────────────────────────
 
 function serializeItem(row) {
   return {
-    id: row.external_id,
+    id: publicId(row),
     description: row.description || "",
     quantity: Number(row.quantity) || 1,
     unitPrice: Number(row.unit_price) || 0,
@@ -16,12 +18,24 @@ function serializeItem(row) {
   };
 }
 
+// Risolve l'id pubblico (ghl_id reale, fallback UUID) del contatto a cui la
+// fattura è collegata — stesso pattern "doppio id" della fattura stessa.
+async function contactPublicId(contactInternalId) {
+  if (!contactInternalId) return null;
+  const c = (await query(
+    "SELECT external_id, ghl_id FROM contacts WHERE id = $1",
+    [contactInternalId]
+  )).rows[0];
+  if (!c) return null;
+  return (c.ghl_id && String(c.ghl_id).trim()) || c.external_id;
+}
+
 function serializeInvoice(row, locationId, items = []) {
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     invoiceNumber: row.invoice_number || "",
-    contactId: row.contact_external_id || null,
+    contactId: row.contact_public_id || null,
     status: row.status || "draft",
     currency: row.currency || "EUR",
     issueDate: row.issue_date ? row.issue_date.toISOString().split("T")[0] : null,
@@ -55,9 +69,9 @@ export async function listInvoices(siteId, { status = null, contactId = null, li
   }
 
   if (contactId) {
-    // contactId è un UUID (contact external_id)
+    // contactId può essere l'UUID interno O il ghl_id reale del contatto
     const contact = await query(
-      "SELECT id FROM contacts WHERE external_id = $1 AND site_id = $2 LIMIT 1",
+      "SELECT id FROM contacts WHERE site_id = $2 AND (external_id::text = $1 OR ghl_id = $1) LIMIT 1",
       [contactId, siteId]
     );
     if (contact.rows.length > 0) {
@@ -70,9 +84,10 @@ export async function listInvoices(siteId, { status = null, contactId = null, li
   }
 
   if (startAfterId) {
+    // Cursore site-scoped: accetta sia UUID interno sia ghl_id reale
     const prev = (await query(
-      "SELECT id FROM invoices WHERE external_id = $1 LIMIT 1",
-      [startAfterId]
+      "SELECT id FROM invoices WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2) LIMIT 1",
+      [siteId, startAfterId]
     )).rows[0];
     if (prev) {
       params.push(prev.id);
@@ -98,7 +113,7 @@ export async function listInvoices(siteId, { status = null, contactId = null, li
 
   if (contactId) {
     const contact = await query(
-      "SELECT id FROM contacts WHERE external_id = $1 AND site_id = $2 LIMIT 1",
+      "SELECT id FROM contacts WHERE site_id = $2 AND (external_id::text = $1 OR ghl_id = $1) LIMIT 1",
       [contactId, siteId]
     );
     if (contact.rows.length > 0) {
@@ -117,11 +132,8 @@ export async function listInvoices(siteId, { status = null, contactId = null, li
         [inv.id]
       )).rows;
 
-      // Aggiungi contact_external_id per serializzazione
-      if (inv.contact_id) {
-        const contactRow = (await query("SELECT external_id FROM contacts WHERE id = $1", [inv.contact_id])).rows[0];
-        inv.contact_external_id = contactRow ? contactRow.external_id : null;
-      }
+      // Aggiungi contact_public_id per serializzazione (ghl_id reale, fallback UUID)
+      inv.contact_public_id = await contactPublicId(inv.contact_id);
 
       return serializeInvoice(inv, locationId, itemRows);
     })
@@ -129,7 +141,7 @@ export async function listInvoices(siteId, { status = null, contactId = null, li
 
   let nextStartAfterId = null;
   if (result.rows.length > limit && rows.length > 0) {
-    nextStartAfterId = rows[rows.length - 1].external_id;
+    nextStartAfterId = publicId(rows[rows.length - 1]);
   }
 
   return {
@@ -148,7 +160,7 @@ export async function createInvoice(siteId, { contactId, items, dueDate, notes, 
 
   let contactRow = null;
   if (contactId) {
-    contactRow = await findByExternalId("contacts", contactId);
+    contactRow = await findByAnyId("contacts", siteId, contactId);
     if (!contactRow || contactRow.site_id !== siteId) {
       const err = new Error("Contatto non trovato");
       err.status = 404;
@@ -195,9 +207,6 @@ export async function createInvoice(siteId, { contactId, items, dueDate, notes, 
   );
 
   const invoiceRow = invoiceResult.rows[0];
-  if (!invoiceRow.external_id) {
-    await ensureExternalId("invoices", invoiceRow.id);
-  }
 
   // Inserisci items
   let itemRows = [];
@@ -209,11 +218,7 @@ export async function createInvoice(siteId, { contactId, items, dueDate, notes, 
        RETURNING *`,
       [invoiceRow.id, item.description || "", item.quantity || 1, item.unitPrice || 0, itemTotal]
     );
-    const ir = itemResult.rows[0];
-    if (!ir.external_id) {
-      await ensureExternalId("invoice_items", ir.id);
-    }
-    itemRows.push(ir);
+    itemRows.push(itemResult.rows[0]);
   }
 
   // Aggiungi riga sconto se presente
@@ -224,28 +229,16 @@ export async function createInvoice(siteId, { contactId, items, dueDate, notes, 
        RETURNING *`,
       [invoiceRow.id, `Sconto: ${couponRow.code}`, 1, -discountAmount, -discountAmount]
     );
-    const dr = discountResult.rows[0];
-    if (!dr.external_id) {
-      await ensureExternalId("invoice_items", dr.id);
-    }
-    itemRows.push(dr);
+    itemRows.push(discountResult.rows[0]);
   }
 
-  const invoiceRowUpdated = (await query(
-    "SELECT * FROM invoices WHERE id = $1",
-    [invoiceRow.id]
-  )).rows[0];
+  invoiceRow.contact_public_id = await contactPublicId(invoiceRow.contact_id);
 
-  if (invoiceRowUpdated.contact_id) {
-    const contactExtRow = (await query("SELECT external_id FROM contacts WHERE id = $1", [invoiceRowUpdated.contact_id])).rows[0];
-    invoiceRowUpdated.contact_external_id = contactExtRow ? contactExtRow.external_id : null;
-  }
-
-  return serializeInvoice(invoiceRowUpdated, locationId, itemRows);
+  return serializeInvoice(invoiceRow, locationId, itemRows);
 }
 
 export async function getInvoice(siteId, invoiceExternalId, locationId) {
-  const row = await findByExternalId("invoices", invoiceExternalId);
+  const row = await findByAnyId("invoices", siteId, invoiceExternalId);
   if (!row || row.site_id !== siteId) return null;
 
   const itemRows = (await query(
@@ -253,16 +246,13 @@ export async function getInvoice(siteId, invoiceExternalId, locationId) {
     [row.id]
   )).rows;
 
-  if (row.contact_id) {
-    const contactRow = (await query("SELECT external_id FROM contacts WHERE id = $1", [row.contact_id])).rows[0];
-    row.contact_external_id = contactRow ? contactRow.external_id : null;
-  }
+  row.contact_public_id = await contactPublicId(row.contact_id);
 
   return serializeInvoice(row, locationId, itemRows);
 }
 
 export async function updateInvoice(siteId, invoiceExternalId, { status, dueDate, notes }, locationId) {
-  const row = await findByExternalId("invoices", invoiceExternalId);
+  const row = await findByAnyId("invoices", siteId, invoiceExternalId);
   if (!row || row.site_id !== siteId) return null;
 
   const updates = {};
@@ -293,10 +283,7 @@ export async function updateInvoice(siteId, invoiceExternalId, { status, dueDate
       [row.id]
     )).rows;
 
-    if (row.contact_id) {
-      const contactRow = (await query("SELECT external_id FROM contacts WHERE id = $1", [row.contact_id])).rows[0];
-      row.contact_external_id = contactRow ? contactRow.external_id : null;
-    }
+    row.contact_public_id = await contactPublicId(row.contact_id);
 
     return serializeInvoice(row, locationId, itemRows);
   }
@@ -317,16 +304,13 @@ export async function updateInvoice(siteId, invoiceExternalId, { status, dueDate
     [invoiceRow.id]
   )).rows;
 
-  if (invoiceRow.contact_id) {
-    const contactRow = (await query("SELECT external_id FROM contacts WHERE id = $1", [invoiceRow.contact_id])).rows[0];
-    invoiceRow.contact_external_id = contactRow ? contactRow.external_id : null;
-  }
+  invoiceRow.contact_public_id = await contactPublicId(invoiceRow.contact_id);
 
   return serializeInvoice(invoiceRow, locationId, itemRows);
 }
 
 export async function deleteInvoice(siteId, invoiceExternalId) {
-  const row = await findByExternalId("invoices", invoiceExternalId);
+  const row = await findByAnyId("invoices", siteId, invoiceExternalId);
   if (!row || row.site_id !== siteId || row.status !== "draft") return 0;
 
   const result = await query("DELETE FROM invoices WHERE id = $1", [row.id]);

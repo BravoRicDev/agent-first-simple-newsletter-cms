@@ -283,4 +283,105 @@ describe("Onda H — Commerce clone", () => {
     assert.equal(deleteRes2.status, 200);
     assert.equal(deleteRes2.data.deleted, true);
   });
+
+  // ── Parity ghl_id (round 13) ──────────────────────────────────────────
+
+  test("Parity ghl_id: round-trip GET/PUT/DELETE product col ghl_id reale", async () => {
+    const createRes = await fetch("/products", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "RtProduct",
+        prices: [{ name: "Std", amount: 42, currency: "EUR", billingType: "one_time" }],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const uuidId = createRes.data.product.id;
+
+    const realGhlId = "ghlPRODparity000001";
+    await query("UPDATE products SET ghl_id = $1 WHERE external_id = $2", [realGhlId, uuidId]);
+
+    // GET col ghl_id reale → 200 e id = ghl_id reale
+    const getRes = await fetch(`/products/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.product.id, realGhlId, "id risposta deve essere il ghl_id reale");
+
+    // PUT col ghl_id reale
+    const putRes = await fetch(`/products/${realGhlId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: "RtProduct Updated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal(putRes.data.product.name, "RtProduct Updated");
+    assert.equal(putRes.data.product.id, realGhlId);
+    // Anello dei prezzi: anche il price id è esposto col proprio ghl_id/UUID
+    assert.ok(putRes.data.product.prices[0].id);
+
+    // Ancora raggiungibile col vecchio UUID interno
+    const getByUuid = await fetch(`/products/${uuidId}`);
+    assert.equal(getByUuid.status, 200);
+    assert.equal(getByUuid.data.product.id, realGhlId, "UUID interno risolve, ma id resta il ghl_id");
+
+    // DELETE col ghl_id reale
+    const delRes = await fetch(`/products/${realGhlId}`, { method: "DELETE" });
+    assert.equal(delRes.status, 200);
+    const goneRes = await fetch(`/products/${realGhlId}`);
+    assert.equal(goneRes.status, 404);
+  });
+
+  test("Parity ghl_id: round-trip GET/PUT/DELETE invoice col ghl_id reale + contactId ghl_id", async () => {
+    // Contatto con ghl_id reale: deve essere accettabile in input E esposto in output
+    const contactGhlId = "ghlCONTACTinv00001";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE id = $2", [contactGhlId, contact.id]);
+
+    const createRes = await fetch("/invoices", {
+      method: "POST",
+      body: JSON.stringify({
+        contactId: contactGhlId,
+        items: [{ description: "Riga", quantity: 1, unitPrice: 70 }],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.data.invoice.contactId, contactGhlId, "contactId in output = ghl_id reale");
+    const uuidId = createRes.data.invoice.id;
+
+    const realGhlId = "ghlINVOICEparity001";
+    await query("UPDATE invoices SET ghl_id = $1 WHERE external_id = $2", [realGhlId, uuidId]);
+
+    const getRes = await fetch(`/invoices/${realGhlId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.invoice.id, realGhlId, "id risposta deve essere il ghl_id reale");
+    assert.equal(getRes.data.invoice.contactId, contactGhlId);
+    // Item: id esposto sempre via publicId (ghl_id se presente, altrimenti UUID)
+    assert.ok(getRes.data.invoice.items[0].id);
+
+    const putRes = await fetch(`/invoices/${realGhlId}`, {
+      method: "PUT",
+      body: JSON.stringify({ notes: "Rt notes" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal(putRes.data.invoice.notes, "Rt notes");
+
+    // Filtro per contactId col ghl_id reale del contatto
+    const listRes = await fetch(`/invoices?contactId=${contactGhlId}`);
+    assert.equal(listRes.status, 200);
+    const found = listRes.data.invoices.filter((i) => i.id === realGhlId);
+    assert.equal(found.length, 1, "la fattura deve comparire filtrando per contactId=ghl_id");
+
+    // DELETE col ghl_id reale (draft → permesso)
+    const delRes = await fetch(`/invoices/${realGhlId}`, { method: "DELETE" });
+    assert.equal(delRes.status, 200);
+  });
+
+  test("Parity ghl_id: id malformato (300 char) → 400 su products e invoices", async () => {
+    const bogus = "x".repeat(300);
+    const p = await fetch(`/products/${bogus}`);
+    assert.equal(p.status, 400);
+    const i = await fetch(`/invoices/${bogus}`);
+    assert.equal(i.status, 400);
+    // Id ben formato ma inesistente → 404 (non più 400)
+    const p404 = await fetch("/products/ghlINESISTENTE000000001");
+    assert.equal(p404.status, 404);
+    const i404 = await fetch("/invoices/ghlINESISTENTE00000001");
+    assert.equal(i404.status, 404);
+  });
 });

@@ -7,6 +7,7 @@ import { Router } from "express";
 import {
   createLocation,
   getLocationByIdOrExternalId,
+  resolveSiteInternalId,
   updateLocationBusinessInfo,
   createUser,
   getUsersByLocationId,
@@ -21,7 +22,7 @@ import {
   deleteTeam,
 } from "../../services/agency-clone.js";
 import { sendError, requireUuid, requireAnyId, getPaging, sendList, getLocationId } from "./_helpers.js";
-import { findByExternalId, findByAnyId } from "../../services/external-ids.js";
+import { findByAnyId } from "../../services/external-ids.js";
 
 const router = Router();
 
@@ -65,12 +66,16 @@ router.put("/locations/:locationId/business-info", async (req, res, next) => {
     const { locationId } = req.params;
     const { businessInfo } = req.body;
 
-    const siteRow = await findByExternalId("sites", locationId);
-    if (!siteRow) {
+    // Parità GHL (round 15): locationId può essere l'UUID interno del site
+    // O il location_external_id reale (quello che n8n ha da GHL).
+    // findByExternalId("sites") accettava SOLO l'UUID → 404 silenzioso sul
+    // secondo formato; ora risolve entrambi.
+    const siteId = await resolveSiteInternalId(locationId);
+    if (!siteId) {
       return sendError(res, 404, "Location non trovata");
     }
 
-    const location = await updateLocationBusinessInfo(siteRow.id, businessInfo || {});
+    const location = await updateLocationBusinessInfo(siteId, businessInfo || {});
     if (!location) {
       return sendError(res, 404, "Location non trovata");
     }

@@ -1,14 +1,15 @@
 import { query } from "../db.js";
-import { ensureExternalId, findByExternalId } from "./external-ids.js";
+import { findByAnyId, publicId } from "./external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda H: Products — CRUD con prezzi associati, clone API.
-// Serializzazione camelCase UUID, array prezzi inline.
+// Serializzazione camelCase con "doppio id" (ghl_id reale preferito
+// all'UUID interno, vedi findByAnyId/publicId), array prezzi inline.
 // ─────────────────────────────────────────────────────────────────────────
 
 function serializePrice(row, locationId) {
   return {
-    id: row.external_id,
+    id: publicId(row),
     name: row.name || "Standard",
     amount: Number(row.amount) || 0,
     currency: row.currency || "EUR",
@@ -19,7 +20,7 @@ function serializePrice(row, locationId) {
 
 function serializeProduct(row, locationId, prices = []) {
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.name || "",
     description: row.description || "",
@@ -36,9 +37,11 @@ export async function listProducts(siteId, { limit = 20, startAfterId = null }, 
   const params = [siteId];
 
   if (startAfterId) {
+    // Il cursore può essere sia l'UUID interno sia il ghl_id reale: lookup
+    // site-scoped (due siti gemelli possono condividere lo stesso ghl_id).
     const prev = (await query(
-      "SELECT id FROM products WHERE external_id = $1 LIMIT 1",
-      [startAfterId]
+      "SELECT id FROM products WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2) LIMIT 1",
+      [siteId, startAfterId]
     )).rows[0];
     if (prev) {
       params.push(prev.id);
@@ -69,7 +72,7 @@ export async function listProducts(siteId, { limit = 20, startAfterId = null }, 
 
   let nextStartAfterId = null;
   if (result.rows.length > limit && rows.length > 0) {
-    nextStartAfterId = rows[rows.length - 1].external_id;
+    nextStartAfterId = publicId(rows[rows.length - 1]);
   }
 
   return {
@@ -95,9 +98,6 @@ export async function createProduct(siteId, { name, description, type, prices },
   );
 
   const productRow = result.rows[0];
-  if (!productRow.external_id) {
-    await ensureExternalId("products", productRow.id);
-  }
 
   // Inserisci prezzi se forniti
   let priceRows = [];
@@ -116,24 +116,15 @@ export async function createProduct(siteId, { name, description, type, prices },
           p.billingType || "one_time"
         ]
       );
-      const pr = priceResult.rows[0];
-      if (!pr.external_id) {
-        await ensureExternalId("product_prices", pr.id);
-      }
-      priceRows.push(pr);
+      priceRows.push(priceResult.rows[0]);
     }
   }
 
-  const productRowUpdated = (await query(
-    "SELECT * FROM products WHERE id = $1",
-    [productRow.id]
-  )).rows[0];
-
-  return serializeProduct(productRowUpdated, locationId, priceRows);
+  return serializeProduct(productRow, locationId, priceRows);
 }
 
 export async function getProduct(siteId, productExternalId, locationId) {
-  const row = await findByExternalId("products", productExternalId);
+  const row = await findByAnyId("products", siteId, productExternalId);
   if (!row || row.site_id !== siteId) return null;
 
   const priceRows = (await query(
@@ -145,7 +136,7 @@ export async function getProduct(siteId, productExternalId, locationId) {
 }
 
 export async function updateProduct(siteId, productExternalId, { name, description, type, prices }, locationId) {
-  const row = await findByExternalId("products", productExternalId);
+  const row = await findByAnyId("products", siteId, productExternalId);
   if (!row || row.site_id !== siteId) return null;
 
   const updates = {};
@@ -186,11 +177,7 @@ export async function updateProduct(siteId, productExternalId, { name, descripti
           p.billingType || "one_time"
         ]
       );
-      const pr = priceResult.rows[0];
-      if (!pr.external_id) {
-        await ensureExternalId("product_prices", pr.id);
-      }
-      priceRows.push(pr);
+      priceRows.push(priceResult.rows[0]);
     }
   } else {
     // Carica prezzi attuali se non forniti
@@ -204,7 +191,7 @@ export async function updateProduct(siteId, productExternalId, { name, descripti
 }
 
 export async function deleteProduct(siteId, productExternalId) {
-  const row = await findByExternalId("products", productExternalId);
+  const row = await findByAnyId("products", siteId, productExternalId);
   if (!row || row.site_id !== siteId) return 0;
 
   const result = await query("DELETE FROM products WHERE id = $1", [row.id]);

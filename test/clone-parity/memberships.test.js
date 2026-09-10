@@ -261,4 +261,43 @@ describe("Onda H — Memberships clone", () => {
     assert.equal(enrollRes.status, 201);
     assert.equal(enrollRes.data.enrollment.courseId, courseId);
   });
+
+  // ── Parity ghl_id (round 14) ───────────────────────────────────────────
+  // contacts HA ghl_id (sincronizzato da GHL): l'automazione può usare
+  // l'id reale del contatto sia in input (contactId) sia in output.
+  // memberships/courses/enrollments NON hanno ghl_id → i loro id restano
+  // UUID-only (verificato: colonna assente in information_schema).
+
+  test("Parity ghl_id: enrollment accetta contactId=ghl_id e lo espone in output", async () => {
+    // Dai un ghl_id reale al contatto condiviso
+    const contactGhlId = "ghlCONTACTenroll001";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE id = $2", [contactGhlId, contact.id]);
+
+    // Membership di servizio (id UUID, come da schema)
+    const mRes = await fetch("/memberships", {
+      method: "POST",
+      body: JSON.stringify({ name: "GhlId Course", description: "d" }),
+    });
+    assert.equal(mRes.status, 201);
+    const membershipId = mRes.data.membership.id;
+
+    // Enroll passando il ghl_id reale del contatto (accettato da findByAnyId)
+    const enrollRes = await fetch(`/memberships/${membershipId}/enroll`, {
+      method: "POST",
+      body: JSON.stringify({ contactId: contactGhlId }),
+    });
+    assert.equal(enrollRes.status, 201);
+    assert.equal(
+      enrollRes.data.enrollment.contactId,
+      contactGhlId,
+      "contactId in output deve essere il ghl_id reale"
+    );
+
+    // Anche la lista lo espone col ghl_id
+    const listRes = await fetch(`/memberships/${membershipId}/enrollments`);
+    assert.equal(listRes.status, 200);
+    const mine = listRes.data.enrollments.filter((e) => e.membershipId === membershipId);
+    assert.equal(mine.length >= 1, true);
+    assert.equal(mine[0].contactId, contactGhlId, "contactId in lista = ghl_id reale");
+  });
 });

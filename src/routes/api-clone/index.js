@@ -70,6 +70,7 @@ import mediaCloneRoutes from "./media.js";
 import objectsCloneRoutes from "./objects.js";
 import socialCloneRoutes from "./social.js";
 import membershipsCloneRoutes from "./memberships.js";
+import workflowsCloneRoutes from "./workflows.js";
 
 router.use(productsCloneRoutes);
 router.use(invoicesCloneRoutes);
@@ -77,6 +78,7 @@ router.use(mediaCloneRoutes);
 router.use(objectsCloneRoutes);
 router.use(socialCloneRoutes);
 router.use(membershipsCloneRoutes);
+router.use(workflowsCloneRoutes);
 
 // Catch-all: qualunque path non riconosciuto su questo vhost è 404 JSON,
 // non deve MAI ricadere sulle altre route del CMS (pagine pubbliche/admin).

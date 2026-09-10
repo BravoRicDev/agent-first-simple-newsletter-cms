@@ -323,4 +323,68 @@ describe("Onda G — Agency clone", () => {
     });
     assert.equal(res.status, 400);
   });
+
+  // ── Parity location id (round 15) ──────────────────────────────────────
+  // sites NON ha colonna ghl_id: l'equivalente del "location id" di GHL è
+  // location_external_id. Un'automazione n8n ha in mano QUEL id (20 char
+  // alfanumerici, non UUID): deve poterlo usare in GET/PUT e vederlo
+  // esposto come id/locazione in output. Prima di questo round:
+  // - GET /locations/{idGHL} andava in ERRORE 500 (confronto uuid = testo
+  //   non-UUID → 22P02) o 404 a seconda del formato;
+  // - PUT business-info risolveva SOLO l'UUID interno del site.
+
+  test("Parity location: id GHL reale (non-UUID) accettato in GET/PUT ed esposto", async () => {
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Sede GHL parity" }),
+    });
+    assert.equal(createRes.status, 201);
+    // NB: dopo il round 15 location.id ESPONE già il location_external_id
+    // (per le location create da noi è un UUID generato in createLocation).
+    const genLocationId = createRes.data.location.id;
+
+    // UUID interno del site (colonna external_id) — preso dal DB, non dalla
+    // risposta, che ora espone l'id pubblico GHL-facing.
+    const siteUuid = (await query(
+      "SELECT external_id::text AS ext FROM sites WHERE location_external_id = $1",
+      [genLocationId]
+    )).rows[0].ext;
+    assert.ok(siteUuid, "site appena creato deve esistere");
+
+    // Simuliamo una location SINCRONIZZATA da GHL: location_external_id =
+    // id reale stile GHL (20 char alfanumerici, NON uuid-valid). Casuale
+    // per run: sites.location_external_id ha un UNIQUE globale e il volume
+    // di test persiste tra un'esecuzione e l'altra.
+    const realGhlLocationId = "eMjq" + crypto.randomBytes(8).toString("hex");
+    await query(
+      "UPDATE sites SET location_external_id = $1 WHERE external_id = $2",
+      [realGhlLocationId, siteUuid]
+    );
+
+    // GET col ghl_id reale → 200 (PRIMA: 500 per 22P02 su uuid=text) e
+    // l'id esposto è il ghl_id reale, non l'UUID interno.
+    const getRes = await fetch(`/locations/${realGhlLocationId}`);
+    assert.equal(getRes.status, 200, "GET con location id GHL reale deve funzionare");
+    assert.equal(getRes.data.location.id, realGhlLocationId, "id in output = ghl location id reale");
+    assert.equal(getRes.data.location.locationId, realGhlLocationId);
+
+    // PUT business-info col ghl_id reale (prima risolveva solo l'UUID)
+    const putRes = await fetch(`/locations/${realGhlLocationId}/business-info`, {
+      method: "PUT",
+      body: JSON.stringify({ businessInfo: { city: "Milano" } }),
+    });
+    assert.equal(putRes.status, 200, "PUT business-info con ghl location id deve funzionare");
+    assert.equal(putRes.data.location.businessInfo.city, "Milano");
+    assert.equal(putRes.data.location.id, realGhlLocationId);
+
+    // Anche l'UUID interno del site continua a risolvere (hot-swap non
+    // regressivo per chi già lo usava).
+    const byUuid = await fetch(`/locations/${siteUuid}`);
+    assert.equal(byUuid.status, 200);
+    assert.equal(byUuid.data.location.id, realGhlLocationId, "UUID interno risolve, id esposto resta il ghl");
+
+    // Id inesistente ma ben formato → 404 (non 500)
+    const missing = await fetch("/locations/ghlLocationIdMancante");
+    assert.equal(missing.status, 404);
+  });
 });

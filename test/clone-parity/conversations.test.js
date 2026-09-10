@@ -304,4 +304,62 @@ describe("Onda F — Conversazioni clone (SMS/Email/WhatsApp)", () => {
     });
     assert.equal(notFoundRes.status, 404);
   });
+
+  // Parity ghl_id round 14: il cursore startAfterId dei messaggi risolve
+  // anche il source_message_id (l'id reale GHL esposto da serializeMessage),
+  // con scope sul sito via JOIN a conversations. conversation_messages non
+  // ha né site_id né ghl_id → niente findByAnyId, query dedicata.
+  test("Parity ghl_id: cursore messaggi con source_message_id == cursore UUID", async () => {
+    // Contatto DEDICATO: i test precedenti condividono lo stesso thread,
+    // qui ci servono esattamente 3 messaggi in una conversazione pulita.
+    const cursorContactEmail = `cursor-${crypto.randomBytes(4).toString("hex")}@test.local`;
+    const cursorContact = (await query(
+      "INSERT INTO contacts (site_id, email, status) VALUES ($1, $2, 'active') RETURNING external_id",
+      [site.id, cursorContactEmail]
+    )).rows[0];
+
+    // 3 messaggi nello stesso thread (stesso contatto → stessa conversazione)
+    const bodies = ["cursor-msg-1", "cursor-msg-2", "cursor-msg-3"];
+    let convId = null;
+    for (const body of bodies) {
+      const r = await fetch("/conversations/messages", {
+        method: "POST",
+        body: JSON.stringify({ type: "SMS", contactId: cursorContact.external_id, body }),
+      });
+      assert.equal(r.status, 201);
+      convId = r.data.message.conversationId;
+    }
+
+    // source_message_id reale (stile GHL) sui messaggi 1 e 2
+    const msgRows = (await query(
+      "SELECT id, external_id, body FROM conversation_messages WHERE conversation_id = (SELECT id FROM conversations WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2)) ORDER BY id ASC",
+      [site.id, convId]
+    )).rows;
+    assert.equal(msgRows.length, 3);
+    const srcId2 = "ghlMSGsource0002";
+    await query("UPDATE conversation_messages SET source_message_id = $1 WHERE id = $2", [srcId2, msgRows[1].id]);
+    const srcId3 = "ghlMSGsource0003";
+    await query("UPDATE conversation_messages SET source_message_id = $1 WHERE id = $2", [srcId3, msgRows[2].id]);
+
+    // GET con startAfterId = UUID del msg2 → insieme A (solo msg1: id < cursore)
+    const byUuid = await fetch(`/conversations/${convId}/messages?limit=5&startAfterId=${msgRows[1].external_id}`);
+    assert.equal(byUuid.status, 200);
+    const setA = byUuid.data.messages.map((m) => m.body).sort();
+
+    // GET con startAfterId = source_message_id del msg2 → insieme B identico
+    const bySrc = await fetch(`/conversations/${convId}/messages?limit=5&startAfterId=${srcId2}`);
+    assert.equal(bySrc.status, 200);
+    const setB = bySrc.data.messages.map((m) => m.body).sort();
+
+    assert.deepEqual(setB, setA, "il cursore source_message_id deve equivalere a quello UUID");
+    assert.deepEqual(setA, ["cursor-msg-1"], "con cursore sul msg2 deve restare solo msg1");
+
+    // nextStartAfterId esposto nello stesso formato id dei messaggi:
+    // con limit=1 su una lista più lunga, il cursore next deve essere il
+    // source_message_id del msg successivo (se presente) o l'UUID.
+    const paged = await fetch(`/conversations/${convId}/messages?limit=2`);
+    assert.equal(paged.status, 200);
+    assert.equal(paged.data.messages.length, 2);
+    assert.equal(paged.data.meta.nextPage, srcId3, "nextPage = source_message_id del 3° messaggio");
+  });
 });

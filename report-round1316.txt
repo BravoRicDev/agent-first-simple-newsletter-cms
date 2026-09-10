@@ -1,0 +1,164 @@
+================================================================================
+REPORT ROUND 13-16 — Pacchetto ghl-parity (zip 067c9e0a-ghlparityround1316.zip)
+================================================================================
+Data integrazione: 2026-09-10
+HEAD di partenza del repo: e9a337b (working tree pulito, solo handoff/pkg untracked)
+Autore implementazione: opencode (modello qwen3.8-flash) — pacchetti round 13-16
+Integrazione nel working tree reale + verifica: eseguita qui, SENZA commit/push/deploy
+
+--------------------------------------------------------------------------------
+0. PRE-VERIFICA (repo contro base del pacchetto)
+--------------------------------------------------------------------------------
+Il pacchetto dichiara base = e9a337b (round 1-12 gia integrati). Verificato:
+ - git HEAD = e9a337b, `git status` = nessun file tracked modificato => il
+   working tree reale coincide ESATTAMENTE con la base "before" del pacchetto.
+ - Diff manuale dei 15 file consegnati: tutti gli hunk sono ADDITIVI/compatibili
+   (requireUuid->requireAnyId, findByExternalId->findByAnyId/publicId, fix 22P02
+   location, cursore messaggi via JOIN, nuova risorsa workflows). Nessuna riga
+   rimossa "a sorpresa" (nessuna regressione di codice pre-esistente).
+ - I 3 file sensibili (src/services/source-sync/clone-sibling.js,
+   .../mappers/contacts.js, .../mappers/calendars.js) NON sono nel pacchetto e
+   NON sono stati toccati: paginateSearchSorted, earlyStopEnabled,
+   consecutiveUnchanged e clone*FromSibling risultano ancora presenti e
+   invariati (verificato con grep + `git status --short src/services/source-sync/`
+   vuoto). external-ids.js (findByAnyId/publicId/WHITELIST_TABLES) NON toccato.
+
+--------------------------------------------------------------------------------
+1. BUG TROVATI E FIX APPLICATI (per round / per file)
+--------------------------------------------------------------------------------
+
+ROUND 13 — COMMERCE (products/invoices)
+  Bug: i serializer esponevano SOLO l'UUID interno (external_id); un id reale
+  GHL (ghl_id, ~20 char alfanumerici) in input GET/PUT/DELETE/filtro non
+  risolveva mai. Cursore di paginazione invoices non site-scoped (lookup
+  globale => rischio cross-tenant su siti gemelli).
+  Fix applicati:
+   - src/services/products-clone.js
+       * import findByAnyId/publicId (rimosso ensureExternalId/findByExternalId)
+       * serializeProduct/serializePrice: id = publicId(row) (ghl_id preferito)
+       * cursore startAfterId: lookup site-scoped
+         (external_id::text = $2 OR ghl_id = $2) — prima globale
+       * getProduct/updateProduct/deleteProduct: findByExternalId -> findByAnyId
+       * rimossi ensureExternalId "lazy" su insert (external_id ha gia
+         DEFAULT gen_random_uuid() in db/088, RETURNING * lo popola)
+   - src/services/invoices-clone.js
+       * id e item.id via publicId
+       * nuova contactPublicId(): contactId in output = ghl_id reale del contatto
+       * filtro ?contactId= e create: accettano UUID O ghl_id, site-scoped
+       * cursore invoices: ora site-scoped (prima lookup GLOBALE — bug scoping)
+       * rimossi ensureExternalId lazy (invoices/invoice_items)
+   - src/routes/api-clone/products.js : requireUuid -> requireAnyId (3 route :id)
+   - src/routes/api-clone/invoices.js : requireUuid -> requireAnyId (3 route :id)
+
+ROUND 14 — CONVERSAZIONI + MEMBERSHIPS
+  Bug (conversazioni): il cursore startAfterId dei messaggi risolveva SOLO
+  l'UUID via findByExternalId (globale, non site-scoped); l'id reale esposto da
+  serializeMessage (source_message_id) non funzionava come cursore.
+  Fix:
+   - src/routes/api-clone/conversations.js
+       * cursore messaggi: query DEDICATA con JOIN a conversations per site_id
+         (conversation_messages non ha ne site_id ne ghl_id => niente
+         findByAnyId; JOIN per non leak-cross-tenant). Accetta
+         external_id::text O source_message_id. Rimossa import findByExternalId.
+       * nextStartAfterId: esposto nello stesso formato id dei messaggi
+         (source_message_id reale, fallback UUID) — riutilizzabile com'e.
+  Bug (memberships): POST /memberships/:id/enroll accettava contactId solo UUID;
+  contactId in output era UUID. Fix:
+   - src/routes/api-clone/memberships.js
+       * nuova contactPublicId() (ghl_id reale, fallback UUID) usata in
+         create/list/update enrollment
+       * validazione contatto: findByExternalId -> findByAnyId (accetta ghl_id)
+       * (memberships/courses/enrollments restano UUID-only: colonne ghl_id
+         ASSenti — verificato schema, no-op corretto, non omissione)
+
+ROUND 15 — LOCATIONS
+  Bug REALE (crash): getLocationByIdOrExternalId confrontava la colonna UUID
+  external_id = $1 con un id non-UUID (stile GHL) => PostgreSQL errore 22P02
+  "invalid input syntax for type uuid" => 500 Internal Server Error su
+  GET /locations/{ghlId} invece di 200. Inoltre PUT business-info usava
+  findByExternalId("sites") => 404 silenzioso sul ghl_id reale.
+  Fix:
+   - src/services/agency-clone.js
+       * serializeLocation() unificato: id/locationId = location_external_id
+         (fallback external_id)
+       * getLocationByIdOrExternalId: confronto
+         `external_id::text = $1 OR location_external_id = $1` (cast ::text
+         evita 22P02, accetta entrambi i formati, niente crash)
+       * nuova resolveSiteInternalId(identifier): risolve UUID interno O
+         location_external_id (usata dal PUT business-info)
+   - src/routes/api-clone/users.js
+       * PUT /locations/:id/business-info: findByExternalId("sites") ->
+         resolveSiteInternalId (accetta id GHL reale)
+       * import findByExternalId rimosso (non piu usato)
+  (teams resta UUID-only: niente colonna ghl_id, no-op documentato)
+
+ROUND 16 — WORKFLOWS (risorsa NUOVA, sola lettura)
+  Fix/aggiunta:
+   - src/routes/api-clone/workflows.js  (NUOVO)
+       * GET /workflows (lista + cursore su ghl_id) e GET /workflows/:workflowId
+       * serve il payload JSONB INTEGRALE di ghl_workflows (parita byte-per-byte
+         con GHL, pensato per hot-swap n8n). Nessun publicId: ghl_workflows non
+         ha external_id proprio, l'unico id e ghl_id (site-scoped, UNIQUE(site_id,
+         ghl_id) da db/126). POST/PUT/DELETE assenti (engine GHL non replicabile).
+   - src/routes/api-clone/index.js
+       * import + router.use(workflowsCloneRoutes)
+
+NOTE di sicurezza multi-tenant (gia gestite dal pacchetto, verificate):
+ - Cursors/products/invoices/conversations/memberships/workflows ora risolvono
+   gli id SEMPRE con scope sul site_id corrente. Il fix del cursore messaggi
+   usa JOIN a conversations perche la tabella non e site-scoped direttamente.
+
+--------------------------------------------------------------------------------
+2. RISCONTRATI / OSSERVAZIONI (non modificati — fuori scope del pacchetto)
+--------------------------------------------------------------------------------
+ - [PRE-ESISTENTE, NON introdotto dal pacchetto] GET / e PUT /business-info di
+   /locations/:locationId risolvono la location con lookup GLOBALE (per
+   external_id/location_external_id) senza confrontarla con req.tenant: un
+   tenant potrebbe leggere/scrivere business-info di una location altrui se ne
+   conosce l'id. Era gia cosi alla base e9a337b; il round 15 ha corretto solo
+   il crash 22P02, non lo scoping. NON toccato (non richiesto dal pacchetto e
+  agency.test.js dipende dall'attuale comportamento). Consigliato come follow-up.
+ - [MINORE, non regressivo] contactPublicId() in invoices-clone.js non ha il
+   fallback ensureExternalId presente invece nella versione memberships: un
+   contatto con external_id NULL e ghl_id '' esporrebbe contactId=null. Caso
+   irrealistico (contacts CMS hanno external_id valorizzato) e comportamento
+   invariato rispetto alla base. Non modificato.
+
+--------------------------------------------------------------------------------
+3. VERIFICHE ESEGUITE
+--------------------------------------------------------------------------------
+A) node --check su TUTTI i 15 file .js toccati (10 src + 5 test): OK, 0 errori.
+B) Ambiente di test ISOLATO (NESSUN impatto su produzione):
+   - Container throwaway proprio: docker run ... postgres:16-alpine
+     name=opencode-pg-r1316, host port 55461, db r1316_test.
+   - DATABASE_URL passato inline (dotenv NON sovrascrive env gia presente) =>
+     il test/db.js NON ha mai puntato il DB di produzione
+     (gestione-siti-riccardom-db-1). Verificato: quel container resta
+     "Up 2 days (healthy)" e mai connesso dai test.
+   - db/migrate.js eseguito sul DB throwaway: "Migrazioni completate" (fino a
+     128_..., incluse 120/124/126/127).
+   - Container throwaway rimosso al termine (docker rm -f).
+C) Suite clone-parity pertinenti ai file toccati (singole):
+     commerce, conversations, memberships, agency, workflows
+     => 36 test, 0 fail (pass 36/36).
+D) SUITE clone-parity COMPLETA (17 file): `node --test test/clone-parity/*.test.js`
+     => 176 test, 17 suite, pass 176/176, fail 0. (coerente col claim del pacchetto)
+E) Suite source-sync (per conferma no-regressione sui file sensibili):
+     con le modifiche applicate => pass 14 / fail 5.
+     BASELINE (mie modifiche temporaneamente stashte, puro e9a337b) => pass 14 / fail 5.
+     => STESSI 5 fallimenti, IDENTICI => NON sono regressioni introdotte dal
+        pacchetto (e i file source-sync non sono nel pacchetto). Fallimenti
+        nella suite "core mappers (M1)" e "opportunities+calendars+conversations":
+        dipendenti dal mock-source/ambiente, pre-esistenti su e9a337b e gia
+        segnalati come tali in SPIEGAZIONE.txt.
+
+--------------------------------------------------------------------------------
+4. STATO FINALE
+--------------------------------------------------------------------------------
+ - 13 file tracked MODIFICATI + 2 file NUOVI (workflows.js, workflows.test.js),
+   tutti nel working tree. NESSUN commit, NESSUN push, NESSUN deploy (come
+   richiesto: commit/push/deploy in carico a Claude).
+ - pkg-round1316/ rimosso; zip 067c9e0a-ghlparityround1316.zip rimosso;
+   cartella opencode-handoff/ rimossa (era vuota dopo il zip).
+ - Container Postgres throwaway rimosso; DB di produzione mai toccato.
+================================================================================

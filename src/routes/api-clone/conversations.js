@@ -2,7 +2,7 @@ import { Router } from "express";
 import { sendError, getPaging, requireAnyId, getLocationId } from "./_helpers.js";
 import { query } from "../../db.js";
 import { sendSms } from "../../services/channels/sms.js";
-import { ensureExternalId, findByExternalId, findByAnyId, publicId } from "../../services/external-ids.js";
+import { ensureExternalId, findByAnyId, publicId } from "../../services/external-ids.js";
 import { logger } from "../../services/logger.js";
 
 const router = Router();
@@ -290,7 +290,19 @@ router.get("/conversations/:conversationId/messages", async (req, res, next) => 
     const params = [conv.id];
 
     if (startAfterId) {
-      const cursorMsg = await findByExternalId("conversation_messages", startAfterId);
+      // Parity ghl_id (round 14): l'id messaggio esposto da serializeMessage
+      // è source_message_id (quello reale GHL) quando presente, quindi il
+      // cursore deve accettare sia quello sia l'UUID interno.
+      // conversation_messages NON ha né site_id né ghl_id → findByAnyId non
+      // è applicabile; scope sul sito via JOIN a conversations (l'unico
+      // percorso tenant) per non risolvere messaggi di altri siti.
+      const cursorMsg = (await query(
+        `SELECT m.id FROM conversation_messages m
+         JOIN conversations c ON c.id = m.conversation_id AND c.site_id = $2
+         WHERE m.external_id::text = $1 OR m.source_message_id = $1
+         LIMIT 1`,
+        [startAfterId, req.tenant.siteId]
+      )).rows[0];
       if (cursorMsg) {
         params.push(cursorMsg.id);
         where += ` AND id < $${params.length}`;
@@ -311,7 +323,14 @@ router.get("/conversations/:conversationId/messages", async (req, res, next) => 
     let nextStartAfterId = null;
     let messages = results.rows.slice(0, limit);
     if (results.rows.length > limit) {
-      nextStartAfterId = await ensureExternalId("conversation_messages", results.rows[limit].id);
+      // Stesso formato id esposto da serializeMessage (source_message_id
+      // reale, fallback UUID): il cursore deve essere riutilizzabile così
+      // com'è dalla paginazione precedente.
+      const nextRow = results.rows[limit];
+      nextStartAfterId =
+        (nextRow.source_message_id && String(nextRow.source_message_id).trim())
+        || nextRow.external_id
+        || (await ensureExternalId("conversation_messages", nextRow.id));
     }
 
     const serialized = await Promise.all(

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, sendList, getLocationId,
+  sendError, httpError, isValidUuid, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as productsClone from "../../services/products-clone.js";
 
@@ -42,7 +42,7 @@ router.post("/products", async (req, res, next) => {
 router.get("/products/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const product = await productsClone.getProduct(req.tenant.siteId, id, locationId);
@@ -56,7 +56,7 @@ router.get("/products/:id", async (req, res, next) => {
 router.put("/products/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -76,7 +76,7 @@ router.put("/products/:id", async (req, res, next) => {
 
 router.delete("/products/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await productsClone.deleteProduct(req.tenant.siteId, id);

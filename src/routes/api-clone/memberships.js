@@ -20,9 +20,25 @@ import {
   deleteEnrollment,
 } from "../../services/memberships-clone.js";
 import { getLocationId, sendError, requireUuid, getPaging, sendList } from "./_helpers.js";
-import { ensureExternalId, findByExternalId } from "../../services/external-ids.js";
+import { ensureExternalId, findByAnyId, publicId } from "../../services/external-ids.js";
+import { query } from "../../db.js";
 
 const router = Router();
+
+// Id pubblico del contatto collegato a un enrollment: ghl_id reale se
+// presente, fallback UUID interno (stesso ordine di publicId usato in tutti
+// i serializer del clone-API). memberships/courses/enrollments NON hanno
+// ghl_id: l'unica referenza cross-risorsa sincronizzata da GHL è il contatto.
+async function contactPublicId(contactInternalId) {
+  if (!contactInternalId) return null;
+  const c = (await query(
+    "SELECT external_id, ghl_id FROM contacts WHERE id = $1",
+    [contactInternalId]
+  )).rows[0];
+  if (!c) return null;
+  return (c.ghl_id && String(c.ghl_id).trim()) || c.external_id
+    || (await ensureExternalId("contacts", contactInternalId));
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Memberships: CRUD
@@ -384,8 +400,11 @@ router.post("/memberships/:membershipId/enroll", async (req, res, next) => {
       return sendError(res, 404, "Membership non trovata");
     }
 
-    // Valida contatto esterno
-    const contact = await findByExternalId("contacts", contactId);
+    // Valida contatto esterno. La tabella contacts HA ghl_id (è sincronizzata
+    // da GHL), quindi l'automazione può passare l'id reale del contatto:
+    // findByAnyId accetta sia UUID sia ghl_id. (memberships/courses/enrollments
+    // NON hanno ghl_id → restano UUID-only, vedi verifica lo schema.)
+    const contact = await findByAnyId("contacts", tenant.siteId, contactId);
     if (!contact || contact.site_id !== tenant.siteId) {
       return sendError(res, 404, "Contatto non trovato");
     }
@@ -405,7 +424,9 @@ router.post("/memberships/:membershipId/enroll", async (req, res, next) => {
       courseId: courseDbId,
     });
 
-    const contactExtId = await ensureExternalId("contacts", enrollment.contact_id);
+    // contact è già in scope (risolto sopra con findByAnyId): riusiamo la
+    // sua publicId invece di riquery-re il contatto.
+    const contactExtId = publicId(contact) || (await ensureExternalId("contacts", contact.id));
     const courseExtId = courseDbId ? await ensureExternalId("courses", courseDbId) : null;
 
     res.status(201).json({
@@ -448,7 +469,7 @@ router.get("/memberships/:membershipId/enrollments", async (req, res, next) => {
         id: e.external_id,
         locationId,
         membershipId: await ensureExternalId("memberships", e.membership_id),
-        contactId: await ensureExternalId("contacts", e.contact_id),
+        contactId: await contactPublicId(e.contact_id),
         courseId: e.course_id ? await ensureExternalId("courses", e.course_id) : null,
         status: e.status,
         enrolledAt: e.enrolled_at?.toISOString(),
@@ -483,7 +504,7 @@ router.put("/enrollments/:enrollmentId", async (req, res, next) => {
         id: updated.external_id,
         locationId,
         membershipId: await ensureExternalId("memberships", updated.membership_id),
-        contactId: await ensureExternalId("contacts", updated.contact_id),
+        contactId: await contactPublicId(updated.contact_id),
         courseId: updated.course_id ? await ensureExternalId("courses", updated.course_id) : null,
         status: updated.status,
         enrolledAt: updated.enrolled_at?.toISOString(),

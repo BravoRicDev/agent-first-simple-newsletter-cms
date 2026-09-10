@@ -8,6 +8,22 @@ import { query } from "../db.js";
 import { ensureExternalId, findByAnyId, publicId } from "./external-ids.js";
 
 // ── LOCATIONS (Sites) ────────────────────────────────────────────────────
+// Parità GHL (round 15): l'id pubblico di una location è il SUO
+// location_external_id (per GHL il "location id" È l'identificativo della
+// location, 20 char alfanumerici), non l'UUID interno del site. Le tabelle
+// sites NON hanno colonna ghl_id → niente findByAnyId: risoluzione dedicata
+// che accetta entrambi i formati. confrontando external_id::text (un UUID
+// non valido come uuid manderebbe 22P02/500 su query non protette).
+
+function serializeLocation(row) {
+  return {
+    id: row.location_external_id || row.external_id,
+    locationId: row.location_external_id || row.external_id,
+    name: row.name,
+    businessInfo: row.business_info || {},
+    dateAdded: row.created_at.toISOString(),
+  };
+}
 
 export async function createLocation({ name, businessInfo }) {
   const domainBase = "loc-" + crypto.randomBytes(6).toString("hex");
@@ -20,39 +36,37 @@ export async function createLocation({ name, businessInfo }) {
     [name, domainBase + ".internal", locationExternalId, businessInfo || null]
   );
 
-  const row = result.rows[0];
-  return {
-    id: row.external_id,
-    locationId: row.location_external_id,
-    name: row.name,
-    businessInfo: row.business_info || {},
-    dateAdded: row.created_at.toISOString(),
-  };
+  return serializeLocation(result.rows[0]);
 }
 
 export async function getLocationByIdOrExternalId(identifier) {
-  // Prova prima come UUID esterno di site, poi come location_external_id
-  let row = await query(
-    "SELECT id, external_id, name, location_external_id, business_info, created_at FROM sites WHERE external_id = $1 LIMIT 1",
+  // Accetta SIA l'UUID interno del site SIA il location_external_id reale
+  // (quello che un'automazione n8n ha già in mano da GHL). La colonna è
+  // uuid → serve il cast ::text per confrontarla con id non-UUID senza
+  // errore 22P02 (prima il secondo formato mandava 500).
+  const row = await query(
+    `SELECT id, external_id, name, location_external_id, business_info, created_at
+     FROM sites
+     WHERE external_id::text = $1 OR location_external_id = $1
+     LIMIT 1`,
     [identifier]
   ).then((r) => r.rows[0] || null);
 
-  if (!row) {
-    row = await query(
-      "SELECT id, external_id, name, location_external_id, business_info, created_at FROM sites WHERE location_external_id = $1 LIMIT 1",
-      [identifier]
-    ).then((r) => r.rows[0] || null);
-  }
-
   if (!row) return null;
 
-  return {
-    id: row.external_id,
-    locationId: row.location_external_id || row.external_id,
-    name: row.name,
-    businessInfo: row.business_info || {},
-    dateAdded: row.created_at.toISOString(),
-  };
+  return serializeLocation(row);
+}
+
+// Risolve l'id interno di un site accettando entrambi i formati di id
+// location (UUID interno o location_external_id reale).
+export async function resolveSiteInternalId(identifier) {
+  const row = await query(
+    `SELECT id FROM sites
+     WHERE external_id::text = $1 OR location_external_id = $1
+     LIMIT 1`,
+    [identifier]
+  ).then((r) => r.rows[0] || null);
+  return row ? row.id : null;
 }
 
 export async function updateLocationBusinessInfo(siteId, businessInfo) {
@@ -66,13 +80,7 @@ export async function updateLocationBusinessInfo(siteId, businessInfo) {
   const row = result.rows[0];
   if (!row) return null;
 
-  return {
-    id: row.external_id,
-    locationId: row.location_external_id || row.external_id,
-    name: row.name,
-    businessInfo: row.business_info || {},
-    dateAdded: row.created_at.toISOString(),
-  };
+  return serializeLocation(row);
 }
 
 // ── USERS ────────────────────────────────────────────────────────────────
