@@ -3,7 +3,7 @@ import { query, getClient } from "../../db.js";
 import { logger } from "../logger.js";
 import { loadConfig, createSourceClient, SourceBudgetError } from "./client.js";
 import * as contactsMapper from "./mappers/contacts.js";
-import { findSiblingWithContacts, cloneContactsFromSibling, cloneCustomFieldsFromSibling, cloneCustomValuesFromSibling, cloneTagsFromSibling, clonePipelinesFromSibling, cloneCalendarsFromSibling, cloneFormsFromSibling, cloneSurveysFromSibling, cloneCampaignsFromSibling, cloneGhlWorkflowsFromSibling, cloneFunnelsFromSibling, cloneCommerceFromSibling } from "./clone-sibling.js";
+import { resolveSiblingSource, cloneContactsFromSibling, cloneCustomFieldsFromSibling, cloneCustomValuesFromSibling, cloneTagsFromSibling, clonePipelinesFromSibling, cloneCalendarsFromSibling, cloneFormsFromSibling, cloneSurveysFromSibling, cloneCampaignsFromSibling, cloneGhlWorkflowsFromSibling, cloneFunnelsFromSibling, cloneCommerceFromSibling } from "./clone-sibling.js";
 import { emitContactEvent } from "../events.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -151,6 +151,34 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
     }
     locked = true;
 
+    // Ruolo master/slave ESPlicito (db/129_sync_master_slave.sql), risolto
+    // PRIMA di aprire un run così uno slave con master non disponibile salta
+    // senza lasciare una riga source_sync_runs "running". Un master (o un sito
+    // standalone senza master designato) fa SEMPRE il sync reale; uno slave
+    // clona SEMPRE dal master quando è una fonte affidabile — nessuna scelta
+    // basata sui conteggi contatti (era l'ambiguità simmetrica del vecchio
+    // findSiblingWithContacts che bloccava i dati).
+    // dryRun: mai clonazione (come prima) → si comporta da master in dry-run.
+    const sibling = !dryRun
+      ? await resolveSiblingSource(siteId, cfg)
+      : { mode: "master", cloneFrom: null, skip: false };
+    if (sibling.skip) {
+      // Scelta di sicurezza: lo slave NON fa fallback a un sync reale proprio
+      // quando il master è disabilitato/inesistente/catena/account diverso.
+      // Perché: l'invariante voluta è "un SOLO chiamante GHL per location";
+      // un fallback sposterebbe silenziosamente il carico pesante (decine di
+      // migliaia di chiamate) su N slave appena il master va in pausa,
+      // ri-saturando le API (esattamente ciò che la clonazione gemella doveva
+      // evitare) e rendendo di nuovo possibile il drift. "Master disabilitato"
+      // = sync della location in pausa: lo slave aspetta, non si sostituisce.
+      logger.warn(`source-sync[${siteId}]: slave di ${cfg.sync_master_site_id} con master non disponibile (disabilitato/inesistente/catena/account diverso) — giro saltato, nessun fallback a sync reale`);
+      return { ok: false, reason: "master_disabled" };
+    }
+    const siblingSiteId = sibling.cloneFrom;
+    if (siblingSiteId) {
+      logger.info(`source-sync[${siteId}]: slave — clonazione locale dal master ${siblingSiteId} (sync_master_site_id esplicito, zero chiamate GHL per le risorse clonate)`);
+    }
+
     const requested = Array.isArray(resources) && resources.length ? resources : SWEEP_ORDER;
     const runRow = (
       await query(
@@ -170,23 +198,11 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
 
       const mappers = await loadMappers();
 
-      // Sito "gemello": stesso account/location GHL già sincronizzato da un
-      // altro sito CMS (db/126_ghl_id_per_site.sql — richiesta cliente:
-      // "i contatti di site_21 e site_22 sono gli stessi... non serve
-      // [risincronizzarli], altrimenti rischiamo di saturare le api di ghl
-      // per niente"). Se esiste, le risorse contatti+note+task+opportunità+
-      // conversazioni+appuntamenti vengono COPIATI in locale (zero chiamate
-      // GHL) invece che ri-scaricati — è di gran lunga la parte più
-      // costosa del budget API (O(numero contatti) chiamate).
-      // ORA ESTENSIONE: la clonazione locale si applica a TUTTE le risorse
-      // dello sweep (tranne "users" e "location-info", see below),
-      // non solo ai contatti, come richiesto dal cliente: "anche per le
-      // pipeline se sono collegati allo stesso ghl non ha senso fare 2 sync
-      // separati, questo vale per qualsiasi record".
-      const siblingSiteId = !dryRun ? await findSiblingWithContacts(siteId, cfg) : null;
-      if (siblingSiteId) {
-        logger.info(`source-sync[${siteId}]: sito gemello ${siblingSiteId} trovato (stesso account GHL) — clonazione locale attivata per contatti/note/task/opportunità/conversazioni/appuntamenti e tutte le altre risorse eccetto users/location-info`);
-      }
+      // siblingSiteId (clonazione dal master esplicito, db/129) è stato risolto
+      // sopra, prima di aprire il run. Quando è valorizzato lo sweep clona le
+      // risorse dal master (zero chiamate GHL) invece di ri-scaricarle; gli
+      // unici due casi che restano SEMPRE un sync reale per-sito sono "users"
+      // (UNIQUE globale su email) e "location-info" (bootstrap company_id).
 
       // Risorse la cui syncAll/clone di QUESTO giro è stata interrotta da
       // un'eccezione (qualsiasi, non solo SourceBudgetError — vedi guardia

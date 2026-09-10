@@ -23,28 +23,47 @@ import { ensureUniqueInvoiceNumber } from "./mappers/commerce.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Trova un sito "gemello": stesso base_url+location_id (stesso account
- * GHL), source-sync abilitato, con almeno un contatto già sincronizzato.
- * Se più siti gemelli esistono, sceglie quello con più contatti (il più
- * "completo" da cui copiare).
+ * Decide il ruolo di questo sito nel rapporto master/slave ESPlicito
+ * (db/129_sync_master_slave.sql). SOSTITUISCE la vecchia
+ * findSiblingWithContacts, che sceglieva il sibling in base al numero di
+ * contatti sincronizzati (ORDER BY COUNT DESC): ambigua e SIMMETRICA quando i
+ * conteggi erano uguali (site 21 e 22 entrambi 14592) ⇒ entrambi clonavano
+ * dall'altro ⇒ nessuno chamava più GHL ⇒ dati fermi per sempre.
+ *
+ * Ora la decisione è deterministica e NON dipende da alcun conteggio:
+ *  - sync_master_site_id IS NULL ⇒ MASTER (o standalone): chiama SEMPRE il CRM
+ *    sorgente reale, non clona mai ⇒ { mode:"master", cloneFrom:null, skip:false }.
+ *  - sync_master_site_id = <id>  ⇒ SLAVE del master <id>. Clona SEMPRE dal
+ *    master quando è una fonte affidabile (esiste, è abilitato, è a sua volta
+ *    un master senza catene, stesso account/location) ⇒
+ *    { mode:"slave", cloneFrom:<id>, skip:false }.
+ *    Se la fonte NON è affidabile ⇒ { mode:"slave", cloneFrom:null, skip:true }:
+ *    lo slave SALTA il giro (gestito in runSync) e NON fa fallback a un sync
+ *    reale proprio — vedi commento in index.js e nel commit.
  */
-export async function findSiblingWithContacts(siteId, cfg) {
-  const r = await query(
-    `SELECT c.site_id, cnt.n
-       FROM source_sync_config c
-       JOIN LATERAL (
-         SELECT COUNT(*) AS n FROM contacts WHERE site_id = c.site_id AND ghl_id <> ''
-       ) cnt ON true
-      WHERE c.enabled = true
-        AND c.site_id != $1
-        AND c.base_url = $2
-        AND c.location_id = $3
-        AND cnt.n > 0
-      ORDER BY cnt.n DESC
-      LIMIT 1`,
-    [siteId, cfg.base_url, cfg.location_id]
-  );
-  return r.rows[0]?.site_id || null;
+export async function resolveSiblingSource(siteId, cfg) {
+  const masterId = cfg.sync_master_site_id;
+  if (masterId === null || masterId === undefined) {
+    return { mode: "master", cloneFrom: null, skip: false };
+  }
+  const master = (
+    await query(
+      "SELECT enabled, sync_master_site_id, base_url, location_id FROM source_sync_config WHERE site_id = $1",
+      [masterId]
+    )
+  ).rows[0];
+  // Master inesistente, catene (il "master" è a sua volta slave) o master
+  // disabilitato: nessuna fonte esplicita affidabile.
+  if (!master || master.sync_master_site_id !== null || !master.enabled) {
+    return { mode: "slave", cloneFrom: null, skip: true };
+  }
+  // La clonazione ha senso solo fra siti sullo STESSO account/location GHL:
+  // un mismatch è una configurazione errata (clonerebbe dati di una location
+  // diversa) ⇒ tratta il master come non disponibile (skip), non un fallback.
+  if (master.base_url !== cfg.base_url || master.location_id !== cfg.location_id) {
+    return { mode: "slave", cloneFrom: null, skip: true };
+  }
+  return { mode: "slave", cloneFrom: masterId, skip: false };
 }
 
 /**

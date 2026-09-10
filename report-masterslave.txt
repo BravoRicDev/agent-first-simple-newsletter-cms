@@ -1,0 +1,173 @@
+================================================================================
+REPORT — Fix CRITICO sync master/slave esplicito (fine stallo simmetrico siti 21/22)
+Pacchetto: d493d246-fixmasterslaveround.zip (lettura preliminare da
+opencode-handoff/SPIEGAZIONE_masterslave.txt + commit-info.txt dentro lo zip)
+================================================================================
+Data integrazione: 2026-09-10
+HEAD del repo all'integrazione: 27cbb31 (fix /contacts/search) — working tree pulito
+Scorciatoia "git push se stesso HEAD (c17dc6f sopra cdf9c28)" IGNORATA: HEAD nostro
+diverso, applicato tramite copia file + verifica diff (come richiesto).
+NESSUN commit/push/deploy eseguito qui.
+
+--------------------------------------------------------------------------------
+COSA HO TROVATO (verifica stato ATTUALE prima di sovrascrivere)
+--------------------------------------------------------------------------------
+Il pacchetto contiene 5 file applicabili (oltre ai 2 file di sola documentazione
+SPIEGAZIONE.txt / commit-info.txt gia letti):
+ - db/129_sync_master_slave.sql              (NUOVO)
+ - src/services/source-sync/clone-sibling.js (MOD: bersaglio previsto del fix)
+ - src/services/source-sync/index.js         (MOD: bersaglio previsto del fix)
+ - src/routes/agent-source-sync.js           (MOD: maschera/config master-slave)
+ - test/source-sync/master-slave.test.js     (NUOVO, 5 casi)
+
+Deriva dei sorgenti vs nostro repo — verificata con diff, TUTTA contenuta e coerente:
+ - clone-sibling.js : UN SOLO hunk (@@ -23,28 +23,47 @@), sostituisce
+   findSiblingWithContacts -> resolveSiblingSource. Il RESTO del file (13 funzioni
+   clone*FromSibling + helper condivisi) e' BYTE-IDENTICO al nostro (conteggi
+   occorrenze identici prima/dopo). Nessuna deriva.
+ - index.js         : 3 hunks limitati a (1) riga import findSiblingWithContacts->
+   resolveSiblingSource; (2) nuovo blocco che risolve il ruolo PRIMA di aprire il
+   run (skip slave se master non affidabile); (3) rimossa la vecchia
+   "const siblingSiteId = findSiblingWithContacts(...)" sostituita da un commento
+   (siblingSiteId ora arriva dal blocco nuovo, dichiarato 1 sola volta a scope di
+   funzione). Il dispatch a valle (if key==="contacts" && siblingSiteId =>
+   cloneContactsFromSibling, ecc.) e' INVARIATO, sito per sito.
+ - agent-source-sync.js : hunk confinati a maskConfig (+syncMasterSiteId/syncRole),
+   PUT config (validazione syncMasterSiteId) e INSERT/ON CONFLICT (colonna nuova).
+   Nulla d'altro toccato.
+
+Verifica rename sicuro: unico chiamante di clone-sibling.js in src/ e'
+source-sync/index.js (che il pacchetto aggiorna); dopo l'applicazione NESSUN
+riferimento FUNZIONANTE a findSiblingWithContacts resta (le 4 occorrenze residue
+sono solo COMMENTI che spiegano il vecchio bug in clone-sibling/index/test).
+
+Admin-import.js (NON nel pacchetto): controllato — INSERT con ELENCO COLONNE
+NOMINATO (12 colonne) che NON include sync_master_site_id, e ON CONFLICT non la
+tocca => default NULL (MASTER) preservato, nessun sito esistente declassato a
+slave. Conferma la nota del pacchetto.
+
+Migrazione 129 — numerazione e sicurezza:
+ - nessun conflitto: massima migrazione PRE-ESISTENTE in db/ era 128; 129 libera.
+ - contenuto idempotente: ADD COLUMN IF NOT EXISTS; CHECK "non master di se
+   stesso" protetto da IF NOT EXISTS su pg_constraint; indice parziale IF NOT
+   EXISTS; SEED (site21 master / site22 slave) UPDATE condizionato a EXISTS ->
+   no-op su DB dove i siti non esistono (stack test). FK ON DELETE SET NULL
+   (cancellando il master gli slave tornano master, non si rompono).
+
+--------------------------------------------------------------------------------
+FIX APPLICATI (file per file)
+--------------------------------------------------------------------------------
+1) db/129_sync_master_slave.sql
+   Nuova colonna source_sync_config.sync_master_site_id INT REFERENCES sites(id)
+   ON DELETE SET NULL + CHECK (<> site_id) + indice parziale + seed idempotente
+   (21 master, 22 slave di 21). NULL=>master (sync reale sempre), <id=>slave.
+
+2) src/services/source-sync/clone-sibling.js
+   findSiblingWithContacts (scelta per conteggio contatti, ORDINE BY COUNT DESC,
+   ambigua/simmetrica) SOSTITUITA da resolveSiblingSource(siteId,cfg) ->
+   {mode,cloneFrom,skip}: master (masterId null) cloneFrom null/skip false (sync
+   reale, mai clone anche con sibling piu ricco); slave -> cloneFrom=master solo
+   se master esiste, enabled, non-slave (no catene), stesso base_url+location_id;
+   altrimenti skip=true (niente fallback). NESSUN conteggio contatti coinvolto.
+   LE 13 FUNZIONI clone*FromSibling SONO TUTTE PRESENTI E INVARIATE (vedi sotto).
+
+3) src/services/source-sync/index.js (runSync)
+   Import aggiornato a resolveSiblingSource; ruolo risolto PRIMA di aprire la
+   riga in source_sync_runs (nessun run "running" orfano); se sibling.skip =>
+   ritorna {ok:false, reason:"master_disabled"} senza fallback a sync reale
+   (invariante "un solo chiamante GHL per location"); dryRun => si comporta da
+   master (nessuna clonazione, come prima). Dispatch risorse invariato.
+
+4) src/routes/agent-source-sync.js
+   maskConfig espone syncMasterSiteId + syncRole("master"|"slave"); PUT accetta
+   syncMasterSiteId con validazione set-time (null=>promuovi master, <id=>slave;
+   no self, no catene, stesso account/location; campo assente=>invariato); INSERT
+   include la colonna nuova.
+
+5) test/source-sync/master-slave.test.js (NUOVO)
+   5 regression-guard su resolveSiblingSource: master non clona mai (anche con
+   sibling 100+ contatti); slave clona sempre dal master designato (anche con 0
+   propri contatti e terzo sito piu ricco); slave salta se master disabilitato;
+   catene => skip; account diversi => skip.
+
+--------------------------------------------------------------------------------
+RISULTATI TEST
+--------------------------------------------------------------------------------
+Ambiente ISOLATO (nessun impatto su produzione):
+ - Container throwaway proprio: postgres:16-alpine name=opencode-pg-ms, host
+   port 55464, db ms_test. DATABASE_URL inline (dotenv non sovrascrive env gia'
+   impostata). DB produzione (gestione-siti-riccardom-db-1) MAI connesso:
+   rimasto "Up 2 days (healthy)". Container rimosso al termine.
+ - PRIMA ESECUZIONE migrate: un errore transitorio (run lanciato subito dopo
+   "pg ready" prima che il server acceptasse connessioni in modo stabile).
+   RIPRODOTTO da zero con UNA singola esecuzione pulita: exit=0, tutte le 129
+   migrazioni applicate, incluso "Migrato: 129_sync_master_slave.sql" +
+   "Migrazioni completate". NON un bug di 129 (idempotente, gira in un colpo
+   solo). Verificato nello schema: colonna sync_master_site_id (integer,
+   nullable), constraint source_sync_config_master_not_self, indice
+   idx_source_sync_config_master presenti; seed = no-op su DB test (0 slave).
+
+A) node --check su 4 file .js toccati (agent-source-sync, clone-sibling,
+   source-sync/index, master-slave.test): OK, 0 errori.
+B) test/source-sync/master-slave.test.js (nuovo):
+     5 test / 1 suite / pass 5 / fail 0. (tutti i 5 casi verdi)
+C) SUITE clone-parity COMPLETA: `node --test test/clone-parity/*.test.js`
+     191 test / 19 suite / pass 191 / fail 0. Nessuna regressione.
+D) SUITE source-sync COMPLETA (incl. master-slave): `node --test test/source-sync/*.test.js`
+     25 test / pass 19 / fail 5.
+     I 5 fallimenti sono gli STESSI PRE-ESISTENTI ("core mappers M1":
+     primo sync / idempotenza S4 / adozione S1 + "opportunities+calendars+
+     conversations" + "conversations with inline messages").
+     CONFERMA no-regressione: ho eseguito la BASELINE pre-fix (mie 3 src file
+     temporaneamente stashte, solo i 4 test file pre-esistenti) => 20 test /
+     14 pass / 5 fail con GLI STESSI 5 nomi. Con il fix + master-slave: 25 test
+     / 19 pass / 5 fail => +5 nuovi passanti, STESSI 5 fallimenti pre-esistenti,
+     NESSUNA nuova regressione. (Quei 5 dipendono dal mock-source/ambiente, gia'
+     noti su e9a337b/728a129/27cbb31; non importano i file toccati dal fix.)
+
+--------------------------------------------------------------------------------
+CONFERMA ESPLICITA DI NON-PERDITA CODICE (richiesta)
+--------------------------------------------------------------------------------
+[OK] Le 13 funzioni clone*FromSibling sono PRESENTI e INVARIATE dopo le modifiche
+     (verificato post-applicazione e post-stash-test):
+       grep -c '^export async function clone[A-Za-z]+FromSibling'
+         clone-sibling.js = 13
+     Elenco: cloneContactsFromSibling, cloneCustomFieldsFromSibling,
+     cloneCustomValuesFromSibling, cloneTagsFromSibling, clonePipelinesFromSibling,
+     cloneCalendarsFromSibling, cloneFormsFromSibling, cloneSurveysFromSibling,
+     cloneCampaignsFromSibling, cloneGhlWorkflowsFromSibling, cloneFunnelsFromSibling,
+     cloneCommerceFromSibling, cloneInvoicesFromSibling
+     (+ helper condivisi cloneChildTableFromSibling / cloneSimpleTableFromSibling,
+      occorrenze identiche prima/dopo). Unica export aggiunta: resolveSiblingSource;
+     unica export rimossa: findSiblingWithContacts (sostituita di proposito).
+[OK] src/services/source-sync/mappers/contacts.js NON fa parte del pacchetto ed e'
+     risultato NON modificato (`git status` vuoto su quel file). Codice di sicurezza
+     anti-perdita-dati INTATTO:
+       paginateSearchSorted: 3 occorrenze
+       earlyStopEnabled:     3 occorrenze
+       consecutiveUnchanged: 8 occorrenze
+
+--------------------------------------------------------------------------------
+STATO FINALE
+--------------------------------------------------------------------------------
+ - 3 file tracked MODIFICATI (src/routes/agent-source-sync.js,
+   src/services/source-sync/clone-sibling.js, src/services/source-sync/index.js)
+   + 2 NUOVI (db/129_sync_master_slave.sql, test/source-sync/master-slave.test.js).
+ - NESSUN commit / push / deploy. La migrazione 129 sara' applicata dal deploy al
+   prossimo avvio del container (come le precedenti).
+ - pkg-masterslave/ rimosso; zip + SPIEGAZIONE_masterslave.txt rimossi;
+   cartella opencode-handoff/ rimossa (era vuota).
+ - Container Postgres throwaway rimosso; produzione mai toccata.
+
+NOTA OPERATIVA (dal pacchetto, per chi fa il deploy):
+ - Default colonna NULL => dopo il deploy e PRIMA del seed tutti i siti sono
+   MASTER (comportamento sicuro: sync reale, mai clone accidentale).
+ - Il seed imposta site 22 = slave di 21 solo se entrambi esistono e 21 e' master:
+   su produzione 21/22 esistenti avra' effetto; altrove no-op.
+ - Il MASTER (site 21) deve restare enabled=true + token GHL valido: se disabilitato
+   gli slave SALTERANNO il giro (reason master_disabled) invece di sincronizzare da
+   soli — scelta di sicurezza voluta (invariante "un solo chiamante GHL per
+   location"), NON un bug.
+ - Campo startAfterId/cursore e shape ridotta contatti: sempre fuori scope (gia'
+   segnalati nei giri precedenti).
+================================================================================

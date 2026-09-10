@@ -47,6 +47,12 @@ function maskConfig(row) {
     minIntervalMinutes: row.min_interval_minutes,
     callsDate: row.calls_date,
     callsCount: row.calls_count,
+    // Rapporto master/slave esplicito (db/129_sync_master_slave.sql):
+    // null ⇒ master/standalone (chiama sempre il CRM sorgente reale);
+    // <id> ⇒ slave che clona sempre dal master indicato. syncRole è una
+    // derivazione comoda per il client (nessun campo di stato separato).
+    syncMasterSiteId: row.sync_master_site_id ?? null,
+    syncRole: row.sync_master_site_id ? "slave" : "master",
     // Push bidirezionale (CMS → CRM sorgente, opzionale per sito).
     pushEnabled: !!row.push_enabled,
     pushDirection: row.push_direction || "in",
@@ -107,12 +113,52 @@ export function registerSourceSyncRoutes(router) {
         ? b.pushDirection
         : String(val("pushDirection") || "in");
 
+      // master/slave esplicito (db/129). syncMasterSiteId: null/"" ⇒ questo
+      // sito diventa MASTER (sync reale); <id> ⇒ SLAVE di quel master. Il
+      // master deve esistere, non essere sé stesso, non essere a sua volta
+      // slave (no catene) e condividere lo stesso account/location (stesso
+      // base_url+location_id) — altrimenti la clonazione copierebbe dati di
+      // una location diversa. Se il campo non è presente nel body, resta
+      // invariato (COALESCE-like: riusiamo il valore corrente).
+      let syncMasterSiteId = current ? current.sync_master_site_id ?? null : null;
+      if (b.syncMasterSiteId !== undefined) {
+        if (b.syncMasterSiteId === null || b.syncMasterSiteId === "") {
+          syncMasterSiteId = null;
+        } else {
+          const masterId = parseInt(b.syncMasterSiteId, 10);
+          if (!Number.isFinite(masterId) || masterId <= 0) {
+            return res.status(400).json({ error: "syncMasterSiteId deve essere null o un id di sito positivo" });
+          }
+          if (masterId === siteId) {
+            return res.status(400).json({ error: "un sito non può essere master di sé stesso" });
+          }
+          const master = (
+            await query(
+              "SELECT sync_master_site_id, base_url, location_id FROM source_sync_config WHERE site_id = $1",
+              [masterId]
+            )
+          ).rows[0];
+          if (!master) {
+            return res.status(400).json({ error: "master non trovato: quel sito non ha una config source-sync" });
+          }
+          if (master.sync_master_site_id !== null) {
+            return res.status(400).json({ error: "catene non supportate: il master indicato è a sua volta uno slave" });
+          }
+          const baseUrl = String(val("baseUrl") || "");
+          const locationId = String(val("locationId") || "");
+          if (master.base_url !== baseUrl || master.location_id !== locationId) {
+            return res.status(400).json({ error: "master/slave devono condividere lo stesso base_url+location_id (stesso account GHL)" });
+          }
+          syncMasterSiteId = masterId;
+        }
+      }
+
       await query(
         `INSERT INTO source_sync_config
            (site_id, enabled, base_url, location_id, company_id, token_enc, match_by_email,
             handle_deletes, throttle_rps, daily_quota, budget_percent, min_interval_minutes,
-            push_enabled, push_direction, push_events)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            push_enabled, push_direction, push_events, sync_master_site_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          ON CONFLICT (site_id) DO UPDATE SET
            enabled = EXCLUDED.enabled,
            base_url = EXCLUDED.base_url,
@@ -128,6 +174,7 @@ export function registerSourceSyncRoutes(router) {
            push_enabled = EXCLUDED.push_enabled,
            push_direction = EXCLUDED.push_direction,
            push_events = EXCLUDED.push_events,
+           sync_master_site_id = EXCLUDED.sync_master_site_id,
            updated_at = NOW()`,
         [
           siteId,
@@ -145,6 +192,7 @@ export function registerSourceSyncRoutes(router) {
           b.pushEnabled !== undefined ? b.pushEnabled === true : val("pushEnabled") === true,
           pushDirection,
           JSON.stringify(pushEvents.slice(0, 10)),
+          syncMasterSiteId,
         ]
       );
       const fresh = (
