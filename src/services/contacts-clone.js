@@ -258,7 +258,7 @@ export async function createContact(siteId, data = {}) {
         fieldKey = await resolveCustomFieldKey(siteId, cf.key);
       }
       if (fieldKey) {
-        mergeData[fieldKey] = cf.value ?? cf.field_value ?? "";
+        customValues[fieldKey] = cf.value ?? cf.field_value ?? "";
       } else {
         console.warn(`customField: impossibile risolvere key/id "${cf.id || cf.key}" — entry ignorata`);
       }
