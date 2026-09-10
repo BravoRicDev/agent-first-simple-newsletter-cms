@@ -1,0 +1,153 @@
+================================================================================
+REPORT — Fix caccia sotto-risorse selettiva (ottimizzazione budget sync)
+Pacchetto: 98a934c3-fixhuntoptimizationround.zip (lettura preliminare da
+opencode-handoff/SPIEGAZIONE_hunt.txt + commit-info.txt dentro lo zip)
+================================================================================
+Data integrazione: 2026-09-10
+HEAD all'integrazione: 370b29e (fix master/slave) — working tree pulito
+Scorciatoia "git push se stesso HEAD (f8a1e51 sopra 86e9189)" IGNORATA: HEAD nostro
+diverso, applicato tramite copia file + diff attento (come richiesto).
+NESSUN commit/push/deploy eseguito qui.
+
+--------------------------------------------------------------------------------
+COSA HO TROVATO (diff attento prima di sovrascrivere — VERIFICA CRITICA)
+--------------------------------------------------------------------------------
+Il pacchetto contiene 2 soli file applicabili (nessuna migrazione, come dichiarato):
+ - src/services/source-sync/mappers/contacts.js  (MOD, bersaglio previsto)
+ - test/source-sync/subresource-hunt.test.js     (NUOVO, 4 casi)
+
+Verifica che il pacchetto sia ADDITIVO sopra il codice di guardia anti-perdita
+gia' in produzione (earlyStopEnabled / paginateSearchSorted / consecutiveUnchanged)
+e NON lo sostituisca/rimuova — fatta con `diff -u` file-per-file:
+
+  ESITO: il pacchetto e' scritto CORRETTAMENTE sopra la versione ATTUALE (quella
+  con la guardia). Il diff mostra UNA SOLA direzione di cambiamento: il codice di
+  guardia compare IDENTICO sia nel "-" (contesto/riprodotto) sia nel "+" della
+  nuova versione. In particolare il diff TOCCA solo:
+    - aggiunge constant SUBRESOURCE_FULL_HUNT_INTERVAL_MS (6h) + 2 helper
+      isFullSubresourceHuntDue()/markFullSubresourceHuntDone() su source_sync_state;
+    - aggiunge "let fullHuntDue" (valutato 1x per giro, dryRun protetto);
+    - dentro il loop di pagina aggiunge changedExtIds + un flag "changed" sui 3
+      rami azione, SENZA alterare la logica consecutiveUnchanged dei rami;
+    - sostituisce "onPage(pageExtIds)" con "onPage(huntIds)" dove
+      huntIds = fullHuntDue ? pageExtIds : changedExtIds (la caccia selettiva);
+    - dopo il walk senza throw, scrive la watermark (solo se era full hunt e !dryRun).
+  NON rimosso NESSUNA riga della guardia. storeProfiles (scrittura locale, NON
+  chiamata API) resta chiamato invariato per ogni contatto con row.id.
+  => NESSUN merge manuale necessario: la copia del file del pacchetto equivale al
+     merge "solo aggiuntivo", perche' il file consegnato contiene GIA' tutta la
+     guardia. Copiato sopra il file attuale.
+
+Post-applicazione, la guardia risulta PRESENTE e intatta (conteggi occorrenze
+identici a prima, 8/3/3 +2 EARLY_STOP_THRESHOLD) — vedi conferma esplicita in fondo.
+
+Nessun conflitto di migrazione: la nuova watermark usa la TABELLA ESISTENTE
+source_sync_state (db/084_source_sync.sql) con PK (site_id, resource_type) e
+colonna watermark -> l'ON CONFLICT (site_id, resource_type) del nuovo helper e'
+già coperto dal PK esistente. Confermato che il package NON introduce db/*.sql.
+Migrazione massima attuale: 129 (invariata).
+
+Rischio noto valutato (documentato nel pacchetto, NON un bug introdotto qui):
+interazione full-hunt + early-stop. Se un giro "full hunt" si interrompe con
+early-stop (25 unchanged consecutivi), la watermark viene comunque scritta: la
+pagina 1 (contatti piu' recenti) e' sempre processata e cacciata integralmente in
+quel giro, quindi una sotto-risorsa orfana su un contatto vecchio puo' essere
+ripresa al successivo full sweep. Coerente con l'obiettivo (ritardo worst-case
+<= intervallo, non "mai"), e NON peggiore del comportamento pre-fiss (l'early-stop
+gia' non scaricava le pagine oltre la soglia).
+
+--------------------------------------------------------------------------------
+FIX APPLICATI (file per file)
+--------------------------------------------------------------------------------
+1) src/services/source-sync/mappers/contacts.js  (ADDITIVO sopra la guardia)
+   - Costante SUBRESOURCE_FULL_HUNT_INTERVAL_MS = 6 ore (nominale, tarabile).
+   - isFullSubresourceHuntDue(siteId): true se watermark 'contacts-subresources'
+     assente o piu' vecchia dell'intervallo (letta da source_sync_state).
+   - markFullSubresourceHuntDone(siteId): upsert della watermark
+     (resource_type 'contacts-subresources', ON CONFLICT PK).
+   - syncAll: valuta fullHuntDue UNA volta per giro (dryRun => false, non tocca
+     DB); per ogni pagina costruisce changedExtIds (solo azione inserted/updated/
+     adopted) e passa a onPage huntIds = (fullHuntDue ? tutta la pagina : solo
+     cambiati); scrive la watermark SOLO se era full hunt e il walk e' completo
+     senza eccezioni (un giro interrotto ritenta il full sweep, non "consuma"
+     l'intervallo).
+   - GUARDIA anti-perdita-dati INVARATA: earlyStopEnabled da prev.last_status=="ok",
+     consecutiveUnchanged reset sui cambiati / ++ su unchanged / reset su errore,
+     soglia EARLY_STOP_THRESHOLD=25 con return false a paginateSearchSorted.
+     paginateSearchSorted continua a essere l'entrypoint della pagina.
+   - index.js NON toccato (l'hook onPage riceve solo meno id). Amministrativi:
+     NESSUNA modifica a client.js / storeProfiles.
+
+2) test/source-sync/subresource-hunt.test.js (NUOVO, 4 casi, client finto deterministico)
+   * non-due: onPage riceve SOLO gli id cambiati, mai gli unchanged;
+   * due (watermark assente): onPage riceve tutta la pagina + watermark scritta;
+   * due (watermark vecchia di 7 ore > intervallo): caccia completa di nuovo;
+   * non-due e tutto unchanged: onPage MAI chiamato (costo ~0), contatto skipped.
+
+--------------------------------------------------------------------------------
+RISULTATI TEST
+--------------------------------------------------------------------------------
+Ambiente ISOLATO (nessun impatto su produzione):
+ - Container throwaway proprio: postgres:16-alpine name=opencode-pg-hunt, host
+   port 55465, db hu_test. DATABASE_URL inline. DB produzione
+   (gestione-siti-riccardom-db-1) MAI connesso: rimasto "Up 2 days (healthy)".
+   Container rimosso al termine.
+ - node db/migrate.js eseguito "per sicurezza" come richiesto: completa pulito,
+   massima migrazione = 129_sync_master_slave.sql (NESSUNA nuova migrazione dal
+   pacchetto; conferma).
+
+A) node --check su 2 file toccati (contacts.js + subresource-hunt.test.js): OK.
+B) test/source-sync/subresource-hunt.test.js (nuovo): 4 test / pass 4 / fail 0.
+C) SUITE clone-parity COMPLETA: 191 test / 19 suite / pass 191 / fail 0 (nessuna
+   regressione).
+D) SUITE source-sync COMPLETA (core, forms-campaigns-commerce, opps-cal-conv,
+   regression-fixes, master-slave, subresource-hunt): 29 test / pass 23 / fail 5.
+   - I pass salgono da 19 a 23: ESATTAMENTE i 4 nuovi test di subresource-hunt.
+   - I 5 fallimenti sono gli STESSI pre-esistenti (core mappers M1: "primo sync",
+     "secondo sync idempotenza S4", "adozione S1" + "opportunities+calendars+
+     conversations sync" + "conversations with inline messages").
+   - CONFERMA no-regressione: BASELINE con contacts.js revertito (stash) => STESSI
+     5 fallimenti identici => la modifica non ne introduce di nuovi ne' aggrava
+     quelli esistenti (dipendono dal mock-source/ambiente, abortiscono prima dei
+     percorsi contatti toccati).
+
+--------------------------------------------------------------------------------
+CONFERMA ESPLICITA (richiesta dal developer)
+--------------------------------------------------------------------------------
+[OK] Dopo le MIE modifiche, in src/services/source-sync/mappers/contacts.js sono
+     PRESENTI e FUNZIONANTI i 3 meccanismi di guardia anti-perdita-dati:
+       - paginateSearchSorted : usato come entrypoint di paginazione ordinata per
+                                dateUpdated (riga ~238), invariato.
+       - earlyStopEnabled     : risolto da prev?.last_status === "ok" (~218/226),
+                                invariato.
+       - consecutiveUnchanged : reset(0) sui rami inserted/updated/adopted (~250-
+                                252), ++ sul ramo unchanged (~253), reset(0) sul
+                                ramo errore (~264), guardia
+                                "earlyStopEnabled && consecutiveUnchanged >=
+                                EARLY_STOP_THRESHOLD -> return false" (~279-281).
+     Occorrenze: consecutiveUnchanged x8, earlyStopEnabled x3, paginateSearchSorted
+     x3, EARLY_STOP_THRESHOLD x2 — identiche al pre-fiss (aggiunte solo "changed =
+     true" accanto ai reset, senza toccare i reset).
+[OK] FUNZIONALITA' provata dai test: i 4 nuovi casi esegueno syncAll sul Percorso
+     reale (paginateSearchSorted invocato, rami azione percorsi); in particolare il
+     caso "non-due e tutto unchanged -> onPage MAI chiamato + skipped=1" dimostra
+     che il contatore unchanged e il filtraggio caccia cooperano. La baseline e la
+     suite completa restano verdi come atteso.
+[OK] Nessun altro file toccato al di fuori dei 2 previsti (git status mostra solo
+     contacts.js modificato + subresource-hunt.test.js nuovo).
+
+--------------------------------------------------------------------------------
+STATO FINALE
+--------------------------------------------------------------------------------
+ - 1 file MODIFICATO (src/services/source-sync/mappers/contacts.js)
+   + 1 file NUOVO (test/source-sync/subresource-hunt.test.js) nel working tree.
+ - NESSUN commit / push / deploy (in carico a Claude). Nessuna migrazione da
+   applicare (il pacchetto non ne contiene).
+ - pkg-hunt/ rimosso; zip + SPIEGAZIONE_hunt.txt rimossi; cartella
+   opencode-handoff/ rimossa (era vuota).
+ - Container Postgres throwaway rimosso; produzione mai toccata.
+ - Prerequisito raggiunto: dopo il deploy di questo fix sara' sicuro abbassare
+   source_sync_config.min_interval_minutes del master (site 21) a 2-3 minuti senza
+   saturare il budget giornaliero (caccia sotto-risorse ~0 in regime stabile,
+   +1 full sweep ogni 6h).
+================================================================================

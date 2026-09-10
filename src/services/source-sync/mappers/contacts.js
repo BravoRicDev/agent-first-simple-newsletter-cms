@@ -142,6 +142,49 @@ async function storeProfiles(ctx, contactId, contact) {
 // sicurezza contro casi limite di ordinamento/tie-break).
 const EARLY_STOP_THRESHOLD = 25;
 
+// Intervallo massimo fra due "caccia COMPLETA" delle sotto-risorse (note/task/
+// opportunità/conversazioni/appuntamenti) per i contatti GIÀ sincronizzati.
+//
+// PERCHÉ SERVE (verifica di correttezza, 2026-09-10): il `dateUpdated` del
+// CONTATTO su GHL NON cambia quando si aggiunge/modifica una sotto-risorsa
+// collegata. Sono oggetti indipendenti con timestamp propri, recuperati via
+// endpoint per-contatto dedicati — NON embedded nel payload di
+// /contacts/search. Confermato dall'architettura del sync: opportunities e
+// conversations hanno SOLO syncForContacts (nessuno sweep location-level), gli
+// appuntamenti solo syncAppointmentsForContacts, note/task dentro
+// contacts.syncForContacts. ⇒ la caccia per-contatto è l'UNICA via per quelle
+// risorse.
+//
+// Se filtrassimo la caccia ai SOLI contatti "cambiati" (azione != unchanged),
+// una nuova nota/appuntamento/opportunità su un contatto altrimenti invariato
+// NON bumpa il dateUpdated padre ⇒ contatto "unchanged" ⇒ mai più cacciato ⇒
+// dati persi in silenzio. Per questo, oltre alla caccia dei contatti cambiati
+// (costo ~0 in regime stabile), ripetiamo una caccia COMPLETA della pagina al
+// massimo ogni questo intervallo: il ritardo peggiore per una sotto-risorsa
+// aggiunta su un contatto invariato è l'intervallo, non "mai".
+const SUBRESOURCE_FULL_HUNT_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 ore
+
+async function isFullSubresourceHuntDue(siteId) {
+  const row = (
+    await query(
+      "SELECT watermark FROM source_sync_state WHERE site_id = $1 AND resource_type = 'contacts-subresources'",
+      [siteId]
+    )
+  ).rows[0];
+  if (!row || !row.watermark) return true;
+  return Date.now() - new Date(row.watermark).getTime() >= SUBRESOURCE_FULL_HUNT_INTERVAL_MS;
+}
+
+async function markFullSubresourceHuntDone(siteId) {
+  await query(
+    `INSERT INTO source_sync_state (site_id, resource_type, watermark, last_run_at, last_status, last_counts)
+     VALUES ($1, 'contacts-subresources', NOW(), NOW(), 'ok', '{}')
+     ON CONFLICT (site_id, resource_type) DO UPDATE SET
+       watermark = NOW(), last_run_at = NOW(), last_status = 'ok'`,
+    [siteId]
+  );
+}
+
 export async function syncAll(ctx, onPage) {
   const { siteId, client, cfg, dryRun, addStat, knownContacts, log } = ctx;
 
@@ -184,6 +227,13 @@ export async function syncAll(ctx, onPage) {
   }
   let consecutiveUnchanged = 0;
 
+  // La caccia completa periodica delle sotto-risorse è indipendente dallo
+  // stop-anticipato: si valuta una volta per giro (dryRun: mai, non tocca DB).
+  let fullHuntDue = false;
+  if (!dryRun) {
+    fullHuntDue = await isFullSubresourceHuntDue(siteId);
+  }
+
   try {
     await client.paginateSearchSorted(
       "/contacts/search",
@@ -191,18 +241,21 @@ export async function syncAll(ctx, onPage) {
       async (pageContacts) => {
         addStat("contacts", "fetched", pageContacts.length);
         const pageExtIds = [];
+        const changedExtIds = [];
 
         for (const c of pageContacts) {
           try {
             const { row, action } = await upsertContact(ctx, c.id, c);
-            if (action === "inserted") { addStat("contacts", "upserted", 1); consecutiveUnchanged = 0; }
-            else if (action === "updated") { addStat("contacts", "updated", 1); consecutiveUnchanged = 0; }
-            else if (action === "adopted") { addStat("contacts", "updated", 1); consecutiveUnchanged = 0; }
+            let changed = false;
+            if (action === "inserted") { addStat("contacts", "upserted", 1); consecutiveUnchanged = 0; changed = true; }
+            else if (action === "updated") { addStat("contacts", "updated", 1); consecutiveUnchanged = 0; changed = true; }
+            else if (action === "adopted") { addStat("contacts", "updated", 1); consecutiveUnchanged = 0; changed = true; }
             else { addStat("contacts", "skipped", 1); consecutiveUnchanged++; }
 
             if (row && row.id) {
               pageExtIds.push(c.id);
               knownContacts.add(c.id);
+              if (changed) changedExtIds.push(c.id);
               await storeProfiles(ctx, row.id, c);
             }
           } catch (err) {
@@ -212,8 +265,15 @@ export async function syncAll(ctx, onPage) {
           }
         }
 
-        if (onPage && pageExtIds.length > 0) {
-          await onPage(pageExtIds);
+        // COSTO: in regime stabile la pagina è quasi tutta "unchanged". Caccia
+        // le sotto-risorse (4-5 chiamate API a contatto) SOLO per i contatti
+        // cambiati; al massimo ogni SUBRESOURCE_FULL_HUNT_INTERVAL_MS, invece,
+        // per TUTTA la pagina — così una sotto-risorsa aggiunta su un contatto
+        // invariato viene comunque ripresa entro l'intervallo (vedi commento:
+        // il dateUpdated del contatto padre non la bumpa).
+        const huntIds = fullHuntDue ? pageExtIds : changedExtIds;
+        if (onPage && huntIds.length > 0) {
+          await onPage(huntIds);
         }
 
         if (earlyStopEnabled && consecutiveUnchanged >= EARLY_STOP_THRESHOLD) {
@@ -223,6 +283,11 @@ export async function syncAll(ctx, onPage) {
         return undefined;
       }
     );
+    // Walk completato senza throw: se era una caccia completa, registra la
+    // watermark (altrimenti il prossimo giro ritenta il full sweep).
+    if (fullHuntDue && !dryRun) {
+      await markFullSubresourceHuntDone(siteId);
+    }
   } catch (err) {
     addStat("contacts", "errors", 1);
     log(`syncAll contacts fallito: ${err.message}`);
