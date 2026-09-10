@@ -186,7 +186,26 @@ export async function cloneContactsFromSibling(ctx, siblingSiteId) {
     );
     addStat("contacts", "upserted", apptRes.rowCount);
 
-    log(`cloneContactsFromSibling: ${contactsRes.rowCount} contatti, ${notesRes.rowCount} note, ${tasksRes.rowCount} task, ${oppsRes.rowCount} opportunità, ${convRes.rowCount} conversazioni, ${msgCount} messaggi, ${apptRes.rowCount} appuntamenti copiati da site ${siblingSiteId} (zero chiamate GHL)`);
+    // Valori custom del profilo contatto (firstName/lastName/phone/ecc.):
+    // senza questa copia, i contatti clonati arrivavano "vuoti" di profilo
+    // sul sito target pur avendo lo stesso ghl_id del sorgente — mancava
+    // qui, non coperta da cloneCustomValuesFromSibling (quella copia
+    // ghl_custom_values, il mirror read-only del CRM sorgente, tabella
+    // diversa dal contact_custom_values usato dal clone-API).
+    const customValuesRes = await query(
+      `INSERT INTO contact_custom_values (site_id, contact_id, object_key, values, updated_at)
+       SELECT $1, tc.id, ccv.object_key, ccv.values, ccv.updated_at
+       FROM contact_custom_values ccv
+       JOIN contacts sc ON sc.id = ccv.contact_id AND sc.site_id = $2
+       JOIN contacts tc ON tc.site_id = $1 AND tc.ghl_id = sc.ghl_id AND sc.ghl_id <> ''
+       WHERE ccv.site_id = $2
+       ON CONFLICT (site_id, contact_id, object_key) DO UPDATE SET
+         values = EXCLUDED.values, updated_at = EXCLUDED.updated_at`,
+      [siteId, siblingSiteId]
+    );
+    addStat("contacts", "upserted", customValuesRes.rowCount);
+
+    log(`cloneContactsFromSibling: ${contactsRes.rowCount} contatti, ${notesRes.rowCount} note, ${tasksRes.rowCount} task, ${oppsRes.rowCount} opportunità, ${convRes.rowCount} conversazioni, ${msgCount} messaggi, ${apptRes.rowCount} appuntamenti, ${customValuesRes.rowCount} valori custom copiati da site ${siblingSiteId} (zero chiamate GHL)`);
   } catch (err) {
     logger.error(`cloneContactsFromSibling (site ${siteId} da ${siblingSiteId}): ${err.message}`);
     addStat("contacts", "errors", 1);

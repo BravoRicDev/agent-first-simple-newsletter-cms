@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, buildMeta, sendList, getLocationId,
+  sendError, httpError, requireAnyId, getPaging, buildMeta, sendList, getLocationId,
 } from "./_helpers.js";
 import * as opportunitiesClone from "../../services/opportunities-clone.js";
 
@@ -115,7 +115,7 @@ router.post("/opportunities/upsert", async (req, res, next) => {
 router.get("/opportunities/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const opp = await opportunitiesClone.getOpportunity(req.tenant.siteId, id, locationId);
@@ -129,7 +129,7 @@ router.get("/opportunities/:id", async (req, res, next) => {
 router.put("/opportunities/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -154,7 +154,7 @@ router.put("/opportunities/:id", async (req, res, next) => {
 
 router.delete("/opportunities/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await opportunitiesClone.deleteOpportunity(req.tenant.siteId, id);
@@ -168,7 +168,7 @@ router.delete("/opportunities/:id", async (req, res, next) => {
 router.put("/opportunities/:id/status", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const status = req.body.status;
@@ -186,7 +186,7 @@ router.put("/opportunities/:id/status", async (req, res, next) => {
 
 router.get("/opportunities/:id/followers", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const followers = await opportunitiesClone.listOpportunityFollowers(req.tenant.siteId, id);
@@ -198,11 +198,13 @@ router.get("/opportunities/:id/followers", async (req, res, next) => {
 
 router.post("/opportunities/:id/followers", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const userId = req.body.userId;
-    if (!userId || !isValidUuid(userId)) return sendError(res, 400, "userId non valido");
+    if (!userId || typeof userId !== "string" || !userId.trim() || userId.length > 255) {
+      return sendError(res, 400, "userId non valido");
+    }
 
     const follower = await opportunitiesClone.addOpportunityFollower(req.tenant.siteId, id, userId);
     if (!follower) return sendError(res, 404, "Opportunità o utente non trovato");
@@ -214,9 +216,9 @@ router.post("/opportunities/:id/followers", async (req, res, next) => {
 
 router.delete("/opportunities/:id/followers/:userId", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
-    const userId = requireUuid(req.params.userId, res);
+    const userId = requireAnyId(req.params.userId, res);
     if (!userId) return;
 
     const count = await opportunitiesClone.removeOpportunityFollower(req.tenant.siteId, id, userId);
@@ -258,7 +260,7 @@ router.post("/pipelines", async (req, res, next) => {
 router.get("/pipelines/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const pipeline = await opportunitiesClone.getPipeline(req.tenant.siteId, id, locationId);
@@ -272,7 +274,7 @@ router.get("/pipelines/:id", async (req, res, next) => {
 router.put("/pipelines/:id", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const input = {
@@ -290,7 +292,7 @@ router.put("/pipelines/:id", async (req, res, next) => {
 
 router.delete("/pipelines/:id", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.id, res);
+    const id = requireAnyId(req.params.id, res);
     if (!id) return;
 
     const count = await opportunitiesClone.deletePipeline(req.tenant.siteId, id);

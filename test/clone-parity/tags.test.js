@@ -139,8 +139,18 @@ describe("Clone API — Tags (Onda A)", () => {
     assert.equal(res.status, 404);
   });
 
-  test("GET /tags/:id 400 uuid invalido", async () => {
+  // Parity ghl_id: "invalid-uuid" è un formato di id valido (potrebbe essere
+  // un ghl_id reale) — requireAnyId/findByAnyId lo accettano e rispondono 404
+  // (non trovato), non più 400 come quando si accettavano solo UUID.
+  test("GET /tags/:id — id non-UUID ma valido come formato, nessun match → 404", async () => {
     const res = await fetch(url("/tags/invalid-uuid"), {
+      headers: auth(),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("GET /tags/:id — id malformato (300 char) → 400", async () => {
+    const res = await fetch(url(`/tags/${"x".repeat(300)}`), {
       headers: auth(),
     });
     assert.equal(res.status, 400);
@@ -187,5 +197,64 @@ describe("Clone API — Tags (Onda A)", () => {
       headers: auth(),
     });
     assert.equal(getRes.status, 404);
+  });
+
+  // Round-trip test: tag creato via API, ghl_id sovrascritto in DB,
+  test("round-trip GET/PUT/DELETE col ghl_id reale", async () => {
+    // 1) Crea un tag via API
+    const createRes = await fetch(url("/tags"), {
+      method: "POST",
+      headers: auth(),
+      body: JSON.stringify({ name: "RtTag", color: "#123456" }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = (await createRes.json()).tag;
+    assert.ok(created.id, "uuid assente");
+    assert.equal(created.name, "RtTag");
+
+    // 2) Sovrascrivi il suo ghl_id nel DB con un valore alfanumerico reale GHL
+    // NOTA: created.id è il campo "id" esposto in risposta (external_id, dato
+    // che ghl_id è ancora vuoto alla creazione) — NON la PK intera "id" della
+    // tabella tags, quindi il match va fatto su external_id.
+    const realGhlId = "ghl_12345_abcde";
+    await query(
+      `UPDATE tags SET ghl_id = $1 WHERE external_id = $2`,
+      [realGhlId, created.id]
+    );
+
+    // 3) GET col ghl_id reale al posto dell'UUID deve restituire 200
+    const getRes = await fetch(url(`/tags/${realGhlId}`), {
+      headers: auth(),
+    });
+    assert.equal(getRes.status, 200);
+    const body = await getRes.json();
+    assert.equal(body.tag.id, realGhlId, "id risposta deve essere il ghl_id reale");
+    assert.equal(body.tag.name, "RtTag");
+
+    // 4) PUT col ghl_id reale deve funzionare
+    const putRes = await fetch(url(`/tags/${realGhlId}`), {
+      method: "PUT",
+      headers: auth(),
+      body: JSON.stringify({ name: "RtTagUpdated", color: "#abcdef" }),
+    });
+    assert.equal(putRes.status, 200);
+    const updated = await putRes.json();
+    assert.equal(updated.tag.name, "RtTagUpdated");
+    assert.equal(updated.tag.color, "#abcdef");
+
+    // 5) DELETE col ghl_id reale deve funzionare
+    const deleteRes = await fetch(url(`/tags/${realGhlId}`), {
+      method: "DELETE",
+      headers: auth(),
+    });
+    assert.equal(deleteRes.status, 200);
+    const deleted = await deleteRes.json();
+    assert.equal(deleted.deleted, true);
+
+    // 6) GET dopo DELETE deve restituire 404
+    const getAfterDel = await fetch(url(`/tags/${realGhlId}`), {
+      headers: auth(),
+    });
+    assert.equal(getAfterDel.status, 404);
   });
 });

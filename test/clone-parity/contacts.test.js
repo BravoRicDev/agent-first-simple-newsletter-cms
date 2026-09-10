@@ -133,8 +133,18 @@ describe("ONDA A — Contacts clone API", () => {
     assert.equal(contact.firstName, "Jane");
   });
 
-  test("GET /contacts/:contactId — uuid invalido → 400", async () => {
+  // NOTA parity ghl_id: "not-a-uuid" è un formato di id valido (potrebbe
+  // essere un ghl_id reale del CRM sorgente) — findByAnyId/requireAnyId
+  // lo accettano e rispondono 404 (non trovato), non più 400.
+  test("GET /contacts/:contactId — id non-UUID ma valido come formato, nessun match → 404", async () => {
     const res = await fetch(buildUrl("/contacts/not-a-uuid"), {
+      headers: h(apiKey.raw),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test("GET /contacts/:contactId — id vuoto/malformato → 400", async () => {
+    const res = await fetch(buildUrl(`/contacts/${"x".repeat(300)}`), {
       headers: h(apiKey.raw),
     });
     assert.equal(res.status, 400);
@@ -590,5 +600,157 @@ describe("ONDA A — Contacts clone API", () => {
     assert.equal(res.status, 200);
     const { appointments, meta } = await res.json();
     assert.ok(Array.isArray(appointments));
+  });
+
+  // ── Parity ghl_id: round-trip su contatto, nota, task, follower ──
+  // Verifica che l'id reale GHL (non UUID) sia accettato in input e
+  // esposto in output, esattamente come già fatto per contatti base,
+  // opportunità/pipeline, calendari/appuntamenti, conversazioni.
+
+  test("Parity ghl_id: GET contatto per ghl_id reale + id esposto in risposta", async () => {
+    const email = uniqueEmail("ghl-contact");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact: created } = await createRes.json();
+
+    const fakeGhlId = "ghlCONTACTparity123";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE site_id = $2 AND email = $3", [fakeGhlId, site.id, email]);
+
+    const res = await fetch(buildUrl(`/contacts/${fakeGhlId}`), { headers: h(apiKey.raw) });
+    assert.equal(res.status, 200);
+    const { contact } = await res.json();
+    assert.equal(contact.id, fakeGhlId);
+    assert.equal(contact.email, email);
+
+    // L'UUID interno resta comunque valido per lo stesso record.
+    const res2 = await fetch(buildUrl(`/contacts/${created.id}`), { headers: h(apiKey.raw) });
+    assert.equal(res2.status, 200);
+    assert.equal((await res2.json()).contact.id, fakeGhlId);
+  });
+
+  test("Parity ghl_id: nota — lookup PUT/DELETE per ghl_id reale + contactId in output", async () => {
+    const email = uniqueEmail("ghl-note");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact } = await createRes.json();
+    const fakeContactGhlId = "ghlCONTACTfornote001";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE site_id = $2 AND email = $3", [fakeContactGhlId, site.id, email]);
+
+    const noteRes = await fetch(buildUrl(`/contacts/${fakeContactGhlId}/notes`), {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ body: "Nota parity" }),
+    });
+    assert.equal(noteRes.status, 201);
+    const { note: created } = await noteRes.json();
+    assert.equal(created.contactId, fakeContactGhlId);
+
+    const contactInternalId = (await query("SELECT id FROM contacts WHERE site_id = $1 AND email = $2", [site.id, email])).rows[0].id;
+    const fakeNoteGhlId = "ghlNOTEparity001";
+    await query("UPDATE contact_notes SET ghl_id = $1 WHERE site_id = $2 AND contact_id = $3", [fakeNoteGhlId, site.id, contactInternalId]);
+
+    const updateRes = await fetch(buildUrl(`/contacts/${fakeContactGhlId}/notes/${fakeNoteGhlId}`), {
+      method: "PUT",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ body: "Nota aggiornata via ghl_id" }),
+    });
+    assert.equal(updateRes.status, 200);
+    assert.equal((await updateRes.json()).note.body, "Nota aggiornata via ghl_id");
+
+    const delRes = await fetch(buildUrl(`/contacts/${fakeContactGhlId}/notes/${fakeNoteGhlId}`), {
+      method: "DELETE",
+      headers: h(apiKey.raw),
+    });
+    assert.equal(delRes.status, 200);
+  });
+
+  test("Parity ghl_id: task — lookup PUT/DELETE per ghl_id reale", async () => {
+    const email = uniqueEmail("ghl-task");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact } = await createRes.json();
+    const fakeContactGhlId = "ghlCONTACTfortask001";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE site_id = $2 AND email = $3", [fakeContactGhlId, site.id, email]);
+
+    const taskRes = await fetch(buildUrl(`/contacts/${fakeContactGhlId}/tasks`), {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ title: "Task parity" }),
+    });
+    assert.equal(taskRes.status, 201);
+    const { task: created } = await taskRes.json();
+
+    const fakeTaskGhlId = "ghlTASKparity001";
+    await query("UPDATE tasks SET ghl_id = $1 WHERE site_id = $2 AND email = $3", [fakeTaskGhlId, site.id, email]);
+
+    const updateRes = await fetch(buildUrl(`/contacts/${fakeContactGhlId}/tasks/${fakeTaskGhlId}`), {
+      method: "PUT",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ completed: true }),
+    });
+    assert.equal(updateRes.status, 200);
+    assert.equal((await updateRes.json()).task.completed, true);
+
+    const delRes = await fetch(buildUrl(`/contacts/${fakeContactGhlId}/tasks/${fakeTaskGhlId}`), {
+      method: "DELETE",
+      headers: h(apiKey.raw),
+    });
+    assert.equal(delRes.status, 200);
+  });
+
+  test("Parity ghl_id: follower — add/remove per ghl_id reale utente + id esposto", async () => {
+    const email = uniqueEmail("ghl-follower");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact } = await createRes.json();
+
+    await query(
+      "INSERT INTO users (site_id, name, email, role, ghl_id) VALUES ($1,$2,$3,'collaboratore',$4)",
+      [site.id, "Follower Test", uniqueEmail("follower-user"), "ghlUSERparity001"]
+    );
+
+    const addRes = await fetch(buildUrl(`/contacts/${contact.id}/followers`), {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ userId: "ghlUSERparity001" }),
+    });
+    assert.equal(addRes.status, 201);
+    const { followers } = await addRes.json();
+    assert.ok(followers.some((f) => f.id === "ghlUSERparity001"));
+
+    const delRes = await fetch(buildUrl(`/contacts/${contact.id}/followers/ghlUSERparity001`), {
+      method: "DELETE",
+      headers: h(apiKey.raw),
+    });
+    assert.equal(delRes.status, 200);
+  });
+
+  test("Parity ghl_id: id malformato (300 char) su sotto-risorsa → 400", async () => {
+    const email = uniqueEmail("ghl-malformed");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact } = await createRes.json();
+
+    const res = await fetch(buildUrl(`/contacts/${contact.id}/notes/${"x".repeat(300)}`), {
+      method: "PUT",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ body: "x" }),
+    });
+    assert.equal(res.status, 400);
   });
 });

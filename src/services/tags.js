@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { getExternalId } from "./external-ids.js";
+import { findByAnyId, publicId } from "./external-ids.js";
 
 // Servizio tag per-tenant. Un tag ha nome univoco per sito.
 
@@ -8,10 +8,7 @@ export async function listTags(siteId, { limit = 20, startAfterId = null } = {})
   const params = [siteId];
 
   if (startAfterId) {
-    const offsetRow = (await query(
-      "SELECT id FROM tags WHERE external_id = $1",
-      [startAfterId]
-    )).rows[0];
+    const offsetRow = await findByAnyId("tags", siteId, startAfterId);
     if (offsetRow) {
       query_str += ` AND id > $${params.length + 1}`;
       params.push(offsetRow.id);
@@ -32,7 +29,7 @@ export async function listTags(siteId, { limit = 20, startAfterId = null } = {})
   const total = parseInt(countRow.count, 10);
 
   const nextStartAfterId = hasMore
-    ? await getExternalId("tags", pageRows[pageRows.length - 1].id)
+    ? publicId(pageRows[pageRows.length - 1])
     : null;
 
   return { rows: pageRows, total, nextStartAfterId };

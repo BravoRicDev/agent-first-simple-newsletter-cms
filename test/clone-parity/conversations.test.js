@@ -246,4 +246,62 @@ describe("Onda F — Conversazioni clone (SMS/Email/WhatsApp)", () => {
     assert.ok(page1.data.conversations.conversation.length <= 2);
     assert(page1.data.meta.total >= 0);
   });
+
+  // Parity ghl_id: l'automazione esterna (n8n) deve poter usare l'id reale
+  // GHL al posto dell'UUID interno, sia per il contatto che per il thread,
+  // esattamente come findByAnyId già fa per contatti/opportunità/calendari.
+  test("Parity ghl_id: contactId reale in creazione + lookup thread per ghl_id reale", async () => {
+    const fakeContactGhlId = "ghlCONTACTparityXYZ";
+    await query("UPDATE contacts SET ghl_id = $1 WHERE id = $2", [fakeContactGhlId, contact.id]);
+
+    const createRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "SMS",
+        contactId: fakeContactGhlId,
+        body: "Hello via ghl_id contatto",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const conversationExternalId = createRes.data.message.conversationId;
+
+    const convRow = await query(
+      "SELECT id FROM conversations WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2)",
+      [site.id, conversationExternalId]
+    );
+    assert.ok(convRow.rows[0], "thread appena creato deve essere risolvibile");
+    const fakeConvGhlId = "ghlCONVparityABC123";
+    await query("UPDATE conversations SET ghl_id = $1 WHERE id = $2", [fakeConvGhlId, convRow.rows[0].id]);
+
+    // GET messages per ghl_id reale del thread (non UUID)
+    const msgsRes = await fetch(`/conversations/${fakeConvGhlId}/messages`);
+    assert.equal(msgsRes.status, 200);
+    assert.ok(msgsRes.data.messages.length >= 1);
+
+    // PUT star per ghl_id reale
+    const starRes = await fetch(`/conversations/${fakeConvGhlId}/star`, {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(starRes.status, 200);
+
+    // Filtro lista per contactId = ghl_id reale
+    const listRes = await fetch(`/conversations?contactId=${fakeContactGhlId}`);
+    assert.equal(listRes.status, 200);
+    assert.ok(listRes.data.conversations.conversation.some((t) => t.contactId === fakeContactGhlId));
+
+    // id malformato (troppo lungo) → 400
+    const badRes = await fetch(`/conversations/${"x".repeat(300)}/star`, {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(badRes.status, 400);
+
+    // id valido come formato ma inesistente → 404
+    const notFoundRes = await fetch("/conversations/nonexistent-ghl-id/star", {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(notFoundRes.status, 404);
+  });
 });

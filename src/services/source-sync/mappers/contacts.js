@@ -243,13 +243,22 @@ export async function syncForContacts(ctx, extIds) {
       // silenzioso di TUTTA la sync di note/task (vedi catch sotto).
       const notesRes = await client.get(`/contacts/${extId}/notes`, {}, { sendLocationId: false });
       const notes = notesRes?.notes || notesRes || [];
+      // Il contatto proprietario delle note è quello del loop (extId), NON un
+      // campo "contactEmail" sul payload nota — non esiste su GHL reale, quindi
+      // era sempre vuoto: le note sincronizzate risultavano orfane (contact_id
+      // mai impostato, contact_email vuoto, invisibili dalla scheda contatto).
+      const noteContactRow = (await query(
+        "SELECT id, email FROM contacts WHERE ghl_id=$1 AND site_id=$2",
+        [extId, siteId]
+      )).rows[0];
       for (const n of notes) {
         try {
           const userId = n.userId
             ? await findInternalId("users", siteId, n.userId)
             : null;
           const cols = {
-            contact_email: n.contactEmail || "",
+            contact_email: noteContactRow?.email || "",
+            contact_id: noteContactRow?.id || null,
             author_type: n.authorType || "human",
             author_name: n.authorName || "",
             body: n.body || "",

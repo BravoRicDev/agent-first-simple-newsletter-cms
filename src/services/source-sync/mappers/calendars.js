@@ -140,9 +140,13 @@ export async function syncAppointmentsForContacts(ctx, extIds) {
             let contactEmail = contactRow?.email || `${contactExtId}@nomail.local`;
             let contactName = apt.contactName || "";
 
-            // Legacy status mapping inverso: sorgente → appointment_status interno
-            const appointmentStatus = statusMap[apt.status] || apt.status || "confirmed";
-            const cancelled = apt.status === "cancelled" ? new Date(apt.cancelledAt || new Date()) : null;
+            // Legacy status mapping inverso: sorgente → appointment_status interno.
+            // GHL espone lo stato come "appointmentStatus", non "status" (che
+            // su un payload reale è sempre undefined) — bug che faceva
+            // ricadere ogni appuntamento sincronizzato su "confirmed".
+            const sourceStatus = apt.appointmentStatus || apt.status;
+            const appointmentStatus = statusMap[sourceStatus] || sourceStatus || "confirmed";
+            const cancelled = sourceStatus === "cancelled" ? new Date(apt.cancelledAt || new Date()) : null;
 
             const cols = {
               calendar_id: calendarId,

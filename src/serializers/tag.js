@@ -1,9 +1,11 @@
 // Serializer tag: trasforma row DB in contratto API camelCase + uuid esterno.
 
+import { publicId } from "../services/external-ids.js";
+
 export function serializeTag(row, locationId) {
   if (!row) return null;
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.name,
     color: row.color ?? null,

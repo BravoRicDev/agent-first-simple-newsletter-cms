@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { getExternalId, findByExternalId } from "./external-ids.js";
+import { getExternalId, findByAnyId, publicId } from "./external-ids.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda A: Servizio opportunities per clone API.
@@ -7,15 +7,20 @@ import { getExternalId, findByExternalId } from "./external-ids.js";
 // contact_email → contactId (uuid via contacts.external_id),
 // title → name, amount → monetaryValue, owner_id → assignedTo,
 // status enum open|won|lost|abandoned.
+//
+// Parity ghl_id: ogni id esposto (opportunità, pipeline, pipeline stage,
+// contatto, utente) preferisce il ghl_id reale del CRM sorgente quando
+// presente, con fallback all'UUID interno — stesso pattern già applicato
+// a contatti/calendari/conversazioni/tag.
 // ─────────────────────────────────────────────────────────────────────────
 
 export async function serializeOpportunity(row, pipelineStageId = null, contactId = null, assignedToId = null, locationId = null) {
   if (!row) return null;
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.title || "",
-    pipelineId: row.pipeline_external_id || null,
+    pipelineId: publicId({ ghl_id: row.pipeline_ghl_id, external_id: row.pipeline_external_id }),
     pipelineStageId,
     status: row.status || "open",
     monetaryValue: row.amount ? parseFloat(row.amount) : 0,
@@ -32,7 +37,7 @@ export async function serializeOpportunity(row, pipelineStageId = null, contactI
 export async function serializePipeline(row, stages = [], locationId = null) {
   if (!row) return null;
   return {
-    id: row.external_id,
+    id: publicId(row),
     locationId,
     name: row.name || "",
     stages,
@@ -41,86 +46,85 @@ export async function serializePipeline(row, stages = [], locationId = null) {
   };
 }
 
-// Risolvi uno stage (key) → pipelineStageId (uuid) da pipeline_stages.
-// Se manca, inserisci lazy con external_id auto.
+// Risolvi uno stage (key) → pipelineStageId (ghl_id reale o uuid) da
+// pipeline_stages. Se manca, inserisci lazy con external_id auto.
 async function resolveOrCreatePipelineStage(siteId, pipelineId, stageKey) {
   if (!stageKey) return null;
   const existing = (await query(
-    `SELECT external_id FROM pipeline_stages WHERE pipeline_id = $1 AND key = $2`,
+    `SELECT external_id, ghl_id FROM pipeline_stages WHERE pipeline_id = $1 AND key = $2`,
     [pipelineId, stageKey]
   )).rows[0];
-  if (existing) return existing.external_id;
+  if (existing) return publicId(existing);
 
   // Inserisci lazy
   const inserted = (await query(
     `INSERT INTO pipeline_stages (pipeline_id, key, label, position)
      VALUES ($1, $2, $3, 0)
-     ON CONFLICT (pipeline_id, key) DO UPDATE SET external_id = COALESCE(external_id, gen_random_uuid())
-     RETURNING external_id`,
+     ON CONFLICT (pipeline_id, key) DO UPDATE SET external_id = COALESCE(pipeline_stages.external_id, gen_random_uuid())
+     RETURNING external_id, ghl_id`,
     [pipelineId, stageKey, stageKey]
   )).rows[0];
-  return inserted?.external_id || null;
+  return inserted ? publicId(inserted) : null;
 }
 
-// Risolvi contactEmail → contactId (contacts.external_id).
+// Risolvi contactEmail → contactId (ghl_id reale o external_id).
 // Ritorna null se contatto non trovato.
 async function resolveContactId(siteId, contactEmail) {
   if (!contactEmail) return null;
   const row = (await query(
-    `SELECT external_id FROM contacts WHERE site_id = $1 AND LOWER(email) = LOWER($2)`,
+    `SELECT external_id, ghl_id FROM contacts WHERE site_id = $1 AND LOWER(email) = LOWER($2)`,
     [siteId, contactEmail]
   )).rows[0];
-  return row?.external_id || null;
+  return row ? publicId(row) : null;
 }
 
-// Risolvi assignedTo (user_id) → assignedTo uuid.
+// Risolvi assignedTo (user_id interno) → assignedTo (ghl_id reale o uuid).
 async function resolveAssignedToId(siteId, userId) {
   if (!userId) return null;
   const row = (await query(
-    `SELECT external_id FROM users WHERE id = $1 AND site_id = $2`,
+    `SELECT external_id, ghl_id FROM users WHERE id = $1 AND site_id = $2`,
     [userId, siteId]
   )).rows[0];
-  return row?.external_id || null;
+  return row ? publicId(row) : null;
 }
 
-// Risolvi contactId uuid → contact id interno via contacts.external_id.
-async function resolveContactInternalId(siteId, contactIdUuid) {
-  if (!contactIdUuid) return null;
-  const row = (await query(
-    `SELECT id FROM contacts WHERE site_id = $1 AND external_id = $2`,
-    [siteId, contactIdUuid]
-  )).rows[0];
+// Risolvi contactId (UUID o ghl_id reale) → contact id interno.
+async function resolveContactInternalId(siteId, contactIdAny) {
+  if (!contactIdAny) return null;
+  const row = await findByAnyId("contacts", siteId, contactIdAny);
   return row?.id || null;
 }
 
-// Risolvi pipelineId uuid → pipeline id interno.
-async function resolvePipelineInternalId(siteId, pipelineIdUuid) {
-  if (!pipelineIdUuid) return null;
-  const row = (await query(
-    `SELECT id FROM pipelines WHERE site_id = $1 AND external_id = $2`,
-    [siteId, pipelineIdUuid]
-  )).rows[0];
+// Risolvi pipelineId (UUID o ghl_id reale) → pipeline id interno.
+async function resolvePipelineInternalId(siteId, pipelineIdAny) {
+  if (!pipelineIdAny) return null;
+  const row = await findByAnyId("pipelines", siteId, pipelineIdAny);
   return row?.id || null;
 }
 
-// Risolvi pipelineStageId uuid → (pipeline_id, stage key).
-async function resolvePipelineStageInternal(siteId, pipelineStageIdUuid) {
-  if (!pipelineStageIdUuid) return { pipelineId: null, stageKey: null };
+// Risolvi pipelineStageId (UUID o ghl_id reale) → (pipeline_id, stage key).
+// pipeline_stages NON ha una propria colonna site_id (tabella figlia, tenant
+// derivato da pipeline_id) — niente findByAnyId qui, serve un JOIN esplicito
+// su pipelines per lo scoping multi-tenant corretto (due siti sullo stesso
+// account GHL possono condividere lo stesso ghl_id di stage, vedi
+// db/126_ghl_id_per_site.sql: indice composito su (pipeline_id, ghl_id),
+// non (site_id, ghl_id)).
+async function resolvePipelineStageInternal(siteId, pipelineStageIdAny) {
+  if (!pipelineStageIdAny) return { pipelineId: null, stageKey: null };
   const row = (await query(
-    `SELECT pipeline_id, key FROM pipeline_stages WHERE external_id = $1`,
-    [pipelineStageIdUuid]
+    `SELECT ps.pipeline_id, ps.key FROM pipeline_stages ps
+     JOIN pipelines p ON p.id = ps.pipeline_id AND p.site_id = $1
+     WHERE ps.external_id::text = $2 OR ps.ghl_id = $2`,
+    [siteId, pipelineStageIdAny]
   )).rows[0];
   if (!row) return { pipelineId: null, stageKey: null };
   return { pipelineId: row.pipeline_id, stageKey: row.key };
 }
 
-// Risolvi assignedToId uuid → user id interno.
-async function resolveUserInternalId(siteId, assignedToUuid) {
-  if (!assignedToUuid) return null;
-  const row = (await query(
-    `SELECT id FROM users WHERE site_id = $1 AND external_id = $2`,
-    [siteId, assignedToUuid]
-  )).rows[0];
+// Risolvi assignedToId (UUID o ghl_id reale) → user id interno.
+async function resolveUserInternalId(siteId, assignedToAny) {
+  if (!assignedToAny) return null;
+  const row = await findByAnyId("users", siteId, assignedToAny);
   return row?.id || null;
 }
 
@@ -181,12 +185,8 @@ export async function listOpportunities(siteId, filters = {}, locationId = null)
   if (limit > 100) limit = 100;
 
   let orderClause = "ORDER BY o.id DESC";
-  const countParams = params.slice();
   if (filters.startAfterId) {
-    const afterRow = (await query(
-      `SELECT id FROM opportunities WHERE external_id = $1 AND site_id = $2`,
-      [filters.startAfterId, siteId]
-    )).rows[0];
+    const afterRow = await findByAnyId("opportunities", siteId, filters.startAfterId);
     if (afterRow) {
       params.push(afterRow.id);
       where += ` AND o.id < $${params.length}`;
@@ -195,7 +195,7 @@ export async function listOpportunities(siteId, filters = {}, locationId = null)
   }
 
   const rows = (await query(
-    `SELECT o.*, p.external_id AS pipeline_external_id
+    `SELECT o.*, p.external_id AS pipeline_external_id, p.ghl_id AS pipeline_ghl_id
      FROM opportunities o
      LEFT JOIN pipelines p ON p.id = o.pipeline_id
      WHERE ${where} ${orderClause} LIMIT $${params.length + 1}`,
@@ -205,7 +205,7 @@ export async function listOpportunities(siteId, filters = {}, locationId = null)
   let nextStartAfterId = null;
   let items = rows.slice(0, limit);
   if (rows.length > limit) {
-    nextStartAfterId = rows[limit].external_id;
+    nextStartAfterId = publicId(rows[limit]);
   }
 
   const opportunities = await Promise.all(
@@ -222,10 +222,10 @@ export async function listOpportunities(siteId, filters = {}, locationId = null)
 
 export async function getOpportunity(siteId, externalId, locationId = null) {
   const row = (await query(
-    `SELECT o.*, p.external_id AS pipeline_external_id
+    `SELECT o.*, p.external_id AS pipeline_external_id, p.ghl_id AS pipeline_ghl_id
      FROM opportunities o
      LEFT JOIN pipelines p ON p.id = o.pipeline_id
-     WHERE o.site_id = $1 AND o.external_id = $2`,
+     WHERE o.site_id = $1 AND (o.external_id::text = $2 OR o.ghl_id = $2)`,
     [siteId, externalId]
   )).rows[0];
   if (!row) return null;
@@ -242,10 +242,7 @@ export async function createOpportunity(siteId, input = {}, locationId = null) {
 
   let contactEmail = null;
   if (input.contactId) {
-    const contactRow = (await query(
-      `SELECT email FROM contacts WHERE site_id = $1 AND external_id = $2`,
-      [siteId, input.contactId]
-    )).rows[0];
+    const contactRow = await findByAnyId("contacts", siteId, input.contactId);
     if (!contactRow) return null; // contactId non trovato
     contactEmail = contactRow.email;
   }
@@ -292,7 +289,7 @@ export async function updateOpportunity(siteId, externalId, input = {}, location
   if (!current) return null;
 
   const internalRow = (await query(
-    `SELECT id, contact_email, pipeline_id, stage, owner_id, status FROM opportunities WHERE site_id = $1 AND external_id = $2`,
+    `SELECT id, contact_email, pipeline_id, stage, owner_id, status FROM opportunities WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2)`,
     [siteId, externalId]
   )).rows[0];
 
@@ -301,10 +298,7 @@ export async function updateOpportunity(siteId, externalId, input = {}, location
     if (input.contactId === null) {
       contactEmail = "";
     } else {
-      const contactRow = (await query(
-        `SELECT email FROM contacts WHERE site_id = $1 AND external_id = $2`,
-        [siteId, input.contactId]
-      )).rows[0];
+      const contactRow = await findByAnyId("contacts", siteId, input.contactId);
       if (!contactRow) return null;
       contactEmail = contactRow.email;
     }
@@ -370,7 +364,7 @@ export async function updateOpportunity(siteId, externalId, input = {}, location
 
 export async function deleteOpportunity(siteId, externalId) {
   const row = (await query(
-    `DELETE FROM opportunities WHERE site_id = $1 AND external_id = $2 RETURNING id`,
+    `DELETE FROM opportunities WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2) RETURNING id`,
     [siteId, externalId]
   )).rows[0];
   return row ? 1 : 0;
@@ -381,7 +375,7 @@ export async function setOpportunityStatus(siteId, externalId, status, locationI
   if (!["open", "won", "lost", "abandoned"].includes(newStatus)) return null;
 
   const internalRow = (await query(
-    `SELECT id, status FROM opportunities WHERE site_id = $1 AND external_id = $2`,
+    `SELECT id, status FROM opportunities WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2)`,
     [siteId, externalId]
   )).rows[0];
   if (!internalRow) return null;
@@ -422,13 +416,13 @@ export async function upsertOpportunity(siteId, input = {}, locationId = null) {
   )).rows[0]?.email;
 
   const existing = (await query(
-    `SELECT id, external_id FROM opportunities WHERE site_id = $1 AND LOWER(contact_email) = LOWER($2) AND LOWER(title) = LOWER($3)`,
+    `SELECT id, external_id, ghl_id FROM opportunities WHERE site_id = $1 AND LOWER(contact_email) = LOWER($2) AND LOWER(title) = LOWER($3)`,
     [siteId, contactEmail, input.name.trim()]
   )).rows[0];
 
   if (existing) {
     // Update
-    const opp = await updateOpportunity(siteId, existing.external_id, input, locationId);
+    const opp = await updateOpportunity(siteId, publicId(existing), input, locationId);
     return opp ? { opportunity: opp, created: false } : null;
   } else {
     // Create
@@ -438,14 +432,11 @@ export async function upsertOpportunity(siteId, input = {}, locationId = null) {
 }
 
 export async function listOpportunityFollowers(siteId, opportunityExternalId) {
-  const oppRow = (await query(
-    `SELECT id FROM opportunities WHERE site_id = $1 AND external_id = $2`,
-    [siteId, opportunityExternalId]
-  )).rows[0];
+  const oppRow = await findByAnyId("opportunities", siteId, opportunityExternalId);
   if (!oppRow) return [];
 
   const rows = (await query(
-    `SELECT f.external_id, u.external_id AS user_external_id, u.name, u.email FROM opportunity_followers f
+    `SELECT f.external_id, u.external_id AS user_external_id, u.ghl_id AS user_ghl_id, u.name, u.email FROM opportunity_followers f
      JOIN users u ON u.id = f.user_id
      WHERE f.opportunity_id = $1 AND f.site_id = $2
      ORDER BY f.created_at DESC`,
@@ -453,23 +444,17 @@ export async function listOpportunityFollowers(siteId, opportunityExternalId) {
   )).rows;
 
   return rows.map((r) => ({
-    id: r.user_external_id,
+    id: publicId({ external_id: r.user_external_id, ghl_id: r.user_ghl_id }),
     firstName: r.name || "",
     email: r.email || "",
   }));
 }
 
 export async function addOpportunityFollower(siteId, opportunityExternalId, userExternalId) {
-  const oppRow = (await query(
-    `SELECT id FROM opportunities WHERE site_id = $1 AND external_id = $2`,
-    [siteId, opportunityExternalId]
-  )).rows[0];
+  const oppRow = await findByAnyId("opportunities", siteId, opportunityExternalId);
   if (!oppRow) return null;
 
-  const userRow = (await query(
-    `SELECT id FROM users WHERE site_id = $1 AND external_id = $2`,
-    [siteId, userExternalId]
-  )).rows[0];
+  const userRow = await findByAnyId("users", siteId, userExternalId);
   if (!userRow) return null;
 
   try {
@@ -483,20 +468,14 @@ export async function addOpportunityFollower(siteId, opportunityExternalId, user
     return null;
   }
 
-  return { id: userExternalId, firstName: userRow.name || "", email: userRow.email || "" };
+  return { id: publicId(userRow), firstName: userRow.name || "", email: userRow.email || "" };
 }
 
 export async function removeOpportunityFollower(siteId, opportunityExternalId, userExternalId) {
-  const oppRow = (await query(
-    `SELECT id FROM opportunities WHERE site_id = $1 AND external_id = $2`,
-    [siteId, opportunityExternalId]
-  )).rows[0];
+  const oppRow = await findByAnyId("opportunities", siteId, opportunityExternalId);
   if (!oppRow) return 0;
 
-  const userRow = (await query(
-    `SELECT id FROM users WHERE site_id = $1 AND external_id = $2`,
-    [siteId, userExternalId]
-  )).rows[0];
+  const userRow = await findByAnyId("users", siteId, userExternalId);
   if (!userRow) return 0;
 
   const result = await query(
@@ -515,14 +494,14 @@ export async function listPipelines(siteId, locationId = null) {
   return Promise.all(
     rows.map(async (p) => {
       const stageRows = (await query(
-        `SELECT external_id, label FROM pipeline_stages WHERE pipeline_id = $1 ORDER BY position ASC`,
+        `SELECT external_id, ghl_id, label FROM pipeline_stages WHERE pipeline_id = $1 ORDER BY position ASC`,
         [p.id]
       )).rows;
-      await getExternalId("pipelines", p.id);
-      const pExtId = (await query(`SELECT external_id FROM pipelines WHERE id = $1`, [p.id])).rows[0]?.external_id;
+      const generatedExtId = await getExternalId("pipelines", p.id);
+      const id = publicId(p) || generatedExtId;
       return serializePipeline(
-        { ...p, external_id: pExtId },
-        stageRows.map((s) => ({ id: s.external_id, name: s.label })),
+        { ...p, external_id: id },
+        stageRows.map((s) => ({ id: publicId(s) || s.external_id, name: s.label })),
         locationId
       );
     })
@@ -530,18 +509,15 @@ export async function listPipelines(siteId, locationId = null) {
 }
 
 export async function getPipeline(siteId, pipelineExternalId, locationId = null) {
-  const row = (await query(
-    `SELECT * FROM pipelines WHERE site_id = $1 AND external_id = $2`,
-    [siteId, pipelineExternalId]
-  )).rows[0];
+  const row = await findByAnyId("pipelines", siteId, pipelineExternalId);
   if (!row) return null;
 
   const stageRows = (await query(
-    `SELECT external_id, label FROM pipeline_stages WHERE pipeline_id = $1 ORDER BY position ASC`,
+    `SELECT external_id, ghl_id, label FROM pipeline_stages WHERE pipeline_id = $1 ORDER BY position ASC`,
     [row.id]
   )).rows;
 
-  return serializePipeline(row, stageRows.map((s) => ({ id: s.external_id, name: s.label })), locationId);
+  return serializePipeline(row, stageRows.map((s) => ({ id: publicId(s) || s.external_id, name: s.label })), locationId);
 }
 
 export async function createPipeline(siteId, input = {}, locationId = null) {
@@ -556,8 +532,6 @@ export async function createPipeline(siteId, input = {}, locationId = null) {
     [siteId, name]
   )).rows[0];
 
-  await getExternalId("pipelines", row.id);
-
   // Inserisci stages se forniti
   const stages = [];
   if (Array.isArray(input.stages)) {
@@ -567,27 +541,23 @@ export async function createPipeline(siteId, input = {}, locationId = null) {
       const stageRow = (await query(
         `INSERT INTO pipeline_stages (pipeline_id, key, label, position)
          VALUES ($1, $2, $3, $4)
-         RETURNING external_id, label`,
+         RETURNING external_id, ghl_id, label`,
         [row.id, `stage_${i}`, stageName, i]
       )).rows[0];
       // external_id arriva già dal DEFAULT della colonna (migrazione 090):
       // nessuna ensure necessaria, getExternalId qui romperebbe (vorrebbe un int)
-      stages.push({ id: stageRow.external_id, name: stageName });
+      stages.push({ id: publicId(stageRow) || stageRow.external_id, name: stageName });
     }
   }
 
-  const pExtId = (await query(`SELECT external_id FROM pipelines WHERE id = $1`, [row.id])).rows[0]?.external_id;
-  return serializePipeline({ ...row, external_id: pExtId }, stages, locationId);
+  return serializePipeline(row, stages, locationId);
 }
 
 export async function updatePipeline(siteId, pipelineExternalId, input = {}, locationId = null) {
   const current = await getPipeline(siteId, pipelineExternalId, locationId);
   if (!current) return null;
 
-  const row = (await query(
-    `SELECT id FROM pipelines WHERE site_id = $1 AND external_id = $2`,
-    [siteId, pipelineExternalId]
-  )).rows[0];
+  const row = await findByAnyId("pipelines", siteId, pipelineExternalId);
 
   const name = input.name !== undefined ? (input.name || "").trim() : current.name;
   if (!name) return null;
@@ -638,7 +608,7 @@ export async function updatePipeline(siteId, pipelineExternalId, input = {}, loc
 
 export async function deletePipeline(siteId, pipelineExternalId) {
   const result = await query(
-    `DELETE FROM pipelines WHERE site_id = $1 AND external_id = $2`,
+    `DELETE FROM pipelines WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2)`,
     [siteId, pipelineExternalId]
   );
   return result.rowCount;

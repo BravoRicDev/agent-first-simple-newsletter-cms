@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { sendError, sendList, getPaging, requireUuid, getLocationId, isValidUuid, buildMeta } from "./_helpers.js";
+import { sendError, sendList, getPaging, requireAnyId, getLocationId, buildMeta } from "./_helpers.js";
 import {
   createContact, getContact, updateContact, deleteContact,
   listContacts, searchContacts, upsertContact, findDuplicates,
@@ -86,7 +86,7 @@ router.post("/contacts/search/duplicate", async (req, res, next) => {
 
 router.get("/contacts/:contactId", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.contactId, res);
+    const id = requireAnyId(req.params.contactId, res);
     if (!id) return;
     const contact = await getContact(req.tenant.siteId, id);
     res.json({ contact });
@@ -99,7 +99,7 @@ router.get("/contacts/:contactId", async (req, res, next) => {
 // PUT /contacts/:contactId — Aggiorna contatto.
 router.put("/contacts/:contactId", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.contactId, res);
+    const id = requireAnyId(req.params.contactId, res);
     if (!id) return;
     const contact = await updateContact(req.tenant.siteId, id, req.body);
     res.json({ contact });
@@ -112,7 +112,7 @@ router.put("/contacts/:contactId", async (req, res, next) => {
 // DELETE /contacts/:contactId — Elimina contatto.
 router.delete("/contacts/:contactId", async (req, res, next) => {
   try {
-    const id = requireUuid(req.params.contactId, res);
+    const id = requireAnyId(req.params.contactId, res);
     if (!id) return;
     await deleteContact(req.tenant.siteId, id);
     res.json({ deleted: true });
@@ -129,7 +129,7 @@ router.delete("/contacts/:contactId", async (req, res, next) => {
 // GET /contacts/:contactId/notes
 router.get("/contacts/:contactId/notes", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const notes = await getContactNotes(req.tenant.siteId, contactId);
@@ -143,7 +143,7 @@ router.get("/contacts/:contactId/notes", async (req, res, next) => {
 // POST /contacts/:contactId/notes
 router.post("/contacts/:contactId/notes", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const note = await createContactNote(req.tenant.siteId, contactId, req.body);
@@ -158,9 +158,9 @@ router.post("/contacts/:contactId/notes", async (req, res, next) => {
 // PUT /contacts/:contactId/notes/:noteId
 router.put("/contacts/:contactId/notes/:noteId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const noteId = requireUuid(req.params.noteId, res);
+    const noteId = requireAnyId(req.params.noteId, res);
     if (!noteId) return;
 
     const note = await updateContactNote(req.tenant.siteId, contactId, noteId, req.body);
@@ -175,9 +175,9 @@ router.put("/contacts/:contactId/notes/:noteId", async (req, res, next) => {
 // DELETE /contacts/:contactId/notes/:noteId
 router.delete("/contacts/:contactId/notes/:noteId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const noteId = requireUuid(req.params.noteId, res);
+    const noteId = requireAnyId(req.params.noteId, res);
     if (!noteId) return;
 
     await deleteContactNote(req.tenant.siteId, contactId, noteId);
@@ -192,7 +192,7 @@ router.delete("/contacts/:contactId/notes/:noteId", async (req, res, next) => {
 // GET /contacts/:contactId/tasks
 router.get("/contacts/:contactId/tasks", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const tasks = await getContactTasks(req.tenant.siteId, contactId);
@@ -206,7 +206,7 @@ router.get("/contacts/:contactId/tasks", async (req, res, next) => {
 // POST /contacts/:contactId/tasks
 router.post("/contacts/:contactId/tasks", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const task = await createContactTask(req.tenant.siteId, contactId, req.body);
@@ -221,9 +221,9 @@ router.post("/contacts/:contactId/tasks", async (req, res, next) => {
 // PUT /contacts/:contactId/tasks/:taskId
 router.put("/contacts/:contactId/tasks/:taskId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const taskId = requireUuid(req.params.taskId, res);
+    const taskId = requireAnyId(req.params.taskId, res);
     if (!taskId) return;
 
     const task = await updateContactTask(req.tenant.siteId, contactId, taskId, req.body);
@@ -238,9 +238,9 @@ router.put("/contacts/:contactId/tasks/:taskId", async (req, res, next) => {
 // DELETE /contacts/:contactId/tasks/:taskId
 router.delete("/contacts/:contactId/tasks/:taskId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const taskId = requireUuid(req.params.taskId, res);
+    const taskId = requireAnyId(req.params.taskId, res);
     if (!taskId) return;
 
     await deleteContactTask(req.tenant.siteId, contactId, taskId);
@@ -255,7 +255,7 @@ router.delete("/contacts/:contactId/tasks/:taskId", async (req, res, next) => {
 // GET /contacts/:contactId/followers
 router.get("/contacts/:contactId/followers", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const followers = await getContactFollowers(req.tenant.siteId, contactId);
@@ -269,10 +269,10 @@ router.get("/contacts/:contactId/followers", async (req, res, next) => {
 // POST /contacts/:contactId/followers
 router.post("/contacts/:contactId/followers", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
-    if (!req.body.userId || !isValidUuid(req.body.userId)) {
+    if (!req.body.userId || typeof req.body.userId !== "string" || !req.body.userId.trim() || req.body.userId.length > 255) {
       return sendError(res, 400, "userId richiesto e valido");
     }
 
@@ -289,9 +289,9 @@ router.post("/contacts/:contactId/followers", async (req, res, next) => {
 // DELETE /contacts/:contactId/followers/:userId
 router.delete("/contacts/:contactId/followers/:userId", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
-    const userId = requireUuid(req.params.userId, res);
+    const userId = requireAnyId(req.params.userId, res);
     if (!userId) return;
 
     await removeContactFollower(req.tenant.siteId, contactId, userId);
@@ -306,7 +306,7 @@ router.delete("/contacts/:contactId/followers/:userId", async (req, res, next) =
 // GET /contacts/:contactId/appointments
 router.get("/contacts/:contactId/appointments", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const appointments = await getContactAppointments(req.tenant.siteId, contactId);
@@ -321,7 +321,7 @@ router.get("/contacts/:contactId/appointments", async (req, res, next) => {
 // GET /contacts/:contactId/email-verification
 router.get("/contacts/:contactId/email-verification", async (req, res, next) => {
   try {
-    const contactId = requireUuid(req.params.contactId, res);
+    const contactId = requireAnyId(req.params.contactId, res);
     if (!contactId) return;
 
     const emailVerification = await getContactEmailVerification(req.tenant.siteId, contactId);

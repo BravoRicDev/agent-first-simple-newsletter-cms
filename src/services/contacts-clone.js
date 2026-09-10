@@ -1,6 +1,6 @@
 import { query } from "../db.js";
 import { emitContactEvent } from "./events.js";
-import { getExternalId, findByExternalId } from "./external-ids.js";
+import { getExternalId, findByAnyId, publicId } from "./external-ids.js";
 import { getCustomValues, setCustomValues, mergeCustomValues } from "./custom-values.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -12,7 +12,8 @@ function normalizeEmail(email) {
 export async function serializeContact(row, customValues = {}, customFieldDefs = []) {
   if (!row) return null;
 
-  const extId = await getExternalId("contacts", row.id);
+  const generatedExtId = await getExternalId("contacts", row.id);
+  const id = publicId(row) || generatedExtId;
 
   // Profilo contatto (name, firstName, lastName, phone, companyName, website).
   const profile = {
@@ -41,7 +42,7 @@ export async function serializeContact(row, customValues = {}, customFieldDefs =
   }
 
   return {
-    id: extId,
+    id: id,
     locationId: row.location_external_id || null,
     firstName: profile.firstName,
     lastName: profile.lastName,
@@ -130,7 +131,7 @@ export async function createContact(siteId, data = {}) {
 }
 
 export async function getContact(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -147,7 +148,7 @@ export async function getContact(siteId, contactExternalId) {
 }
 
 export async function updateContact(siteId, contactExternalId, data = {}) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -223,7 +224,7 @@ export async function updateContact(siteId, contactExternalId, data = {}) {
 }
 
 export async function deleteContact(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -270,7 +271,7 @@ export async function listContacts(siteId, filters = {}) {
   let paginationParamIdx = paramIdx;
 
   if (startAfterId) {
-    const afterContact = await findByExternalId("contacts", startAfterId);
+    const afterContact = await findByAnyId("contacts", siteId, startAfterId);
     if (afterContact && afterContact.site_id === siteId) {
       paginationWhereClause += ` AND c.id < $${paginationParamIdx}`;
       paginationParams.push(afterContact.id);
@@ -298,7 +299,12 @@ export async function listContacts(siteId, filters = {}) {
     contacts.push(serialized);
   }
 
-  const nextStartAfterId = rows.length > limit ? (await getExternalId("contacts", rows[limit].id)) : null;
+  let nextStartAfterId = null;
+  if (rows.length > limit) {
+    const cursorRow = rows[limit];
+    const generatedNextId = await getExternalId("contacts", cursorRow.id);
+    nextStartAfterId = publicId(cursorRow) || generatedNextId;
+  }
 
   return { contacts, total, nextStartAfterId };
 }
@@ -315,11 +321,12 @@ export async function upsertContact(siteId, data = {}) {
     throw err;
   }
 
-  const existing = (await query("SELECT id FROM contacts WHERE site_id = $1 AND email = $2", [siteId, email])).rows[0];
+  const existing = (await query("SELECT id, ghl_id, external_id FROM contacts WHERE site_id = $1 AND email = $2", [siteId, email])).rows[0];
 
   if (existing) {
     // UPDATE
-    return { contact: await updateContact(siteId, await getExternalId("contacts", existing.id), data), created: false };
+    const updateId = publicId(existing) || (await getExternalId("contacts", existing.id));
+    return { contact: await updateContact(siteId, updateId, data), created: false };
   } else {
     // CREATE
     return { contact: await createContact(siteId, data), created: true };
@@ -355,18 +362,30 @@ export async function findDuplicates(siteId) {
 
 export async function serializeNote(row) {
   if (!row) return null;
+  const generatedId = await getExternalId("contact_notes", row.id);
+  const id = publicId(row) || generatedId;
+  let userId = null;
+  if (row.user_id) {
+    const userRow = (await query("SELECT ghl_id, external_id FROM users WHERE id = $1", [row.user_id])).rows[0];
+    userId = publicId(userRow) || (await getExternalId("users", row.user_id));
+  }
+  let contactId = null;
+  if (row.contact_id) {
+    const contactRow = (await query("SELECT ghl_id, external_id FROM contacts WHERE id = $1", [row.contact_id])).rows[0];
+    contactId = publicId(contactRow) || (await getExternalId("contacts", row.contact_id));
+  }
   return {
-    id: await getExternalId("contact_notes", row.id),
+    id,
     body: row.body || "",
-    userId: row.user_id ? await getExternalId("users", row.user_id) : null,
-    contactId: row.contact_id ? await getExternalId("contacts", row.contact_id) : null,
+    userId,
+    contactId,
     dateAdded: row.created_at?.toISOString() || null,
     dateUpdated: row.updated_at?.toISOString() || null,
   };
 }
 
 export async function getContactNotes(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -382,7 +401,7 @@ export async function getContactNotes(siteId, contactExternalId) {
 }
 
 export async function createContactNote(siteId, contactExternalId, data = {}) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -419,18 +438,15 @@ export async function createContactNote(siteId, contactExternalId, data = {}) {
 }
 
 export async function updateContactNote(siteId, contactExternalId, noteExternalId, data = {}) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
     throw err;
   }
 
-  const note = (await query(
-    "SELECT * FROM contact_notes WHERE external_id = $1 AND contact_id = $2",
-    [noteExternalId, contact.id]
-  )).rows[0];
-  if (!note) {
+  const note = await findByAnyId("contact_notes", siteId, noteExternalId);
+  if (!note || note.contact_id !== contact.id) {
     const err = new Error("Nota non trovata");
     err.status = 404;
     throw err;
@@ -452,16 +468,23 @@ export async function updateContactNote(siteId, contactExternalId, noteExternalI
 }
 
 export async function deleteContactNote(siteId, contactExternalId, noteExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
     throw err;
   }
 
+  const note = await findByAnyId("contact_notes", siteId, noteExternalId);
+  if (!note || note.contact_id !== contact.id) {
+    const err = new Error("Nota non trovata");
+    err.status = 404;
+    throw err;
+  }
+
   const result = await query(
-    "DELETE FROM contact_notes WHERE external_id = $1 AND contact_id = $2",
-    [noteExternalId, contact.id]
+    "DELETE FROM contact_notes WHERE id = $1",
+    [note.id]
   );
   return result.rowCount > 0;
 }
@@ -470,9 +493,16 @@ export async function deleteContactNote(siteId, contactExternalId, noteExternalI
 
 export async function serializeTask(row) {
   if (!row) return null;
+  const generatedId = await getExternalId("tasks", row.id);
+  const id = publicId(row) || generatedId;
+  let contactId = null;
+  if (row.contact_id) {
+    const contactRow = (await query("SELECT ghl_id, external_id FROM contacts WHERE id = $1", [row.contact_id])).rows[0];
+    contactId = publicId(contactRow) || (await getExternalId("contacts", row.contact_id));
+  }
   return {
-    id: await getExternalId("tasks", row.id),
-    contactId: row.contact_id ? await getExternalId("contacts", row.contact_id) : null,
+    id,
+    contactId,
     title: row.title || "",
     body: row.notes || "",
     dueDate: row.due_at ? new Date(row.due_at).toISOString() : null,
@@ -484,7 +514,7 @@ export async function serializeTask(row) {
 }
 
 export async function getContactTasks(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -500,7 +530,7 @@ export async function getContactTasks(siteId, contactExternalId) {
 }
 
 export async function createContactTask(siteId, contactExternalId, data = {}) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -527,18 +557,15 @@ export async function createContactTask(siteId, contactExternalId, data = {}) {
 }
 
 export async function updateContactTask(siteId, contactExternalId, taskExternalId, data = {}) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
     throw err;
   }
 
-  const task = (await query(
-    "SELECT * FROM tasks WHERE external_id = $1 AND site_id = $2 AND email = $3",
-    [taskExternalId, siteId, contact.email]
-  )).rows[0];
-  if (!task) {
+  const task = await findByAnyId("tasks", siteId, taskExternalId);
+  if (!task || task.email !== contact.email) {
     const err = new Error("Task non trovato");
     err.status = 404;
     throw err;
@@ -582,16 +609,23 @@ export async function updateContactTask(siteId, contactExternalId, taskExternalI
 }
 
 export async function deleteContactTask(siteId, contactExternalId, taskExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
     throw err;
   }
 
+  const task = await findByAnyId("tasks", siteId, taskExternalId);
+  if (!task || task.email !== contact.email) {
+    const err = new Error("Task non trovato");
+    err.status = 404;
+    throw err;
+  }
+
   const result = await query(
-    "DELETE FROM tasks WHERE external_id = $1 AND site_id = $2 AND email = $3",
-    [taskExternalId, siteId, contact.email]
+    "DELETE FROM tasks WHERE id = $1",
+    [task.id]
   );
   return result.rowCount > 0;
 }
@@ -608,7 +642,7 @@ export async function serializeFollower(row) {
 }
 
 export async function getContactFollowers(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -616,57 +650,51 @@ export async function getContactFollowers(siteId, contactExternalId) {
   }
 
   const rows = (await query(
-    `SELECT u.external_id, u.name, u.email FROM contact_followers cf
+    `SELECT u.external_id, u.ghl_id, u.name, u.email FROM contact_followers cf
      JOIN users u ON u.id = cf.user_id
      WHERE cf.contact_id = $1 ORDER BY cf.created_at DESC`,
     [contact.id]
   )).rows;
 
-  return Promise.all(rows.map(r => ({ id: r.external_id, firstName: r.name || "", email: r.email || "" })));
+  return rows.map(r => ({ id: publicId(r) || r.external_id, firstName: r.name || "", email: r.email || "" }));
 }
 
 export async function addContactFollower(siteId, contactExternalId, userExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
     throw err;
   }
 
-  const user = (await query(
-    "SELECT * FROM users WHERE site_id = $1 AND external_id = $2",
-    [siteId, userExternalId]
-  )).rows[0];
+  const user = await findByAnyId("users", siteId, userExternalId);
   if (!user) {
     const err = new Error("Utente non trovato");
     err.status = 400;
     throw err;
   }
 
-  try {
-    await query(
-      "INSERT INTO contact_followers (contact_id, user_id) VALUES ($1, $2) ON CONFLICT (contact_id, user_id) DO NOTHING",
-      [contact.id, user.id]
-    );
-  } catch {
-    // Silently ignore duplicate
-  }
+  // BUG preesistente corretto: contact_followers.site_id è NOT NULL senza
+  // default e il vincolo UNIQUE reale è (site_id, contact_id, user_id) —
+  // l'INSERT precedente omettendo site_id falliva SEMPRE, mascherato dal
+  // try/catch vuoto (l'endpoint follower non aggiungeva mai nulla).
+  await query(
+    "INSERT INTO contact_followers (site_id, contact_id, user_id) VALUES ($1, $2, $3) ON CONFLICT (site_id, contact_id, user_id) DO NOTHING",
+    [siteId, contact.id, user.id]
+  );
 
-  return { id: user.external_id, firstName: user.name || "", email: user.email || "" };
+  return { id: publicId(user) || user.external_id, firstName: user.name || "", email: user.email || "" };
 }
 
 export async function removeContactFollower(siteId, contactExternalId, userExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
     throw err;
   }
 
-  const user = (await query(
-    "SELECT id FROM users WHERE site_id = $1 AND external_id = $2",
-    [siteId, userExternalId]
-  )).rows[0];
+  const user = await findByAnyId("users", siteId, userExternalId);
   if (!user) {
     const err = new Error("Utente non trovato");
     err.status = 400;
@@ -683,7 +711,7 @@ export async function removeContactFollower(siteId, contactExternalId, userExter
 // ── Appointment subresource ───────────────────────────────────────────────
 
 export async function getContactAppointments(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;
@@ -691,7 +719,7 @@ export async function getContactAppointments(siteId, contactExternalId) {
   }
 
   const rows = (await query(
-    `SELECT external_id, title, start_time, end_time, status
+    `SELECT external_id, ghl_id, title, start_time, end_time, status
      FROM booking_appointments
      WHERE site_id = $1 AND contact_email = $2
      ORDER BY start_time DESC LIMIT 50`,
@@ -699,7 +727,7 @@ export async function getContactAppointments(siteId, contactExternalId) {
   )).rows;
 
   return rows.map(r => ({
-    id: r.external_id,
+    id: publicId(r) || r.external_id,
     title: r.title || "",
     startTime: r.start_time?.toISOString() || null,
     endTime: r.end_time?.toISOString() || null,
@@ -712,7 +740,7 @@ export async function getContactAppointments(siteId, contactExternalId) {
 import { verifySubscriberEmail } from "./email-verify.js";
 
 export async function getContactEmailVerification(siteId, contactExternalId) {
-  const contact = await findByExternalId("contacts", contactExternalId);
+  const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
     const err = new Error("Contatto non trovato");
     err.status = 404;

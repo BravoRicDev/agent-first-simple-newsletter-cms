@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { sendError, sendList, requireUuid, getPaging, getLocationId } from "./_helpers.js";
+import { sendError, sendList, requireAnyId, getPaging, getLocationId } from "./_helpers.js";
 import * as tagsService from "../../services/tags.js";
-import { findByExternalId } from "../../services/external-ids.js";
+import { findByAnyId } from "../../services/external-ids.js";
 import { serializeTag, serializeTagList } from "../../serializers/tag.js";
 
 // Onda A — Tag per-tenant: CRUD root-level /tags.
@@ -55,10 +55,10 @@ router.post("/tags", async (req, res, next) => {
 // GET /tags/:id - Ottieni tag per uuid esterno
 router.get("/tags/:id", async (req, res, next) => {
   try {
-    const externalId = requireUuid(req.params.id, res);
+    const externalId = requireAnyId(req.params.id, res);
     if (!externalId) return;
 
-    const row = await findByExternalId("tags", externalId);
+    const row = await findByAnyId("tags", req.tenant.siteId, externalId);
     if (!row) {
       return sendError(res, 404, "Tag non trovato");
     }
@@ -81,10 +81,10 @@ router.get("/tags/:id", async (req, res, next) => {
 // PUT /tags/:id - Aggiorna tag
 router.put("/tags/:id", async (req, res, next) => {
   try {
-    const externalId = requireUuid(req.params.id, res);
+    const externalId = requireAnyId(req.params.id, res);
     if (!externalId) return;
 
-    const row = await findByExternalId("tags", externalId);
+    const row = await findByAnyId("tags", req.tenant.siteId, externalId);
     if (!row) {
       return sendError(res, 404, "Tag non trovato");
     }
@@ -120,10 +120,10 @@ router.put("/tags/:id", async (req, res, next) => {
 // DELETE /tags/:id - Elimina tag
 router.delete("/tags/:id", async (req, res, next) => {
   try {
-    const externalId = requireUuid(req.params.id, res);
+    const externalId = requireAnyId(req.params.id, res);
     if (!externalId) return;
 
-    const row = await findByExternalId("tags", externalId);
+    const row = await findByAnyId("tags", req.tenant.siteId, externalId);
     if (!row) {
       return sendError(res, 404, "Tag non trovato");
     }

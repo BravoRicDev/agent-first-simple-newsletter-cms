@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { sendError, getPaging, requireUuid, getLocationId, isValidUuid } from "./_helpers.js";
+import { sendError, getPaging, requireAnyId, getLocationId } from "./_helpers.js";
 import { query } from "../../db.js";
 import { sendSms } from "../../services/channels/sms.js";
-import { ensureExternalId, findByExternalId } from "../../services/external-ids.js";
+import { ensureExternalId, findByExternalId, findByAnyId, publicId } from "../../services/external-ids.js";
 import { logger } from "../../services/logger.js";
 
 const router = Router();
@@ -13,12 +13,18 @@ const router = Router();
 // ─────────────────────────────────────────────────────────────────────────
 
 // Serializza una conversazione per la lista target.
+// id/contactId: preferisce il ghl_id reale (parity con GHL), ricade
+// sull'UUID interno per thread/contatti mai sincronizzati da/verso GHL —
+// stesso pattern doppio-id già applicato a contatti/opportunità/calendari.
 async function serializeThread(row, locationId) {
   const messageType = row.message_type || mapChannelToType(row.channel);
+  const generatedExtId = await ensureExternalId("conversations", row.id);
+  const id = publicId(row) || generatedExtId;
+  const contactId = publicId({ ghl_id: row.contact_ghl_id, external_id: row.contact_external_id });
   return {
-    id: await ensureExternalId("conversations", row.id),
+    id,
     locationId,
-    contactId: row.contact_external_id || null,
+    contactId,
     lastMessageBody: row.last_message_body || "",
     lastMessageDate: row.last_message_date ? new Date(row.last_message_date).toISOString() : null,
     type: messageType,
@@ -30,11 +36,21 @@ async function serializeThread(row, locationId) {
 }
 
 // Serializza un messaggio per la lista target.
+// NOTA doppio-id: conversation_messages non ha una colonna ghl_id (schema
+// diverso da conversations) — il suo id verso il CRM sorgente è
+// source_message_id. Qui esponiamo comunque quell'id reale quando presente
+// (parity in OUTPUT); l'accettazione in INPUT (startAfterId cursore,
+// lookup per id) resta invece UUID-only in questo round, per il motivo di
+// scoping multi-tenant spiegato in SPIEGAZIONE.txt.
 async function serializeMessage(row) {
   const messageType = row.message_type || mapChannelToType(row.channel);
+  const generatedMsgId = await ensureExternalId("conversation_messages", row.id);
+  const msgId = (row.source_message_id && String(row.source_message_id).trim()) || row.external_id || generatedMsgId;
+  const generatedConvId = await ensureExternalId("conversations", row.conversation_id);
+  const convId = publicId({ ghl_id: row.conversation_ghl_id, external_id: row.conversation_external_id }) || generatedConvId;
   return {
-    id: await ensureExternalId("conversation_messages", row.id),
-    conversationId: await ensureExternalId("conversations", row.conversation_id),
+    id: msgId,
+    conversationId: convId,
     body: row.body || "",
     direction: mapDirection(row.direction),
     type: messageType,
@@ -60,8 +76,8 @@ async function getOrUpsertContact(siteId, contactIdOrEmail) {
   let contact = null;
   let contactId = null;
 
-  if (isValidUuid(contactIdOrEmail)) {
-    contact = await findByExternalId("contacts", contactIdOrEmail);
+  if (typeof contactIdOrEmail === "string" && contactIdOrEmail.trim() && !contactIdOrEmail.includes("@")) {
+    contact = await findByAnyId("contacts", siteId, contactIdOrEmail);
     if (!contact) {
       throw new Error("Contatto non trovato");
     }
@@ -113,9 +129,9 @@ router.get("/conversations", async (req, res, next) => {
     }
 
     if (req.query.contactId) {
-      const contactId = await findByExternalId("contacts", req.query.contactId);
-      if (contactId) {
-        params.push(contactId.email);
+      const contactRow = await findByAnyId("contacts", req.tenant.siteId, req.query.contactId);
+      if (contactRow) {
+        params.push(contactRow.email);
         where += ` AND c.contact_email = $${params.length}`;
       } else {
         return sendList(res, "conversations", { conversation: [] }, 0, null);
@@ -129,7 +145,7 @@ router.get("/conversations", async (req, res, next) => {
 
     // Cursor-based pagination
     if (startAfterId) {
-      const cursorRow = await findByExternalId("conversations", startAfterId);
+      const cursorRow = await findByAnyId("conversations", req.tenant.siteId, startAfterId);
       if (cursorRow) {
         params.push(cursorRow.id);
         where += ` AND c.id < $${params.length}`;
@@ -150,6 +166,7 @@ router.get("/conversations", async (req, res, next) => {
                 c.created_at
               ) AS last_message_date,
               ct.external_id AS contact_external_id,
+              ct.ghl_id AS contact_ghl_id,
               COALESCE(cm.message_type, '') AS message_type
        FROM conversations c
        LEFT JOIN contacts ct ON ct.email = c.contact_email AND ct.site_id = c.site_id
@@ -163,7 +180,9 @@ router.get("/conversations", async (req, res, next) => {
     let nextStartAfterId = null;
     let conversations = results.rows.slice(0, limit);
     if (results.rows.length > limit) {
-      nextStartAfterId = await ensureExternalId("conversations", results.rows[limit].id);
+      const cursorNextRow = results.rows[limit];
+      const generatedNextId = await ensureExternalId("conversations", cursorNextRow.id);
+      nextStartAfterId = publicId(cursorNextRow) || generatedNextId;
     }
 
     const serialized = await Promise.all(
@@ -207,10 +226,11 @@ router.post("/conversations/messages", async (req, res, next) => {
       `INSERT INTO conversations (site_id, contact_email, channel, subject)
        VALUES ($1, $2, $3, '')
        ON CONFLICT (site_id, contact_email, channel) DO UPDATE SET updated_at = NOW()
-       RETURNING id`,
+       RETURNING id, ghl_id, external_id`,
       [req.tenant.siteId, contact.contact.email, channel]
     );
-    const conversationId = convResult.rows[0].id;
+    const convRow = convResult.rows[0];
+    const conversationId = convRow.id;
 
     // Crea messaggio outbound
     const msgResult = await query(
@@ -239,6 +259,8 @@ router.post("/conversations/messages", async (req, res, next) => {
     const serialized = await serializeMessage({
       ...msg,
       conversation_id: conversationId,
+      conversation_ghl_id: convRow.ghl_id,
+      conversation_external_id: convRow.external_id,
       channel,
     });
 
@@ -254,11 +276,11 @@ router.post("/conversations/messages", async (req, res, next) => {
 // GET /conversations/:conversationId/messages?limit&startAfterId
 router.get("/conversations/:conversationId/messages", async (req, res, next) => {
   try {
-    const convId = requireUuid(req.params.conversationId, res);
+    const convId = requireAnyId(req.params.conversationId, res);
     if (!convId) return;
 
-    const conv = await findByExternalId("conversations", convId);
-    if (!conv || conv.site_id !== req.tenant.siteId) {
+    const conv = await findByAnyId("conversations", req.tenant.siteId, convId);
+    if (!conv) {
       return sendError(res, 404, "Conversazione non trovata");
     }
 
@@ -293,7 +315,13 @@ router.get("/conversations/:conversationId/messages", async (req, res, next) => 
     }
 
     const serialized = await Promise.all(
-      messages.map((row) => serializeMessage({ ...row, conversation_id: conv.id, channel: conv.channel }))
+      messages.map((row) => serializeMessage({
+        ...row,
+        conversation_id: conv.id,
+        conversation_ghl_id: conv.ghl_id,
+        conversation_external_id: conv.external_id,
+        channel: conv.channel,
+      }))
     );
 
     res.json({
@@ -312,11 +340,11 @@ router.get("/conversations/:conversationId/messages", async (req, res, next) => 
 // PUT /conversations/:conversationId/star {starred}
 router.put("/conversations/:conversationId/star", async (req, res, next) => {
   try {
-    const convId = requireUuid(req.params.conversationId, res);
+    const convId = requireAnyId(req.params.conversationId, res);
     if (!convId) return;
 
-    const conv = await findByExternalId("conversations", convId);
-    if (!conv || conv.site_id !== req.tenant.siteId) {
+    const conv = await findByAnyId("conversations", req.tenant.siteId, convId);
+    if (!conv) {
       return sendError(res, 404, "Conversazione non trovata");
     }
 
@@ -335,11 +363,11 @@ router.put("/conversations/:conversationId/star", async (req, res, next) => {
 // PUT /conversations/:conversationId/read
 router.put("/conversations/:conversationId/read", async (req, res, next) => {
   try {
-    const convId = requireUuid(req.params.conversationId, res);
+    const convId = requireAnyId(req.params.conversationId, res);
     if (!convId) return;
 
-    const conv = await findByExternalId("conversations", convId);
-    if (!conv || conv.site_id !== req.tenant.siteId) {
+    const conv = await findByAnyId("conversations", req.tenant.siteId, convId);
+    if (!conv) {
       return sendError(res, 404, "Conversazione non trovata");
     }
 
@@ -361,11 +389,11 @@ router.put("/conversations/:conversationId/read", async (req, res, next) => {
 // PUT /conversations/:conversationId/unread
 router.put("/conversations/:conversationId/unread", async (req, res, next) => {
   try {
-    const convId = requireUuid(req.params.conversationId, res);
+    const convId = requireAnyId(req.params.conversationId, res);
     if (!convId) return;
 
-    const conv = await findByExternalId("conversations", convId);
-    if (!conv || conv.site_id !== req.tenant.siteId) {
+    const conv = await findByAnyId("conversations", req.tenant.siteId, convId);
+    if (!conv) {
       return sendError(res, 404, "Conversazione non trovata");
     }
 

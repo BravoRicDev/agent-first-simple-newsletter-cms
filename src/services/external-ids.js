@@ -125,3 +125,30 @@ export async function findByExternalId(table, externalId) {
   )).rows[0];
   return row || null;
 }
+
+// Risolve un id di risorsa accettando SIA il nostro UUID interno
+// (external_id) SIA l'id reale del CRM sorgente (ghl_id), sempre scoped per
+// site_id (necessario: due siti gemelli sullo stesso account GHL possono
+// condividere lo stesso ghl_id — vedi db/126_ghl_id_per_site.sql).
+export async function findByAnyId(table, siteId, idValue) {
+  assertWhitelisted(table);
+
+  if (typeof idValue !== "string" || !idValue.trim() || idValue.length > 255) {
+    const err = new Error("Identificatore non valido");
+    err.status = 400;
+    throw err;
+  }
+
+  const row = (await query(
+    `SELECT * FROM ${table} WHERE site_id = $1 AND (external_id::text = $2 OR ghl_id = $2) LIMIT 1`,
+    [siteId, idValue]
+  )).rows[0];
+  return row || null;
+}
+
+// "id" pubblico da esporre nelle risposte clone-API: preferisce il ghl_id
+// reale, ricade sull'UUID interno per record mai sincronizzati da/verso GHL.
+export function publicId(row) {
+  if (!row) return null;
+  return (row.ghl_id && String(row.ghl_id).trim()) || row.external_id || null;
+}

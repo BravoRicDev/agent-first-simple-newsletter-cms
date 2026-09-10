@@ -231,11 +231,29 @@ describe("Onda B — Calendari clone", () => {
     }
   });
 
-  // ── UUID validation ───────────────────────────────────────────────────
+  // ── Validazione ID ────────────────────────────────────────────────────
 
-  test("400 UUID invalido in path", async () => {
-    const badRes = await fetch("/calendars/not-a-uuid");
-    assert.equal(badRes.status, 400);
-    assert(badRes.data.statusCode === 400);
+  test("400 per ID palesemente malformato (vuoto o >255 char) in path", async () => {
+    // ID vuoto: route /calendars/ → 404 (Express non matcha), ma possiamo testare
+    // ID >255 char → 400
+    const tooLong = "x".repeat(256);
+    const tooLongRes = await fetch(`/calendars/${tooLong}`);
+    assert.equal(tooLongRes.status, 400);
+    assert.equal(tooLongRes.data.statusCode, 400);
+    assert(tooLongRes.data.message.includes("non valido") || tooLongRes.data.message.includes("valido"));
+  });
+
+  test("404 per ID formato valido ma inesistente in path", async () => {
+    // UUID valido che non esiste
+    const fakeUuid = "00000000-0000-0000-0000-000000000000";
+    const notFoundRes = await fetch(`/calendars/${fakeUuid}`);
+    assert.equal(notFoundRes.status, 404);
+    assert(notFoundRes.data.message);
+
+    // Stringa alfanumerica stile GHL che non esiste
+    const fakeGhlId = "eMjqNVexkS7CyIM2qdtg";
+    const notFoundRes2 = await fetch(`/calendars/${fakeGhlId}`);
+    assert.equal(notFoundRes2.status, 404);
+    assert(notFoundRes2.data.message);
   });
 });

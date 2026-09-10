@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { ensureExternalId, findByExternalId, getExternalId } from "./external-ids.js";
+import { ensureExternalId, findByAnyId, getExternalId, publicId } from "./external-ids.js";
 import { computeBookingSlots } from "./booking-slots.js";
 import { logger } from "./logger.js";
 
@@ -10,9 +10,10 @@ import { logger } from "./logger.js";
 
 async function serializeCalendar(row, locationId) {
   if (!row) return null;
-  const externalId = await getExternalId("calendars", row.id);
+  const generatedExtId = await getExternalId("calendars", row.id);
+  const id = publicId(row) || generatedExtId;
   return {
-    id: externalId,
+    id,
     locationId,
     name: row.name,
     description: row.description || "",
@@ -27,13 +28,23 @@ async function serializeCalendar(row, locationId) {
 
 async function serializeEvent(row, locationId) {
   if (!row) return null;
-  const externalId = await getExternalId("booking_appointments", row.id);
-  const calendarExternalId = row.calendar_id
-    ? await getExternalId("calendars", row.calendar_id)
-    : null;
+  const generatedExtId = await getExternalId("booking_appointments", row.id);
+  const eventId = publicId(row) || generatedExtId;
+
+  let calendarId = null;
+  if (row.calendar_id) {
+    const calRow = await query(
+      "SELECT ghl_id, external_id FROM calendars WHERE id = $1",
+      [row.calendar_id]
+    );
+    if (calRow.rows[0]) {
+      calendarId = publicId(calRow.rows[0]) || await getExternalId("calendars", row.calendar_id);
+    }
+  }
+
   return {
-    eventId: externalId,
-    calendarId: calendarExternalId,
+    eventId,
+    calendarId,
     title: row.title,
     status: row.appointment_status || mapLegacyStatus(row.status),
     startTime: row.start_time.toISOString(),
@@ -73,11 +84,10 @@ export async function listCalendars(siteId, { limit = 20, startAfterId = null } 
   const params = [siteId];
 
   if (startAfterId) {
-    const offsetRow = await query("SELECT id FROM calendars WHERE external_id = $1", [startAfterId]);
-    if (offsetRow.rows[0]) {
-      const offsetId = offsetRow.rows[0].id;
+    const offsetRow = await findByAnyId("calendars", siteId, startAfterId);
+    if (offsetRow) {
       query_str += ` AND id > $${params.length + 1}`;
-      params.push(offsetId);
+      params.push(offsetRow.id);
     }
   }
 
@@ -91,7 +101,9 @@ export async function listCalendars(siteId, { limit = 20, startAfterId = null } 
 
   const total = (await query("SELECT COUNT(*) FROM calendars WHERE site_id = $1", [siteId])).rows[0].count;
 
-  const nextStartAfterId = hasMore ? (await getExternalId("calendars", calendars[calendars.length - 1].id)) : null;
+  const nextStartAfterId = hasMore
+    ? (publicId(calendars[calendars.length - 1]) || await getExternalId("calendars", calendars[calendars.length - 1].id))
+    : null;
 
   const serialized = await Promise.all(calendars.map((c) => serializeCalendar(c, locationId)));
   return { calendars: serialized, total: parseInt(total, 10), nextStartAfterId };
@@ -128,10 +140,10 @@ export async function createCalendar(siteId, input, locationId) {
 
   const calendar = result.rows[0];
 
-  // team members opzionali (uuid user)
+  // team members opzionali (uuid user o ghl_id)
   if (Array.isArray(teamMembers) && teamMembers.length > 0) {
-    for (const userUuid of teamMembers) {
-      const userRow = await findByExternalId("users", userUuid);
+    for (const userId of teamMembers) {
+      const userRow = await findByAnyId("users", siteId, userId);
       if (userRow) {
         await query(
           `INSERT INTO calendar_members (site_id, calendar_id, user_id, created_at)
@@ -147,26 +159,26 @@ export async function createCalendar(siteId, input, locationId) {
 }
 
 export async function getCalendar(siteId, externalId, locationId) {
-  const row = await findByExternalId("calendars", externalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("calendars", siteId, externalId);
+  if (!row) return null;
 
   const calendar = await serializeCalendar(row, locationId);
 
   // carica team members
   const members = await query(
-    `SELECT u.external_id FROM calendar_members cm
+    `SELECT u.ghl_id, u.external_id FROM calendar_members cm
      JOIN users u ON u.id = cm.user_id
      WHERE cm.calendar_id = $1`,
     [row.id]
   );
 
-  calendar.teamMembers = members.rows.map((m) => m.external_id);
+  calendar.teamMembers = members.rows.map((m) => publicId(m) || m.external_id);
   return calendar;
 }
 
 export async function updateCalendar(siteId, externalId, input, locationId) {
-  const row = await findByExternalId("calendars", externalId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("calendars", siteId, externalId);
+  if (!row) return null;
 
   const updates = {};
 
@@ -185,8 +197,8 @@ export async function updateCalendar(siteId, externalId, input, locationId) {
   // team members replacement se presente
   if (Array.isArray(input.teamMembers)) {
     await query("DELETE FROM calendar_members WHERE calendar_id = $1", [row.id]);
-    for (const userUuid of input.teamMembers) {
-      const userRow = await findByExternalId("users", userUuid);
+    for (const userId of input.teamMembers) {
+      const userRow = await findByAnyId("users", siteId, userId);
       if (userRow) {
         await query(
           `INSERT INTO calendar_members (site_id, calendar_id, user_id, created_at)
@@ -205,20 +217,20 @@ export async function updateCalendar(siteId, externalId, input, locationId) {
     calendar.teamMembers = input.teamMembers;
   } else {
     const members = await query(
-      `SELECT u.external_id FROM calendar_members cm
+      `SELECT u.ghl_id, u.external_id FROM calendar_members cm
        JOIN users u ON u.id = cm.user_id
        WHERE cm.calendar_id = $1`,
       [row.id]
     );
-    calendar.teamMembers = members.rows.map((m) => m.external_id);
+    calendar.teamMembers = members.rows.map((m) => publicId(m) || m.external_id);
   }
 
   return calendar;
 }
 
 export async function deleteCalendar(siteId, externalId) {
-  const row = await findByExternalId("calendars", externalId);
-  if (!row || row.site_id !== siteId) return 0;
+  const row = await findByAnyId("calendars", siteId, externalId);
+  if (!row) return 0;
 
   const result = await query("DELETE FROM calendars WHERE id = $1", [row.id]);
   return result.rowCount;
@@ -242,7 +254,7 @@ export async function listAppointments(
   const params = [siteId];
 
   if (calendarId) {
-    const calRow = await findByExternalId("calendars", calendarId);
+    const calRow = await findByAnyId("calendars", siteId, calendarId);
     if (calRow) {
       query_str += ` AND calendar_id = $${params.length + 1}`;
       params.push(calRow.id);
@@ -264,11 +276,10 @@ export async function listAppointments(
   query_str += ` ORDER BY id ASC`;
 
   if (startAfterId) {
-    const offsetRow = await query("SELECT id FROM booking_appointments WHERE external_id = $1", [startAfterId]);
-    if (offsetRow.rows[0]) {
-      const offsetId = offsetRow.rows[0].id;
+    const offsetRow = await findByAnyId("booking_appointments", siteId, startAfterId);
+    if (offsetRow) {
       query_str += ` AND id > $${params.length + 1}`;
-      params.push(offsetId);
+      params.push(offsetRow.id);
     }
   }
 
@@ -288,7 +299,7 @@ export async function listAppointments(
   ).rows[0].count;
 
   const nextStartAfterId = hasMore
-    ? await getExternalId("booking_appointments", appointments[appointments.length - 1].id)
+    ? (publicId(appointments[appointments.length - 1]) || await getExternalId("booking_appointments", appointments[appointments.length - 1].id))
     : null;
 
   const serialized = await Promise.all(appointments.map((a) => serializeEvent(a, locationId)));
@@ -302,7 +313,7 @@ export async function createAppointment(siteId, input, locationId) {
 
   let calendarIdInt = null;
   if (calendarId) {
-    const calRow = await findByExternalId("calendars", calendarId);
+    const calRow = await findByAnyId("calendars", siteId, calendarId);
     if (calRow && calRow.site_id === siteId) calendarIdInt = calRow.id;
   }
 
@@ -336,15 +347,15 @@ export async function createAppointment(siteId, input, locationId) {
 }
 
 export async function getAppointment(siteId, eventId, locationId) {
-  const row = await findByExternalId("booking_appointments", eventId);
-  if (!row || row.site_id !== siteId || row.status === 'cancelled') return null;
+  const row = await findByAnyId("booking_appointments", siteId, eventId);
+  if (!row || row.status === 'cancelled') return null;
 
   return serializeEvent(row, locationId);
 }
 
 export async function updateAppointment(siteId, eventId, input, locationId) {
-  const row = await findByExternalId("booking_appointments", eventId);
-  if (!row || row.site_id !== siteId) return null;
+  const row = await findByAnyId("booking_appointments", siteId, eventId);
+  if (!row) return null;
 
   const updates = {};
 
@@ -370,8 +381,8 @@ export async function updateAppointment(siteId, eventId, input, locationId) {
 }
 
 export async function deleteAppointment(siteId, eventId) {
-  const row = await findByExternalId("booking_appointments", eventId);
-  if (!row || row.site_id !== siteId) return 0;
+  const row = await findByAnyId("booking_appointments", siteId, eventId);
+  if (!row) return 0;
 
   await query(
     "UPDATE booking_appointments SET status = 'cancelled', appointment_status = 'cancelled', cancelled_at = NOW(), updated_at = NOW() WHERE id = $1",
@@ -384,8 +395,8 @@ export async function deleteAppointment(siteId, eventId) {
 // ── Free slots ───────────────────────────────────────────────────────────
 
 export async function getFreeSlots(siteId, calendarId, startDate, endDate, locationId) {
-  const calRow = await findByExternalId("calendars", calendarId);
-  if (!calRow || calRow.site_id !== siteId) return null;
+  const calRow = await findByAnyId("calendars", siteId, calendarId);
+  if (!calRow) return null;
 
   const slots = await computeBookingSlots(siteId, { days: 30 });
 

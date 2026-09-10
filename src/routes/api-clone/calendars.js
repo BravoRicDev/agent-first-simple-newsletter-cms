@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  sendError, httpError, isValidUuid, requireUuid, getPaging, sendList, getLocationId,
+  sendError, httpError, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as calendarsClone from "../../services/calendars-clone.js";
 
@@ -68,7 +68,7 @@ router.post("/calendars/events/appointments", async (req, res, next) => {
 router.get("/calendars/:calendarId", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const calendarId = requireUuid(req.params.calendarId, res);
+    const calendarId = requireAnyId(req.params.calendarId, res);
     if (!calendarId) return;
 
     const calendar = await calendarsClone.getCalendar(req.tenant.siteId, calendarId, locationId);
@@ -82,7 +82,7 @@ router.get("/calendars/:calendarId", async (req, res, next) => {
 router.put("/calendars/:calendarId", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const calendarId = requireUuid(req.params.calendarId, res);
+    const calendarId = requireAnyId(req.params.calendarId, res);
     if (!calendarId) return;
 
     const input = {
@@ -103,7 +103,7 @@ router.put("/calendars/:calendarId", async (req, res, next) => {
 
 router.delete("/calendars/:calendarId", async (req, res, next) => {
   try {
-    const calendarId = requireUuid(req.params.calendarId, res);
+    const calendarId = requireAnyId(req.params.calendarId, res);
     if (!calendarId) return;
 
     const count = await calendarsClone.deleteCalendar(req.tenant.siteId, calendarId);
@@ -119,7 +119,7 @@ router.delete("/calendars/:calendarId", async (req, res, next) => {
 router.get("/calendars/:calendarId/free-slots", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const calendarId = requireUuid(req.params.calendarId, res);
+    const calendarId = requireAnyId(req.params.calendarId, res);
     if (!calendarId) return;
 
     const { startDate, endDate } = req.query;
@@ -158,7 +158,7 @@ router.get("/appointments", async (req, res, next) => {
 router.get("/appointments/:eventId", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const eventId = requireUuid(req.params.eventId, res);
+    const eventId = requireAnyId(req.params.eventId, res);
     if (!eventId) return;
 
     const event = await calendarsClone.getAppointment(req.tenant.siteId, eventId, locationId);
@@ -172,7 +172,7 @@ router.get("/appointments/:eventId", async (req, res, next) => {
 router.put("/appointments/:eventId", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
-    const eventId = requireUuid(req.params.eventId, res);
+    const eventId = requireAnyId(req.params.eventId, res);
     if (!eventId) return;
 
     const input = {
@@ -192,7 +192,7 @@ router.put("/appointments/:eventId", async (req, res, next) => {
 
 router.delete("/appointments/:eventId", async (req, res, next) => {
   try {
-    const eventId = requireUuid(req.params.eventId, res);
+    const eventId = requireAnyId(req.params.eventId, res);
     if (!eventId) return;
 
     const count = await calendarsClone.deleteAppointment(req.tenant.siteId, eventId);

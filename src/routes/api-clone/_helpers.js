@@ -32,6 +32,16 @@ export function isValidUuid(value) {
   return typeof value === "string" && UUID_RE.test(value);
 }
 
+// Valida un identificatore generico (UUID o ghl_id alfanumerico ~20 char);
+// usato per risorse che espongono ghl_id. In caso contrario 400.
+export function requireAnyId(value, res) {
+  if (typeof value !== "string" || !value.trim() || value.length > 255) {
+    sendError(res, 400, "Identificatore non valido");
+    return null;
+  }
+  return value;
+}
+
 // Valida un uuid di percorso; in caso contrario 400. Ritorna il valore.
 export function requireUuid(value, res) {
   if (!isValidUuid(value)) {
