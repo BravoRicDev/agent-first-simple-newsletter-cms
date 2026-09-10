@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { sendError, sendList, getPaging, requireAnyId, getLocationId, buildMeta } from "./_helpers.js";
 import {
   createContact, getContact, updateContact, deleteContact,
@@ -60,8 +61,14 @@ router.post("/contacts/search", async (req, res, next) => {
       // grezza: viene validato/mappato su allowlist in listContacts.
       sort: Array.isArray(req.body.sort) ? req.body.sort : null,
     };
-    const { contacts, total, nextStartAfterId } = await searchContacts(req.tenant.siteId, filters);
-    sendList(res, "contacts", contacts, total, nextStartAfterId);
+    const { contacts, total } = await searchContacts(req.tenant.siteId, filters);
+    // Shape TOP DEDICATO per QUESTO endpoint (verificato sul payload reale):
+    // { contacts, total, traceId } — NON wrappato in "meta" come gli altri
+    // endpoint. sendList() è corretto per GET /contacts ma NON qui, quindi
+    // risposta costruita a mano (niente nextPage/prevPage: la paginazione GHL
+    // di questo endpoint usa searchAfter per-contatto, già nei contatti).
+    // traceId è generato per-richiesta (non persistito), come fa GHL.
+    res.json({ contacts, total, traceId: crypto.randomUUID() });
   } catch (err) {
     next(err);
   }

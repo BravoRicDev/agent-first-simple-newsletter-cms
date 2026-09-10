@@ -257,6 +257,16 @@ export async function syncAll(ctx, onPage) {
               knownContacts.add(c.id);
               if (changed) changedExtIds.push(c.id);
               await storeProfiles(ctx, row.id, c);
+              // Salva l'oggetto contatto grezzo così com'è arrivato da
+              // /contacts/search: è la fonte per la risposta IDENTICA del
+              // clone-API (db/130). Scrittura DB (nessuna chiamata API extra);
+              // non tocca updated_at ⇒ non rompe lo skip-if-unchanged S4.
+              if (!dryRun) {
+                await query(
+                  "UPDATE contacts SET ghl_contact_raw = $1 WHERE id = $2",
+                  [JSON.stringify(c), row.id]
+                );
+              }
             }
           } catch (err) {
             addStat("contacts", "errors", 1);
@@ -408,7 +418,7 @@ export async function syncForContacts(ctx, extIds) {
 }
 
 export async function fetchSingle(ctx, extId) {
-  const { siteId, client, knownContacts, log } = ctx;
+  const { siteId, client, knownContacts, dryRun, log } = ctx;
 
   try {
     const contactRes = await client.get(`/contacts/${extId}`);
@@ -419,6 +429,12 @@ export async function fetchSingle(ctx, extId) {
     if (row && row.id) {
       knownContacts.add(contact.id);
       await storeProfiles(ctx, row.id, contact);
+      if (!dryRun) {
+        await query(
+          "UPDATE contacts SET ghl_contact_raw = $1 WHERE id = $2",
+          [JSON.stringify(contact), row.id]
+        );
+      }
     }
     return row;
   } catch (err) {

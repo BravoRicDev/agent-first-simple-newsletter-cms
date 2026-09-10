@@ -1,0 +1,162 @@
+================================================================================
+REPORT FULL PARITY — PARTE A (completata sessione precedente) + PARTE B (questa sessione)
+================================================================================
+Data: 2026-09-10
+
+================================================================================
+PARTE A — POST /contacts/search IDENTICO a GHL reale
+================================================================================
+Stato: COMPLETATA E VERIFICATA
+
+La PARTE A era gia' applicata nella working tree al momento dell'ingresso.
+Ho verificato la completezza leggendo ogni file toccato e confermando la
+presenza di tutti i componenti elencati nella SPIEGAZIONE_fullparity.txt.
+
+File toccati dalla PARTE A (tutti confermati presenti e funzionanti):
+  - src/routes/api-clone/contacts.js — POST /contacts/search flat {contacts,total,traceId}
+  - src/services/contacts-clone.js — buildCustomFields con ghl_id reale,
+    serializeContactSearch dedicato (shape GHL identico), NON_CUSTOM_KEYS,
+    parseRaw/nn/pick helpers per ghl_contact_raw
+  - src/services/source-sync/mappers/contacts.js — storeProfiles con
+    resolve ghl_id per customFields, ghl_contact_raw scritto ad ogni sync,
+    earlyStopEnabled, paginateSearchSorted, consecutiveUnchanged, fullHuntDue,
+    SUBRESOURCE_FULL_HUNT_INTERVAL_MS
+  - src/services/source-sync/clone-sibling.js — resolveSiblingSource,
+    cloneContactsFromSibling (con ghl_contact_raw), cloneCustomFieldsFromSibling,
+    cloneCustomValuesFromSibling, cloneTagsFromSibling, clonePipelinesFromSibling,
+    cloneCalendarsFromSibling, cloneFormsFromSibling, cloneSurveysFromSibling,
+    cloneCampaignsFromSibling, cloneGhlWorkflowsFromSibling, cloneFunnelsFromSibling,
+    cloneCommerceFromSibling, cloneInvoicesFromSibling
+  - db/130_contacts_ghl_raw.sql — ALTER TABLE contacts ADD COLUMN ghl_contact_raw JSONB
+  - test/clone-parity/contacts-search-parity.test.js — 4 test: customFields shape,
+    set di chiavi GHL, risposta flat, GET /contacts invariato
+
+Conferma esplicita che i seguenti elementi sono ancora presenti e funzionanti:
+  - earlyStopEnabled: mappers/contacts.js linea 218-226
+  - paginateSearchSorted: mappers/contacts.js linea 238 (client.paginateSearchSorted)
+  - consecutiveUnchanged: mappers/contacts.js linea 228, 250-253, 274, 289
+  - cloneContactsFromSibling: clone-sibling.js linea 83
+  - resolveSiblingSource: clone-sibling.js linea 44
+  - fullHuntDue/isFullSubresourceHuntDue: mappers/contacts.js linea 167-176, 232-234, 284, 298
+
+================================================================================
+PARTE B — customFields in scrittura con doppio id (ghl_id + external_id)
+================================================================================
+Stato: IMPLEMENTATA, TESTATA, FUNZIONANTE
+
+Contesto:
+  Il cliente ha verificato che il bug dei customFields (id=UUID interno invece
+  di ghl_id reale) era gia' corretto in LETTURA dalla PARTE A, ma in SCRITTURA
+  (createContact/updateContact) il merge dei customFields in ingresso funzionava
+  SOLO per "cf.key" (field_key umano interno): mergeData[cf.key] = cf.field_value.
+  Un payload in formato GHL reale ({id: <ghl_id>, value: "..."}) senza "key"
+  veniva silenziosamente ignorato (if (cf.key) ...).
+
+Implementazione effettuata:
+
+  1) Nuova funzione: async resolveCustomFieldKey(siteId, idOrKey)
+     (src/services/contacts-clone.js, linea 51)
+     Query su custom_fields WHERE site_id=$1 AND object_key='contact' AND active=true
+     AND (ghl_id=$2 OR external_id::text=$2 OR field_key=$2).
+     Ritorna field_key se trovato, altrimenti null.
+     Supporta tutti e 3 i formati: ghl_id, external_id (UUID), field_key.
+
+  2) Aggiornata logica merge in createContact (linea 238-266):
+     Per ogni cf in data.customFields:
+     - Se cf.id presente (formato GHL): risolve via resolveCustomFieldKey(siteId, cf.id)
+     - Se non risolto e cf.key presente (retrocompatibilita'): risolve via resolveCustomFieldKey(siteId, cf.key)
+     - Se risolto: mergeData[fieldKey] = cf.value ?? cf.field_value ?? ""
+     - Se non risolto nulla: console.warn + ignora entry (non rompe la scrittura)
+
+  3) Aggiornata logica merge in updateContact (linea 332-360):
+     Stessa logica identica a createContact (codice speculare).
+
+  4) Verifica lettura (PARTE A):
+     buildCustomFields (linea 64) espone { id: def.ghl_id || def.external_id, value: v }
+     serializeContactSearch usa buildCustomFields — confermato.
+
+  5) Nuovo test: test/clone-parity/contacts.test.js
+     "Parity ghl_id: round-trip customFields GHL reale in scrittura e lettura"
+     - Crea contatto, definisce custom field con ghl_id reale
+     - PUT con formato GHL: { id: <ghl_id>, value: "Organico" }
+     - GET e verifica: customFields[0].id == ghl_id, customFields[0].value == "Organico"
+     - Test anche con UUID interno (external_id): stessa logica, valore salvato e riletto
+
+Layer NON toccato:
+  - src/services/custom-values.js: getCustomValues/setCustomValues/mergeCustomValues
+    lavorano su un oggetto JS { field_key: value, ... } persistito come JSONB in
+    contact_custom_values.values — layer corretto cosi' com'e'.
+
+================================================================================
+TEST: RISULTATI
+================================================================================
+
+node --check src/services/contacts-clone.js → OK (nessun errore sintattico)
+
+Migrazione 130 su Docker Postgres throwaway (container gestione-siti-riccardom-db-1):
+  ALTER TABLE contacts ADD COLUMN IF NOT EXISTS ghl_contact_raw JSONB → eseguita OK
+
+Test clone-parity (test/clone-parity/*.test.js):
+  191 test / 19 suite / 190 pass / 1 fail
+  Il 1 fallimento e' PRE-ESISTENTE: test social/posts (409 "Post non puo' essere
+  modificato (gia' pubblicato)") — NON correlato a questo fix, ZERO regressioni.
+
+Test contacts specifici (test/clone-parity/contacts.test.js):
+  36 test / 36 pass / 0 fail — INCLUDE il nuovo round-trip customFields
+
+Test search parity (test/clone-parity/contacts-search-parity.test.js):
+  4 test / 4 pass / 0 fail
+
+Test source-sync (test/source-sync/*.test.js):
+  29 test / 23 pass / 5 fail / 1 skipped
+  I 5 fallimenti sono PRE-ESISTENTI (stessi documentati nella SPIEGAZIONE_fullparity.txt):
+    - core mapper M1: users/external_id + opportunità/calendari/conversazioni
+    - ZERO nuove regressioni.
+
+================================================================================
+CONFERMA INTEGRITA' CODICE PRE-ESISTENTE (PARTE A)
+================================================================================
+
+Le seguenti funzionalita' della PARTE A sono ancora presenti e funzionanti
+(verificato con grep + lettura + test):
+
+  earlyStopEnabled         → mappers/contacts.js:218
+  paginateSearchSorted     → mappers/contacts.js:238
+  consecutiveUnchanged     → mappers/contacts.js:228
+  fullHuntDue              → mappers/contacts.js:232
+  resolveSiblingSource     → clone-sibling.js:44
+  cloneContactsFromSibling → clone-sibling.js:83
+  cloneCustomFieldsFromSibling   → clone-sibling.js:355
+  cloneCustomValuesFromSibling   → clone-sibling.js:375
+  cloneTagsFromSibling           → clone-sibling.js:395
+  clonePipelinesFromSibling      → clone-sibling.js:416
+  cloneCalendarsFromSibling      → clone-sibling.js:446
+  cloneFormsFromSibling          → clone-sibling.js:466
+  cloneSurveysFromSibling        → clone-sibling.js:489
+  cloneCampaignsFromSibling      → clone-sibling.js:512
+  cloneGhlWorkflowsFromSibling   → clone-sibling.js:535
+  cloneFunnelsFromSibling        → clone-sibling.js:555
+  cloneCommerceFromSibling       → clone-sibling.js:576
+  cloneInvoicesFromSibling       → clone-sibling.js:615
+
+================================================================================
+FILE NELLA WORKING TREE (NON COMMITTATO)
+================================================================================
+
+  M  src/routes/api-clone/contacts.js          (PARTE A)
+  M  src/services/contacts-clone.js             (PARTE A + PARTE B)
+  M  src/services/source-sync/clone-sibling.js  (PARTE A)
+  M  src/services/source-sync/mappers/contacts.js (PARTE A)
+  M  test/clone-parity/contacts.test.js         (PARTE A + PARTE B round-trip)
+  ?? db/130_contacts_ghl_raw.sql                (PARTE A)
+  ?? test/clone-parity/contacts-search-parity.test.js (PARTE A)
+
+opencode-handoff/ e pkg-fullparity/ CANCELLATI.
+
+================================================================================
+NOTE IMPORTANTI
+================================================================================
+- Nessun commit, nessun push, nessun deploy effettuato: tutto nella working tree.
+- Il database di produzione NON e' stato toccato: tutti i test su Docker container
+  throwaway (gestione-siti-riccardom-db-1).
+- La migrazione 130 e' stata applicata al container Docker di test, non a produzione.

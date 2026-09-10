@@ -1,0 +1,13 @@
+-- 130: raw del contatto GHL, per parità di shape su POST /contacts/search.
+--
+-- Il source-sync chiama GIÀ POST /contacts/search e riceve l'oggetto contatto
+-- COMPLETO (source, type, dnd, businessName, assignedTo, validEmail, dndSettings,
+-- inboundDndSettings, additionalEmails, additionalPhones, dateOfBirth, businessId,
+-- phoneLabel, attributionSource, lastAttributionSource, opportunities embedded,
+-- followers, searchAfter, country/state/city/postalCode/address/website/timezone),
+-- ma finora ne persisteva solo un sottoinsieme (email/status/tags + profilo +
+-- custom field). Per rendere la risposta del clone-API IDENTICA a GHL SENZA nuove
+-- chiamate per-contatto, salviamo l'oggetto grezzo così come arriva: una colonna
+-- JSONB sola cattura tutti i campi presenti e futuri, e il serializer dedicato
+-- di /contacts/search la legge.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS ghl_contact_raw JSONB;

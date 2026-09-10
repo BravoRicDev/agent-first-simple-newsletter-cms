@@ -37,6 +37,56 @@ function buildOrderBy(sort) {
   return clauses.length > 0 ? clauses.join(", ") : "c.id DESC";
 }
 
+// Chiavi che NON sono custom field GHL: profilo + campi top-level del contatto.
+// Vanno escluse dall'array customFields (in GHL sono campi separati, non custom).
+const NON_CUSTOM_KEYS = new Set([
+  "name", "firstName", "lastName", "phone", "companyName", "website",
+  "address", "address1", "city", "state", "postalCode", "country", "timezone",
+]);
+
+// Risolve un field_key a partire da un id o key passata in ingresso.
+// Query su custom_fields WHERE site_id=$1 AND object_key='contact' AND active=true
+// AND (ghl_id=$2 OR external_id::text=$2 OR field_key=$2), ritorna field_key
+// se trovato altrimenti null.
+async function resolveCustomFieldKey(siteId, idOrKey) {
+  const rows = (await query(
+    "SELECT field_key FROM custom_fields WHERE site_id = $1 AND object_key = 'contact' AND active = true AND (ghl_id = $2 OR external_id::text = $2 OR field_key = $2)",
+    [siteId, idOrKey]
+  )).rows;
+  return rows.length > 0 ? rows[0].field_key : null;
+}
+
+// Costruisce customFields nello SHAPE REALE di GHL: [{ id, value }] dove id è il
+// ghl_id VERO del custom field (non il nostro UUID external_id — era il bug: si
+// usava external_id e si aggiungevano key/field_value, campi che in GHL non
+// esistono). Per un campo sincronizzato ghl_id è sempre valorizzato; fallback a
+// external_id solo per definizioni locali mai sincronizzate (assenti in GHL).
+function buildCustomFields(customValues = {}, customFieldDefs = []) {
+  const map = new Map(customFieldDefs.map((f) => [f.field_key, f]));
+  const out = [];
+  for (const [k, v] of Object.entries(customValues || {})) {
+    if (NON_CUSTOM_KEYS.has(k)) continue;
+    const def = map.get(k);
+    if (!def) continue;
+    out.push({ id: def.ghl_id || def.external_id, value: v });
+  }
+  return out;
+}
+
+// row.ghl_contact_raw è JSONB (pg lo restituisce già oggetto); tollera anche
+// una stringa e l'assenza (riga non ancora ri-sincronizzata).
+function parseRaw(v) {
+  if (!v) return {};
+  if (typeof v === "string") { try { return JSON.parse(v) || {}; } catch { return {}; } }
+  return typeof v === "object" ? v : {};
+}
+// Stringa: null se vuota/assente (GHL usa null, non "").
+function nn(v) { return v === "" || v === undefined || v === null ? null : v; }
+// Prendi dal raw (autoritativo, mirror GHL) se la chiave c'è; altrimenti fallback.
+function pick(raw, key, fallback) {
+  return raw && Object.prototype.hasOwnProperty.call(raw, key) ? raw[key] : fallback;
+}
+
 export async function serializeContact(row, customValues = {}, customFieldDefs = []) {
   if (!row) return null;
 
@@ -52,22 +102,8 @@ export async function serializeContact(row, customValues = {}, customFieldDefs =
     website: customValues.website ?? "",
   };
 
-  // Custom field veri (tutto fuori dalle chiavi di profilo).
-  const customFieldsArray = [];
-  const fieldDefMap = new Map(customFieldDefs.map(f => [f.field_key, f]));
-
-  for (const [k, v] of Object.entries(customValues || {})) {
-    if (!["name", "firstName", "lastName", "phone", "companyName", "website"].includes(k)) {
-      const def = fieldDefMap.get(k);
-      if (def) {
-        customFieldsArray.push({
-          id: def.external_id,
-          key: k,
-          field_value: v,
-        });
-      }
-    }
-  }
+  // Custom field nello shape reale di GHL: [{ id: <ghl_id>, value }].
+  const customFieldsArray = buildCustomFields(customValues, customFieldDefs);
 
   return {
     id: id,
@@ -91,9 +127,75 @@ export async function serializeContact(row, customValues = {}, customFieldDefs =
   };
 }
 
+// Serializer DEDICATO per POST /contacts/search: produce lo shape ESATTO del
+// contatto nella risposta reale di GHL a questo endpoint (vedi
+// .tmp-compare/ghl-real-francesco.json). NON tocca serializeContact (usato da
+// GET /contacts e GET /contacts/:id, che hanno un altro shape). Campi letti dal
+// raw GHL persistito dal sync (db/130) quando presente, con fallback sensati;
+// null dove GHL usa null (non stringa vuota); opportunities/followers/
+// attributionSource/additionalEmails/... dal raw (già nel payload di
+// /contacts/search, nessuna chiamata extra). customFields con il ghl_id reale.
+export async function serializeContactSearch(row, customValues = {}, customFieldDefs = []) {
+  if (!row) return null;
+  const generatedExtId = await getExternalId("contacts", row.id);
+  const id = publicId(row) || generatedExtId;
+  const raw = parseRaw(row.ghl_contact_raw);
+  const cv = customValues || {};
+
+  const firstName = pick(raw, "firstName", cv.firstName ?? "");
+  const lastName = pick(raw, "lastName", cv.lastName ?? "");
+  const dateAdded = row.created_at?.toISOString() ?? pick(raw, "dateAdded", null);
+  const dateUpdated = row.updated_at?.toISOString() ?? pick(raw, "dateUpdated", null);
+  const searchAfter = Array.isArray(raw.searchAfter)
+    ? raw.searchAfter
+    : [row.created_at ? new Date(row.created_at).getTime() : null, id];
+
+  return {
+    id,
+    phoneLabel: pick(raw, "phoneLabel", null),
+    country: pick(raw, "country", null),
+    address: pick(raw, "address", null),
+    source: pick(raw, "source", null),
+    type: pick(raw, "type", null),
+    locationId: row.location_external_id ?? pick(raw, "locationId", null),
+    website: pick(raw, "website", nn(cv.website)),
+    dnd: pick(raw, "dnd", false),
+    state: pick(raw, "state", null),
+    businessName: pick(raw, "businessName", null),
+    customFields: buildCustomFields(cv, customFieldDefs),
+    tags: Array.isArray(raw.tags) ? raw.tags : (row.tags || []),
+    dateAdded,
+    additionalEmails: pick(raw, "additionalEmails", []),
+    phone: pick(raw, "phone", nn(cv.phone)),
+    companyName: pick(raw, "companyName", nn(cv.companyName)),
+    additionalPhones: pick(raw, "additionalPhones", []),
+    dateUpdated,
+    city: pick(raw, "city", null),
+    dateOfBirth: pick(raw, "dateOfBirth", null),
+    firstNameLowerCase: pick(raw, "firstNameLowerCase", (firstName || "").toLowerCase()),
+    lastNameLowerCase: pick(raw, "lastNameLowerCase", (lastName || "").toLowerCase()),
+    firstName,
+    lastName,
+    contactName: pick(raw, "contactName", `${firstName} ${lastName}`.trim().toLowerCase()),
+    email: row.email ?? pick(raw, "email", null),
+    assignedTo: pick(raw, "assignedTo", null),
+    followers: pick(raw, "followers", []),
+    validEmail: pick(raw, "validEmail", null),
+    dndSettings: pick(raw, "dndSettings", {}),
+    opportunities: pick(raw, "opportunities", []),
+    postalCode: pick(raw, "postalCode", null),
+    businessId: pick(raw, "businessId", null),
+    searchAfter,
+    timezone: pick(raw, "timezone", nn(cv.timezone)),
+    inboundDndSettings: pick(raw, "inboundDndSettings", {}),
+    attributionSource: pick(raw, "attributionSource", null),
+    lastAttributionSource: pick(raw, "lastAttributionSource", null),
+  };
+}
+
 export async function getContactCustomFields(siteId) {
   const rows = (await query(
-    "SELECT id, field_key, external_id FROM custom_fields WHERE site_id = $1 AND object_key = 'contact' AND active = true",
+    "SELECT id, field_key, external_id, ghl_id FROM custom_fields WHERE site_id = $1 AND object_key = 'contact' AND active = true",
     [siteId]
   )).rows;
   return rows;
@@ -140,9 +242,26 @@ export async function createContact(siteId, data = {}) {
   };
 
   // Merge custom field utente se presenti.
+  // I campi possono arrivare in due formati:
+  // 1) Formato GHL reale: { id: "<ghl_id>", value: "..." } — qui id è il ghl_id vero
+  // 2) Formato interno legacy: { key: "<field_key>", field_value: "..." }
+  // Risolviamo sempre tramite resolveCustomFieldKey che accetta sia ghl_id che external_id che field_key.
   if (Array.isArray(data.customFields)) {
     for (const cf of data.customFields) {
-      if (cf.key) customValues[cf.key] = cf.field_value || "";
+      let fieldKey;
+      if (cf.id) {
+        // Formato GHL/esterno: usa id (può essere ghl_id o external_id/UUID interno)
+        fieldKey = await resolveCustomFieldKey(siteId, cf.id);
+      }
+      if (!fieldKey && cf.key) {
+        // Fallback retrocompatibilità: usa key
+        fieldKey = await resolveCustomFieldKey(siteId, cf.key);
+      }
+      if (fieldKey) {
+        mergeData[fieldKey] = cf.value ?? cf.field_value ?? "";
+      } else {
+        console.warn(`customField: impossibile risolvere key/id "${cf.id || cf.key}" — entry ignorata`);
+      }
     }
   }
 
@@ -223,7 +342,20 @@ export async function updateContact(siteId, contactExternalId, data = {}) {
 
   if (Array.isArray(data.customFields)) {
     for (const cf of data.customFields) {
-      if (cf.key) mergeData[cf.key] = cf.field_value || "";
+      let fieldKey;
+      if (cf.id) {
+        // Formato GHL/esterno: usa id (può essere ghl_id o external_id/UUID interno)
+        fieldKey = await resolveCustomFieldKey(siteId, cf.id);
+      }
+      if (!fieldKey && cf.key) {
+        // Fallback retrocompatibilità: usa key
+        fieldKey = await resolveCustomFieldKey(siteId, cf.key);
+      }
+      if (fieldKey) {
+        mergeData[fieldKey] = cf.value ?? cf.field_value ?? "";
+      } else {
+        console.warn(`customField: impossibile risolvere key/id "${cf.id || cf.key}" — entry ignorata`);
+      }
     }
   }
 
@@ -263,7 +395,7 @@ export async function deleteContact(siteId, contactExternalId) {
   return true;
 }
 
-export async function listContacts(siteId, filters = {}) {
+export async function listContacts(siteId, filters = {}, serialize = serializeContact) {
   const { limit = 20, startAfterId = null, query: searchQuery = null, tag = null, email = null, sort = null } = filters;
 
   let whereClause = "c.site_id = $1";
@@ -324,7 +456,7 @@ export async function listContacts(siteId, filters = {}) {
     const row = rows[i];
     const customValues = await getCustomValues(siteId, row.id, "contact");
     const fieldDefs = await getContactCustomFields(siteId);
-    const serialized = await serializeContact(row, customValues, fieldDefs);
+    const serialized = await serialize(row, customValues, fieldDefs);
     contacts.push(serialized);
   }
 
@@ -339,7 +471,9 @@ export async function listContacts(siteId, filters = {}) {
 }
 
 export async function searchContacts(siteId, filters = {}) {
-  return listContacts(siteId, filters);
+  // Serializer DEDICATO: /contacts/search deve essere byte-identico a GHL
+  // (shape diverso da serializeContact usato da GET /contacts e GET /contacts/:id).
+  return listContacts(siteId, filters, serializeContactSearch);
 }
 
 export async function upsertContact(siteId, data = {}) {

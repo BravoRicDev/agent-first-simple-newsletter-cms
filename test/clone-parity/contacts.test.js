@@ -274,9 +274,11 @@ describe("ONDA A — Contacts clone API", () => {
       body: JSON.stringify({ locationId: String(locationId), query: "SearchTest" }),
     });
     assert.equal(res.status, 200);
-    const { contacts, meta } = await res.json();
+    // /contacts/search risponde flat { contacts, total, traceId } (shape reale
+    // GHL), NON wrappato in meta come gli altri endpoint.
+    const { contacts, total } = await res.json();
     assert.ok(Array.isArray(contacts));
-    assert.ok(typeof meta.total === "number");
+    assert.ok(typeof total === "number");
   });
 
   // Regression guard punto 1: GHL manda il limite come `pageLimit`, non
@@ -822,5 +824,76 @@ describe("ONDA A — Contacts clone API", () => {
       body: JSON.stringify({ body: "x" }),
     });
     assert.equal(res.status, 400);
+  });
+
+  test("Parity ghl_id: round-trip customFields GHL reale in scrittura e lettura", async () => {
+    // Crea un contatto con un custom field definito nel sito
+    const email = uniqueEmail("cf-roundtrip");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact: created } = await createRes.json();
+
+    // Definiamo un custom field per questo sito (field_key "fonte_lead" con ghl_id reale)
+    const ghlFieldId = "68Ozsrw9u5qYp0nFSyfb"; // ghl_id reale dal fixture test
+    await query(
+      "INSERT INTO custom_fields (site_id,object_key,field_key,name,type,active,ghl_id) VALUES ($1,$2,$3,$4,$5,true,$6)",
+      [site.id, "contact", "fonte_lead", "Fonte", "text", ghlFieldId]
+    );
+
+    // Round-trip: scrittura con formato GHL reale {id: <ghl_id>, value}
+    const res = await fetch(buildUrl(`/contacts/${created.id}`), {
+      method: "PUT",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({
+        customFields: [{ id: ghlFieldId, value: "Organico" }],
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    // Rileggiamo il contatto e verifichiamo che il custom field sia salvato
+    const readRes = await fetch(buildUrl(`/contacts/${created.id}`), {
+      headers: h(apiKey.raw),
+    });
+    const { contact: readContact } = await readRes.json();
+    assert.ok(readContact.customFields && readContact.customFields.length === 1,
+      "customFields deve avere 1 elemento in lettura");
+    assert.equal(readContact.customFields[0].id, ghlFieldId,
+      "id in lettura deve essere il ghl_id reale");
+    assert.equal(readContact.customFields[0].value, "Organico",
+      "value in lettura deve essere 'Organico'");
+
+    // Round-trip anche con UUID interno (external_id)
+    const internalUuid = crypto.randomUUID();
+    await query(
+      "INSERT INTO custom_fields (site_id,object_key,field_key,name,type,active,external_id) VALUES ($1,$2,$3,$4,$5,true,$6)",
+      [site.id, "contact", "fonte_lead_internal", "Fonte Interna", "text", internalUuid]
+    );
+    const res2 = await fetch(buildUrl(`/contacts/${created.id}`), {
+      method: "PUT",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({
+        customFields: [{ id: internalUuid, value: "Da UUID interno" }],
+      }),
+    });
+    assert.equal(res2.status, 200);
+
+    // Rileggiamo e verifichiamo che il valore sia salvato con l'UUID interno come id
+    const readRes2 = await fetch(buildUrl(`/contacts/${created.id}`), {
+      headers: h(apiKey.raw),
+    });
+    const { contact: readContact2 } = await readRes2.json();
+    // A questo punto il contatto ha 2 custom field valorizzati (fonte_lead
+    // dal round-trip precedente + fonte_lead_internal appena scritto): non
+    // asseriamo la lunghezza totale, cerchiamo lo specifico campo scritto
+    // tramite UUID interno.
+    assert.ok(Array.isArray(readContact2.customFields) && readContact2.customFields.length === 2,
+      "customFields deve avere 2 elementi in lettura (fonte_lead + fonte_lead_internal)");
+    const internalField = readContact2.customFields.find((f) => f.id === internalUuid);
+    assert.ok(internalField, "deve essere presente il campo scritto con l'UUID interno come id");
+    assert.equal(internalField.value, "Da UUID interno",
+      "value in lettura con UUID interno deve essere 'Da UUID interno'");
   });
 });

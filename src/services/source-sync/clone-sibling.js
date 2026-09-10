@@ -85,12 +85,12 @@ export async function cloneContactsFromSibling(ctx, siblingSiteId) {
 
   try {
     const contactsRes = await query(
-      `INSERT INTO contacts (site_id, ghl_id, email, tags, status, notes, created_at, updated_at)
-       SELECT $1, ghl_id, email, tags, status, notes, created_at, updated_at
+      `INSERT INTO contacts (site_id, ghl_id, email, tags, status, notes, ghl_contact_raw, created_at, updated_at)
+       SELECT $1, ghl_id, email, tags, status, notes, ghl_contact_raw, created_at, updated_at
        FROM contacts WHERE site_id = $2 AND ghl_id <> ''
        ON CONFLICT (site_id, ghl_id) WHERE ghl_id <> '' DO UPDATE SET
          email = EXCLUDED.email, tags = EXCLUDED.tags, status = EXCLUDED.status,
-         notes = EXCLUDED.notes, updated_at = EXCLUDED.updated_at
+         notes = EXCLUDED.notes, ghl_contact_raw = EXCLUDED.ghl_contact_raw, updated_at = EXCLUDED.updated_at
        RETURNING ghl_id`,
       [siteId, siblingSiteId]
     );
