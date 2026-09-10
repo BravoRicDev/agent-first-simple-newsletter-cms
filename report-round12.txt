@@ -1,0 +1,139 @@
+================================================================================
+REPORT — INTEGRAZIONE PACCHETTI GHL PARITY (ROUND 12 CAMPAGNE + ROUND 1-11
+CONSOLIDATO)
+================================================================================
+
+Data: 2026-09-10
+Branch: main (working tree reale del repository)
+Commit pushato: 9c5d59c
+  "GHL parity round 12 (campagne) + consolidamento round 1-11 (custom-fields,
+   forms, surveys, utenti, agency)"
+
+--------------------------------------------------------------------------------
+1. PACCHETTI INTEGRATI
+--------------------------------------------------------------------------------
+PACCHETTO 1: opencode-handoff/1042eddc-ghlparityround12campaigns.zip
+  → estratto in ./pkg-round12, applicato, rimosso.
+  Contenuto: round 12 — parity ghl_id su campagna broadcast (newsletter_campaigns)
+  e template (marketing_templates) del clone-API.
+
+PACCHETTO 2: opencode-handoff/d2109477-ghlparityround111COMPLETATO.zip
+  → estratto in ./pkg-round111, applicato, rimosso.
+  Contenuto: consolidato round 1-11 (contatti, note/task/follower, opportunità,
+  calendari/appuntamenti, conversazioni, tag, custom field, form, survey, utenti
+  + fix source-sync contatti/appuntamenti). Round 12 NON era incluso (lavoro
+  interrotto — consegnato separatamente nel pacchetto 1).
+
+Dopo l'uso, rimosse pkg-round12/, pkg-round111/, i due .zip e opencode-handoff/
+(lasciata vuota e cancellata). Nessun residuo nel repo o nel commit.
+
+--------------------------------------------------------------------------------
+2. BUG TROVATI (per pacchetto)
+--------------------------------------------------------------------------------
+Pacchetto 1 (Round 12 campagne):
+  - Nessun bug preesistente nel codice attuale: la risorsa campagne era ancora
+    UUID-only e non era mai stato applicato il pattern parity. Verificato che
+    newsletter_campaigns e marketing_templates hanno ghl_id + site_id propri
+    (db/120 e db/126) → findByAnyId applicabile direttamente.
+  - campaign_subscriptions NON ha ghl_id (relazione puramente locale) → id della
+    subscription resta UUID-only, ma campaignId/contactId in risposta preferiscono
+    il ghl_id reale della campagna/contatto collegato (via publicId).
+  - Rimosse generazioni lazy superflue di external_id in createCampaign/
+    createTemplate/addContactToCampaign: la colonna ha DEFAULT gen_random_uuid()
+    a livello di schema, già popolata in RETURNING *.
+
+Pacchetto 2 (Round 1-11 consolidato):
+  - Nessun bug NUOVO introdotto: il pacchetto è il consolidato di round già
+    verificati singolarmente.
+  - Verificati i 3 file con codice di sicurezza critico anti-perdita-dati
+    (src/services/source-sync/clone-sibling.js,
+     src/services/source-sync/mappers/contacts.js,
+     src/services/source-sync/mappers/calendars.js):
+    TUTTI GIÀ IDENTICI tra pacchetto e repo (check MD5) — quindi il merge non ha
+    rimosso né modificato il codice critico ("paginateSearchSorted",
+    "earlyStopEnabled", "consecutiveUnchanged" in mappers/contacts.js, funzioni
+    clone*FromSibling in clone-sibling.js). Nessun intervento necessario.
+  - external-ids.js e _helpers.js: differenze SOLO cosmetiche (commento più breve
+    nel pacchetto / ordine delle funzioni). Il repo contiene già findByAnyId,
+    publicId e requireAnyId con lo stesso comportamento → non sovrascritti per
+    preservare i commenti più ricchi già presenti.
+
+--------------------------------------------------------------------------------
+3. FIX APPLICATI (file per file)
+--------------------------------------------------------------------------------
+ROUND 12 — CAMPAGNE:
+  - src/services/campaigns-clone.js: riscritto completo per parity ghl_id.
+    serializeCampaign/serializeTemplate: id = publicId(row). serializeSubscription:
+    campaignId/contactId risolti al ghl_id reale (campaign_public_id /
+    contact_public_id). listCampaigns/listTemplates: cursore startAfterId via
+    findByAnyId; nextStartAfterId = publicId. getCampaign/updateCampaign/
+    deleteCampaign/scheduleCampaign/unscheduleCampaign/sendCampaignNow:
+    findByExternalId → findByAnyId. getTemplate/updateTemplate/deleteTemplate:
+    idem. addContactToCampaign/listContactCampaigns/removeContactFromCampaign/
+    removeAllContactCampaigns: risoluzione contatto/campagna via findByAnyId.
+  - src/routes/api-clone/campaigns.js: requireUuid → requireAnyId su tutte le
+    route parametriche; GET /campaigns/:id/stats usa findByAnyId per la lookup.
+  - test/clone-parity/campaigns.test.js: aggiunti 4 test parity ghl_id
+    (round-trip campagna, id malformato 300 char → 400, round-trip template,
+    subscription con campaignId/contactId reali).
+
+ROUND 1-11 — CONSOLIDATO (modifiche restanti rispetto a quanto già nel repo):
+  - src/routes/api-clone/custom-fields.js: requireAnyId + findByAnyId +
+    publicId; cursore paginazione matcha anche ghl_id.
+  - src/serializers/custom-field.js: id = publicId(row).
+  - src/routes/api-clone/forms.js: requireAnyId; formIds CSV accettano ghl_id
+    (validazione >255 char invece di isUuid).
+  - src/services/forms-clone.js: findByAnyId + publicId su form e submission;
+    resolveFormInternalId via findByAnyId; formId/contactId esposti al ghl_id
+    reale quando presente.
+  - src/routes/api-clone/surveys.js: requireAnyId + findByAnyId (+ fix doppia
+    query dinamica findByExternalId→findByAnyId).
+  - src/services/surveys-clone.js: findByAnyId + publicId; cursori paginazione;
+    surveyId/contactId di una submission risolti al ghl_id reale; rimosse
+    generazioni lazy external_id non necessarie.
+  - src/routes/api-clone/users.js: requireAnyId + findByAnyId su GET/PUT/DELETE
+    /users/:userId.
+  - src/services/agency-clone.js: findByAnyId + publicId su utenti; cursore
+    paginazione via findByAnyId.
+  - Test aggiunti (parity ghl_id): test/clone-parity/agency.test.js,
+    custom-fields.test.js, forms.test.js, surveys.test.js. Aggiornato
+    surveys.test.js: "id non-UUID valido ma inesistente → 404" (non più 400).
+
+NOTA: molti file del pacchetto round 1-11 erano già identici al repo
+(calendars, contacts, conversations, opportunities, tags, source-sync,
+serializer tag, ecc.) perché le modifiche erano già state applicate nei commit
+precedenti — non c'era nulla da fare lì. Il pacchetto è stato applicato in modo
+selettivo (merge), non sovrascrivendo alla cieca.
+
+--------------------------------------------------------------------------------
+4. RISULTATI DEI TEST
+--------------------------------------------------------------------------------
+- node --check su TUTTI i 15 file .js modificati: OK, 0 errori.
+- Suite test/clone-parity/ (container Postgres throwaway dedicato:
+  ghl-parity-pg-test, postgres:16-alpine, porta 55432, migrato con
+  node db/migrate.js):
+      # tests 165  # suites 16  # pass 165  # fail 0
+  TUTTI PASSANO (inclusi i nuovi test round 12 e i test round 1-11).
+- Suite test/source-sync/: 14 PASS / 5 FAIL / 1 SKIP — gli stessi 5 fallimenti
+  PREESISTENTI confermati anche su HEAD pulito prima di queste modifiche
+  (documentati nel pacchetto). NON causati dall'integrazione (i file
+  source-sync toccati sono identici al repo). Nessuna regressione.
+
+--------------------------------------------------------------------------------
+5. DEPLOY
+--------------------------------------------------------------------------------
+- Comando: docker compose up -d --build gestione-siti
+- Build: OK (immagine ricreata, layer src/test copiati, partenza corretta).
+- Container: gestione-siti-riccardom-gestione-siti-1 → "Up About a minute
+  (healthy)" (raggiunto healthy in ~1 minuto).
+- GET http://127.0.0.1:3002/health → 200.
+- ESITO: DEPLOY OK (healthy + /health 200). Nessuna azione di rollback
+  necessaria.
+
+--------------------------------------------------------------------------------
+6. VERIFICHE PRE/POST PUSH
+--------------------------------------------------------------------------------
+- git fetch origin main: OK.
+- git merge-base --is-ancestor origin/main HEAD → PASS (push senza --force).
+- git push origin main: OK (248f6e2..9c5d59c).
+</content>
