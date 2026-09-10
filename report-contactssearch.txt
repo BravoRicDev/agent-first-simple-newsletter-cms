@@ -1,0 +1,117 @@
+================================================================================
+REPORT — Fix POST /contacts/search (pageLimit + sort)
+Pacchetto: 30188360-fixcontactssearchround.zip (lettura preliminare da
+opencode-handoff/SPIEGAZIONE_contactssearch.txt)
+================================================================================
+Data integrazione: 2026-09-10
+HEAD del repo all'integrazione: e09f408 "round 17-20" (working tree pulito)
+Nessun commit/push/deploy eseguito qui: modifiche lasciate nel working tree.
+
+Scorciatoia "git push se stesso HEAD" del pacchetto: IGNORATA come richiesto.
+Il pacchetto era committato su un ALTRO checkout a 8320cb1 (sopra 3fc0c12); il
+nostro HEAD (e09f408) e' diverso, quindi applicato tramite copia file + verifica.
+
+--------------------------------------------------------------------------------
+COSA HO TROVATO (verifica stato ATTUALE prima di sovrascrivere)
+--------------------------------------------------------------------------------
+Confronto diff package-file vs file attuali del repo per i 3 file toccati:
+
+ - src/routes/api-clone/contacts.js      : UNA SOLA area di differenza, tutta
+   dentro l'handler POST /contacts/search. Il resto del file (GET /contacts,
+   GET /contacts/:id, POST /contacts, notes/tasks/followers/appointments/ecc.)
+   e' BYTE-IDENTICO => nessuna deriva, nessuna modifica pre-esistente da
+   preservare persa. Il pacchetto e' scritto contro la nostra stessa versione.
+ - src/services/contacts-clone.js        : differenza SOLO in 3 punti (aggiunta
+   SORTABLE_COLUMNS + buildOrderBy, firma listContacts con sort, ORDER BY
+   dinamico). searchContacts = "return listContacts(siteId, filters)" INVARIATo.
+   Tutto il resto (serializeContact, upsert, notes, tasks, findDuplicates...)
+   byte-identico. Nessuna deriva.
+ - test/clone-parity/contacts.test.js    : differenza = 2 NUOVI test inseriti,
+   tutti gli altri 34 test byte-identici. Nessuna deriva.
+
+Verifica file sensibili anti-perdita-dati: il pacchetto NON tocca
+src/services/source-sync/* ne' external-ids.js => non applicabile, nessun
+rischio su paginateSearchSorted/earlyStopEnabled/consecutiveUnchanged/clone*FromSibling.
+
+Applicazione: copia dei 3 file del pacchetto sopra quelli del repo (sicura perche'
+i diff sono solo il fix, nulla altro diverge).
+
+--------------------------------------------------------------------------------
+FIX APPLICATI (file per file)
+--------------------------------------------------------------------------------
+1) src/routes/api-clone/contacts.js — handler POST /contacts/search
+   BUG: leggeva req.body.limit (campo sbagliato) -> sempre undefined ->
+   parseInt(undefined,10)||20 -> SEMPRE 20 risultati, qualunque pageLimit.
+   FIX:
+    - const limit = parseInt(req.body.pageLimit, 10) || 20;
+      (stesso clamp Math.min(Math.max(limit,1),100), stesso default 20)
+    - aggiunto sort: Array.isArray(req.body.sort) ? req.body.sort : null
+      nel filters passato a searchContacts.
+    - (commento d'header dell'handler corretto da "GET /contacts/:contactId" —
+       era un mislabel pre-esistente — a "POST /contacts/search".)
+   GET /contacts (query string, usa getPaging, NON manda mai sort) RESTA
+   bit-per-bit invariato: non e' nel diff, e sort resta null -> default c.id DESC.
+
+2) src/services/contacts-clone.js
+   BUG: listContacts aveva "ORDER BY c.id DESC" cablato fisso; il param sort non
+   era nemmeno nella firma (scartato silenziosamente).
+   FIX:
+    - Nuova allowlist SORTABLE_COLUMNS = { dateAdded: "c.created_at",
+      dateUpdated: "c.updated_at" } (colonne verificate in db/025_contacts.sql).
+    - Nuova buildOrderBy(sort):
+        * sort non array/vuoto -> "c.id DESC" (default storico)
+        * per ogni entry [{field,direction}]: col presa SOLO da allowlist
+          (entry fuori allowlist ignorate), direction ammessa SOLO "asc"/"desc"
+          (emessa come costante "ASC"/"DESC"), altrimenti ignorata
+        * se nessuna entry valida -> "c.id DESC"
+      => NESSUNA interpolazione diretta della stringa client in SQL: il campo
+         ordinabile e' sempre una colonna pre-definita e la direzione una
+         costante. Superficie di SQL injection nulla anche con sort arbitrario.
+    - listContacts: destrutturato anche `sort = null` dai filters e
+      `ORDER BY ${buildOrderBy(sort)}` al posto del cablaggio fisso.
+    - searchContacts invariata (passa filters, quindi sort arriva a listContacts).
+
+3) test/clone-parity/contacts.test.js — 2 test di regressione aggiunti
+    - "pageLimit=1 restituisce esattamente 1 contatto" (prima era sempre 20).
+    - "sort dateAdded desc ordina per dateAdded, non per id": semina 3 contatti
+      con created_at in ordine OPPOSTO agli id, e confronta uscita senza sort
+      (atteso id DESC = e2,e1,e0) con uscita sort dateAdded desc (atteso
+      e0,e2,e1) + asserzione non-crescente su tutti i dateAdded restituiti.
+    - GET /contacts non toccato -> nessun test nuovo necessario per la sua
+      invarianza (gia' coperto dai 34 test pre-esistenti rimasti verdi).
+
+--------------------------------------------------------------------------------
+RISULTATI TEST
+--------------------------------------------------------------------------------
+Ambiente ISOLATO (nessun impatto su produzione):
+ - Container throwaway proprio: postgres:16-alpine, name=opencode-pg-csearch,
+   host port 55463, db cs_test. DATABASE_URL passato inline (dotenv non
+   sovrascrive env gia' impostata). DB produzione (gestione-siti-riccardom-db-1)
+   MAI connesso: rimasto "Up 2 days (healthy)". Container rimosso al termine.
+ - db/migrate.js -> "Migrazioni completate" (fino a 128, nessuna nuova migrazione).
+
+A) node --check sui 3 file toccati (2 src + 1 test): OK, 0 errori.
+B) test/clone-parity/contacts.test.js:
+     36 test, 1 suite, pass 36/36, fail 0
+     (incluse le 2 regression-guard nuove, entrambe ok).
+C) SUITE clone-parity COMPLETA: `node --test test/clone-parity/*.test.js`
+     191 test, 19 suite, pass 191/191, fail 0.
+     = 189 pre-esistenti (round 1-20) + 2 nuovi: ZERO regressioni. GET /contacts
+     e tutti gli altri endpoint contatti rimangono verdi dopo la modifica del
+     service (conferma che buildOrderBy(null)->"c.id DESC" non cambia nulla).
+
+--------------------------------------------------------------------------------
+STATO FINALE
+--------------------------------------------------------------------------------
+ - 3 file MODIFICATI nel working tree (src/routes/api-clone/contacts.js,
+   src/services/contacts-clone.js, test/clone-parity/contacts.test.js).
+   NESSUN commit / push / deploy (in carico a Claude).
+ - pkg-contactssearch/ rimosso; zip + SPIEGAZIONE_contactssearch.txt rimossi;
+   cartella opencode-handoff/ rimossa (era vuota).
+ - Container Postgres throwaway rimosso; produzione mai toccata.
+ - Nota per il giro successivo (gia' nel pacchetto, fuori scope qui): il cursore
+   startAfterId resta su c.id, quindi con un sort esplicito la paginazione
+   multi-pagina non e' perfettamente allineata all'ORDER BY; servirebbe un
+   cursore searchAfter per-contatto (come fa GHL), agganciato al lavoro sulla
+   "shape ridotta" del contatto (segnalato come gap a monte, non bug endpoint).
+================================================================================

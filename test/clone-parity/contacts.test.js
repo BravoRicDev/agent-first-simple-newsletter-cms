@@ -279,6 +279,76 @@ describe("ONDA A — Contacts clone API", () => {
     assert.ok(typeof meta.total === "number");
   });
 
+  // Regression guard punto 1: GHL manda il limite come `pageLimit`, non
+  // `limit`. pageLimit=1 deve restituire ESATTAMENTE 1 contatto (prima
+  // usciva sempre il default 20 perché leggeva req.body.limit).
+  test("POST /contacts/search — pageLimit=1 restituisce esattamente 1 contatto", async () => {
+    for (let i = 0; i < 2; i++) {
+      const email = uniqueEmail(`pl-${i}`);
+      await fetch(`${baseUrl}/contacts`, {
+        method: "POST",
+        headers: h(apiKey.raw),
+        body: JSON.stringify({ locationId: String(locationId), email }),
+      });
+    }
+    const res = await fetch(`${baseUrl}/contacts/search`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), pageLimit: 1 }),
+    });
+    assert.equal(res.status, 200);
+    const { contacts } = await res.json();
+    assert.equal(contacts.length, 1);
+  });
+
+  // Regression guard punto 2: sort [{field:"dateAdded",direction:"desc"}]
+  // deve ordinare per created_at decrescente, NON per id. Si seminano tre
+  // contatti con created_at in ordine diverso (e futuro, così stanno in cima)
+  // rispetto all'id, e si confronta l'uscita con/senza sort.
+  test("POST /contacts/search — sort dateAdded desc ordina per dateAdded, non per id", async () => {
+    const emails = [uniqueEmail("sorta"), uniqueEmail("sortb"), uniqueEmail("sortc")];
+    for (const email of emails) {
+      await fetch(`${baseUrl}/contacts`, {
+        method: "POST",
+        headers: h(apiKey.raw),
+        body: JSON.stringify({ locationId: String(locationId), email }),
+      });
+    }
+    const rows = (await query(
+      "SELECT id, email FROM contacts WHERE site_id = $1 AND email = ANY($2)",
+      [site.id, emails]
+    )).rows;
+    const idByEmail = Object.fromEntries(rows.map((r) => [r.email, r.id]));
+    // id crescenti: emails[0] < emails[1] < emails[2]. created_at voluti in
+    // ordine opposto: e0=2027-09, e1=2027-01, e2=2027-05.
+    await query("UPDATE contacts SET created_at = $1 WHERE id = $2", [new Date("2027-09-01T00:00:00Z"), idByEmail[emails[0]]]);
+    await query("UPDATE contacts SET created_at = $1 WHERE id = $2", [new Date("2027-01-01T00:00:00Z"), idByEmail[emails[1]]]);
+    await query("UPDATE contacts SET created_at = $1 WHERE id = $2", [new Date("2027-05-01T00:00:00Z"), idByEmail[emails[2]]]);
+
+    // Senza sort (default storico): ordine per id DESC ⇒ e2, e1, e0.
+    const noSort = await (await fetch(`${baseUrl}/contacts/search`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), pageLimit: 100 }),
+    })).json();
+    const noSortOurs = noSort.contacts.filter((c) => emails.includes(c.email)).map((c) => c.email);
+    assert.deepEqual(noSortOurs, [emails[2], emails[1], emails[0]]);
+
+    // Con sort dateAdded desc ⇒ e0(09), e2(05), e1(01).
+    const sorted = await (await fetch(`${baseUrl}/contacts/search`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), pageLimit: 100, sort: [{ field: "dateAdded", direction: "desc" }] }),
+    })).json();
+    assert.ok(sorted.contacts.length > 0);
+    const times = sorted.contacts.map((c) => new Date(c.dateAdded).getTime());
+    for (let i = 1; i < times.length; i++) {
+      assert.ok(times[i] <= times[i - 1], "dateAdded deve essere non-crescente");
+    }
+    const sortedOurs = sorted.contacts.filter((c) => emails.includes(c.email)).map((c) => c.email);
+    assert.deepEqual(sortedOurs, [emails[0], emails[2], emails[1]]);
+  });
+
   test("POST /contacts/upsert — crea se manca", async () => {
     const email = uniqueEmail("upsert");
     const res = await fetch(`${baseUrl}/contacts/upsert`, {

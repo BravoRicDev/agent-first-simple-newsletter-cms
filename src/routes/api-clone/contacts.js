@@ -44,16 +44,21 @@ router.post("/contacts", async (req, res, next) => {
   }
 });
 
-// GET /contacts/:contactId — Leggi contatto.
+// POST /contacts/search — Cerca contatti (body GHL: pageLimit, sort, filtri).
 router.post("/contacts/search", async (req, res, next) => {
   try {
-    const limit = parseInt(req.body.limit, 10) || 20;
+    // GHL invia il limite come `pageLimit` (NON `limit`): leggere il campo
+    // sbagliato faceva cadere sempre sul default 20, ignorando pageLimit=1.
+    const limit = parseInt(req.body.pageLimit, 10) || 20;
     const filters = {
       limit: Math.min(Math.max(limit, 1), 100),
       startAfterId: req.body.startAfterId || null,
       query: req.body.query || null,
       tag: req.body.tag || null,
       email: req.body.email || null,
+      // sort stile GHL: array [{ field, direction }]. Non è una colonna SQL
+      // grezza: viene validato/mappato su allowlist in listContacts.
+      sort: Array.isArray(req.body.sort) ? req.body.sort : null,
     };
     const { contacts, total, nextStartAfterId } = await searchContacts(req.tenant.siteId, filters);
     sendList(res, "contacts", contacts, total, nextStartAfterId);

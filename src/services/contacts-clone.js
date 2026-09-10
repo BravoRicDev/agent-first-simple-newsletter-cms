@@ -9,6 +9,34 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+// Allowlist colonne ordinabili per /contacts/search: mappa il campo esposto
+// (stile GHL, camelCase) sulla colonna reale QUALIFICATA della query (alias
+// c = contacts). field e direction NON vengono mai interpolati direttamente
+// in SQL: solo costanti presenti qui e solo "ASC"/"DESC", così non c'è
+// superficie di injection. Colonne verificate nello schema `contacts`
+// (db/025_contacts.sql): created_at / updated_at.
+const SORTABLE_COLUMNS = {
+  dateAdded: "c.created_at",
+  dateUpdated: "c.updated_at",
+};
+
+// Costruisce l'ORDER BY dall'array sort stile GHL [{ field, direction }].
+// Entry con field fuori allowlist o direction non "asc"/"desc" vengono
+// ignorate; se nessuno sort valido resta, si ricade sul default storico
+// "c.id DESC" (così GET /contacts — che non manda mai sort — è invariato).
+function buildOrderBy(sort) {
+  if (!Array.isArray(sort) || sort.length === 0) return "c.id DESC";
+  const clauses = [];
+  for (const entry of sort) {
+    const col = SORTABLE_COLUMNS[entry?.field];
+    if (!col) continue;
+    const dir = typeof entry?.direction === "string" ? entry.direction.toLowerCase() : "";
+    if (dir !== "asc" && dir !== "desc") continue;
+    clauses.push(`${col} ${dir.toUpperCase()}`);
+  }
+  return clauses.length > 0 ? clauses.join(", ") : "c.id DESC";
+}
+
 export async function serializeContact(row, customValues = {}, customFieldDefs = []) {
   if (!row) return null;
 
@@ -236,7 +264,7 @@ export async function deleteContact(siteId, contactExternalId) {
 }
 
 export async function listContacts(siteId, filters = {}) {
-  const { limit = 20, startAfterId = null, query: searchQuery = null, tag = null, email = null } = filters;
+  const { limit = 20, startAfterId = null, query: searchQuery = null, tag = null, email = null, sort = null } = filters;
 
   let whereClause = "c.site_id = $1";
   const params = [siteId];
@@ -280,12 +308,13 @@ export async function listContacts(siteId, filters = {}) {
   }
 
   paginationParams.push(limit + 1);
+  const orderBy = buildOrderBy(sort);
   const querySql = `
     SELECT c.*, s.location_external_id
     FROM contacts c
     LEFT JOIN sites s ON c.site_id = s.id
     WHERE ${paginationWhereClause}
-    ORDER BY c.id DESC LIMIT $${paginationParamIdx}
+    ORDER BY ${orderBy} LIMIT $${paginationParamIdx}
   `;
 
   const rows = (await query(querySql, paginationParams)).rows;
