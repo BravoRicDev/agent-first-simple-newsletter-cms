@@ -51,9 +51,16 @@ router.post("/contacts/search", async (req, res, next) => {
     // GHL invia il limite come `pageLimit` (NON `limit`): leggere il campo
     // sbagliato faceva cadere sempre sul default 20, ignorando pageLimit=1.
     const limit = parseInt(req.body.pageLimit, 10) || 20;
+    // GHL invia la pagina come "page" (numero 1-based, OFFSET-style) su
+    // questo endpoint — non il nostro startAfterId (cursore interno, mai
+    // usato da GHL qui). Verificato dal vivo: GHL onora page e restituisce
+    // pagine diverse, il nostro endpoint lo ignorava e restituiva sempre lo
+    // stesso primo blocco. Valore non intero/≤0 → ignorato.
+    const pageNum = Number.isFinite(req.body.page) ? Math.trunc(req.body.page) : null;
     const filters = {
       limit: Math.min(Math.max(limit, 1), 100),
       startAfterId: req.body.startAfterId || null,
+      page: pageNum && pageNum >= 1 ? pageNum : null,
       query: req.body.query || null,
       tag: req.body.tag || null,
       email: req.body.email || null,

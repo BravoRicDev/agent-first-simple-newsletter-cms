@@ -218,4 +218,47 @@ describe("clone-API /contacts/search — shape IDENTICO a GHL", () => {
     assert.ok(Array.isArray(body.contacts));
     assert.ok(body.meta && typeof body.meta.total === "number", "GET /contacts mantiene il wrapper meta");
   });
+
+  test("page numerico (OFFSET-style, come manda davvero GHL): pagine diverse, senza sovrapposizioni, ordine rispettato", async () => {
+    await clean();
+    const N = 25;
+    const now = Date.now();
+    for (let i = 0; i < N; i++) {
+      await query(
+        "INSERT INTO contacts (site_id,email,ghl_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$4)",
+        [site.id, uniqueEmail(`pagenum${i}`), `ghlPage${i}`, new Date(now - i * 60000)]
+      );
+    }
+    const searchPage = async (page) => {
+      const res = await fetch(`${baseUrl}/contacts/search`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locationId: String(site.id), pageLimit: 10, page,
+          sort: [{ field: "dateAdded", direction: "desc" }],
+        }),
+      });
+      return res.json();
+    };
+
+    const p1 = await searchPage(1);
+    const p2 = await searchPage(2);
+    const p3 = await searchPage(3);
+
+    assert.equal(p1.contacts.length, 10);
+    assert.equal(p2.contacts.length, 10);
+    assert.equal(p3.contacts.length, 5);
+    assert.equal(p1.total, N);
+
+    const ids1 = p1.contacts.map((c) => c.id);
+    const ids2 = p2.contacts.map((c) => c.id);
+    const ids3 = p3.contacts.map((c) => c.id);
+    assert.equal(new Set([...ids1, ...ids2]).size, 20, "pagina 1 e 2 non devono sovrapporsi");
+    assert.equal(new Set([...ids1, ...ids2, ...ids3]).size, N, "le 3 pagine devono coprire tutti i contatti senza duplicati");
+
+    // dateAdded decrescente mantenuto attraverso i confini di pagina.
+    const lastP1 = p1.contacts[p1.contacts.length - 1].dateAdded;
+    const firstP2 = p2.contacts[0].dateAdded;
+    assert.ok(lastP1 >= firstP2, "l'ordine deve restare decrescente tra fine pagina 1 e inizio pagina 2");
+  });
 });

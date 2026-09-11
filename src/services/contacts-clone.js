@@ -396,7 +396,7 @@ export async function deleteContact(siteId, contactExternalId) {
 }
 
 export async function listContacts(siteId, filters = {}, serialize = serializeContact) {
-  const { limit = 20, startAfterId = null, query: searchQuery = null, tag = null, email = null, sort = null } = filters;
+  const { limit = 20, startAfterId = null, query: searchQuery = null, tag = null, email = null, sort = null, page = null } = filters;
 
   let whereClause = "c.site_id = $1";
   const params = [siteId];
@@ -426,11 +426,18 @@ export async function listContacts(siteId, filters = {}, serialize = serializeCo
   const total = parseInt(countRes.total, 10);
 
   // Aggiungi filtro di paginazione se presente.
+  // "page" (numero 1-based, quello che manda davvero GHL su POST
+  // /contacts/search — verificato dal vivo: GHL onora page, il nostro
+  // endpoint lo ignorava del tutto e restituiva sempre lo stesso primo
+  // blocco) ha precedenza su startAfterId (cursore stile GET /contacts,
+  // dialetto interno) quando entrambi sono presenti nello stesso body.
   let paginationWhereClause = whereClause;
   const paginationParams = [...params];
   let paginationParamIdx = paramIdx;
 
-  if (startAfterId) {
+  const usePageOffset = Number.isInteger(page) && page >= 1;
+
+  if (!usePageOffset && startAfterId) {
     const afterContact = await findByAnyId("contacts", siteId, startAfterId);
     if (afterContact && afterContact.site_id === siteId) {
       paginationWhereClause += ` AND c.id < $${paginationParamIdx}`;
@@ -440,13 +447,24 @@ export async function listContacts(siteId, filters = {}, serialize = serializeCo
   }
 
   paginationParams.push(limit + 1);
+  const limitParamIdx = paginationParamIdx;
+  paginationParamIdx++;
+
+  let offsetSql = "";
+  if (usePageOffset) {
+    const offset = (page - 1) * limit;
+    paginationParams.push(offset);
+    offsetSql = ` OFFSET $${paginationParamIdx}`;
+    paginationParamIdx++;
+  }
+
   const orderBy = buildOrderBy(sort);
   const querySql = `
     SELECT c.*, s.location_external_id
     FROM contacts c
     LEFT JOIN sites s ON c.site_id = s.id
     WHERE ${paginationWhereClause}
-    ORDER BY ${orderBy} LIMIT $${paginationParamIdx}
+    ORDER BY ${orderBy} LIMIT $${limitParamIdx}${offsetSql}
   `;
 
   const rows = (await query(querySql, paginationParams)).rows;
@@ -460,8 +478,10 @@ export async function listContacts(siteId, filters = {}, serialize = serializeCo
     contacts.push(serialized);
   }
 
+  // nextStartAfterId ha senso solo in modalità cursore (GET /contacts):
+  // in modalità page (OFFSET) la pagina successiva è page+1, non un cursore.
   let nextStartAfterId = null;
-  if (rows.length > limit) {
+  if (!usePageOffset && rows.length > limit) {
     const cursorRow = rows[limit];
     const generatedNextId = await getExternalId("contacts", cursorRow.id);
     nextStartAfterId = publicId(cursorRow) || generatedNextId;
