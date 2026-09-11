@@ -6,7 +6,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { sendCsv } from "../services/csv.js";
 import { upsertContact, addContactTag } from "../services/contacts.js";
-import { sendMetaCapiEvent, isMarketingConsentGranted } from "../services/tracking.js";
+import { sendMetaCapiEvent, sendOpenAiAdsEvent, isMarketingConsentGranted } from "../services/tracking.js";
 import { logger } from "../services/logger.js";
 import { translate } from "../middleware/i18n.js";
 import config from "../config.js";
@@ -420,6 +420,11 @@ router.post("/quiz/:siteId/:quizSlug", quizLimiter, resolveSite, async (req, res
         })
       ).catch(err => logger.error(`Evento quiz_completed fallito (site=${siteId}): ${err.message}`));
       sendMetaCapiEvent(siteId, "Lead", {
+        email, eventSourceUrl: req.headers["referer"], clientIp: req.ip,
+        userAgent: req.headers["user-agent"], consentGranted: isMarketingConsentGranted(req),
+      }).catch(() => {});
+      // OpenAI / ChatGPT Ads server-side conversion (fire-and-forget)
+      sendOpenAiAdsEvent(siteId, "Lead", {
         email, eventSourceUrl: req.headers["referer"], clientIp: req.ip,
         userAgent: req.headers["user-agent"], consentGranted: isMarketingConsentGranted(req),
       }).catch(() => {});

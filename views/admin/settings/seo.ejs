@@ -47,6 +47,14 @@
     </div>
   </div>
 
+  <div class="form-group">
+    <label>Descrizione per llms.txt (AI/GEO)</label>
+    <textarea name="llms_description" rows="3" style="width:100%;" placeholder="Breve descrizione del sito per i modelli AI (es. 'Studio di consulenza aziendale, servizi di ...')"><%= seoConfig.llmsDescription %></textarea>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Testo che compare nel file <code>/llms.txt</code> come sintesi del sito. Se vuoto, usa il nome del brand. Ottimizza per <em>Generative Engine Optimization</em>: chiaro, factuale, max 300 caratteri.
+    </div>
+  </div>
+
   <button type="submit" class="btn" style="margin-top:10px;">Salva</button>
 </form>
 <% } else { %>

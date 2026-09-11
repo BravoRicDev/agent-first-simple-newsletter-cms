@@ -43,6 +43,16 @@
   // in "giorni" (compatibilità con le chiamate sotto): la conversione è
   // esatta perché 86400000 (ms/giorno) è divisibile per 24.
   var CONSENT_COOKIE_DAYS = (<%- _jsonScript(typeof consentCookieHours !== 'undefined' && consentCookieHours ? Number(consentCookieHours) : 1) %>) / 24;
+  // OpenAI / ChatGPT Ads pixel: OPENAI_PIXEL è il pixel id, oppure null se non
+  // configurato o disabilitato per questa pagina (pixelEnabled === false).
+  // oaiqCall funziona sia PRIMA del caricamento dell'SDK (push sulla coda, che
+  // l'SDK riproduce al load) sia DOPO (chiamata diretta sulla funzione esposta).
+  var OPENAI_PIXEL = <%- _jsonScript(typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false ? openaiAdsPixelId : null) %>;
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
   function getCookie(name) {
     var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
     return m ? decodeURIComponent(m[1]) : null;
@@ -81,12 +91,23 @@
           fbq('track', 'PageView');
         }
       }
+      // OpenAI / ChatGPT Ads: consenso + PageView (una sola volta per page load,
+      // guardia separata da quella Meta). Evento documentato: page_viewed
+      // (categoria contents, obbligatoria in data.type).
+      if (OPENAI_PIXEL) {
+        oaiqCall('consent', true);
+        if (TRACK_PAGEVIEW !== false && !window.__cmsOpenAiPageViewFired) {
+          window.__cmsOpenAiPageViewFired = true;
+          oaiqCall('measure', 'page_viewed', { type: 'contents' });
+        }
+      }
       try { window.dispatchEvent(new Event('cms:marketing-granted')); } catch (e) {}
     } else {
       window.__cmsMarketingGranted = false;
       if (window.fbq && typeof window.fbq === 'function') {
         fbq('consent', 'revoke');
       }
+      if (OPENAI_PIXEL) oaiqCall('consent', false);
     }
     <% if (typeof clarityId !== 'undefined' && clarityId) { %>
     if (analytics && !window.clarity) {
@@ -321,6 +342,138 @@
   fireOnce();
   // Consenso concesso durante QUESTA visita.
   window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false && ((typeof leadPages !== 'undefined' && leadPages) || (typeof leadOverride !== 'undefined' && leadOverride))) { %>
+<!-- Evento OpenAI / ChatGPT Ads su pagine di conversione (stesso innesco di
+     Meta: leadPages + leadOverride). Sparato SOLO con consenso marketing, una
+     volta per page load. Vocabolario OpenAI: evento "lead_created", categoria
+     "customer_action" (data.type obbligatorio). -->
+<script>
+(function () {
+  var OPENAI_PIXEL = <%- _jsonScript(openaiAdsPixelId) %>;
+  var PAGES = <%- _jsonScript((typeof leadPages !== 'undefined' && leadPages ? String(leadPages).split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [])) %>;
+  var LEAD_OVERRIDE = <%- _jsonScript(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function matchesPage() {
+    var target = (location.pathname + location.search).toLowerCase();
+    for (var i = 0; i < PAGES.length; i++) {
+      if (PAGES[i] && target.indexOf(PAGES[i].toLowerCase()) > -1) return true;
+    }
+    return false;
+  }
+  function shouldFire() {
+    if (LEAD_OVERRIDE === true) return true;
+    if (LEAD_OVERRIDE === false) return false;
+    return matchesPage();
+  }
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function fireOnce() {
+    if (!shouldFire()) return;
+    if (window.__cmsOpenAiLeadFired) return;
+    if (getCookie('consent_marketing') !== '1') return;
+    window.__cmsOpenAiLeadFired = true;
+    oaiqCall('measure', 'lead_created', { type: 'customer_action' });
+    try { console.log('[OpenAI Ads][Lead] ✓ lead_created →', location.pathname); } catch (e) {}
+  }
+  fireOnce();
+  window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false && typeof completeRegistrationOverride !== 'undefined' && completeRegistrationOverride === true) { %>
+<!-- Evento OpenAI / ChatGPT Ads CompleteRegistration (stesso innesco override
+     di Meta). Vocabolario OpenAI: "registration_completed" / customer_action. -->
+<script>
+(function () {
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function fireOnce() {
+    if (window.__cmsOpenAiCompleteRegFired) return;
+    if (getCookie('consent_marketing') !== '1') return;
+    window.__cmsOpenAiCompleteRegFired = true;
+    oaiqCall('measure', 'registration_completed', { type: 'customer_action' });
+    try { console.log('[OpenAI Ads][CompleteRegistration] ✓ →', location.pathname); } catch (e) {}
+  }
+  fireOnce();
+  window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false && typeof openaiAdsAdvancedMatching !== 'undefined' && openaiAdsAdvancedMatching === '1') { %>
+<!-- OpenAI / ChatGPT Ads — Advanced matching (opzionale, attivo da Settings).
+     Hashing client-side con WebCrypto SHA-256 di email/telefono; inviati al pixel
+     SOLO dopo il consenso marketing (fail-safe). Espone l'API esplicita
+     window.__cmsOpenAiIdentify({ email, phone }). Se abilitato "auto-identify",
+     cattura i valori dai campi email/tel del form al submit. Mai PII in chiaro. -->
+<script>
+(function () {
+  var PIXEL_ID = <%- _jsonScript(openaiAdsPixelId) %>;
+  var AUTO = <%- _jsonScript(typeof openaiAdsAutoIdentify !== 'undefined' && openaiAdsAutoIdentify === '1') %>;
+  var pending = {};
+  function getCookie(name) { var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : null; }
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function norm(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+  function normPhone(v) { return String(v == null ? '' : v).replace(/[^\d+]/g, ''); }
+  function sha256hex(s) {
+    try {
+      if (!(window.crypto && window.crypto.subtle && window.TextEncoder)) return Promise.resolve(null);
+      var enc = new TextEncoder().encode(s);
+      return window.crypto.subtle.digest('SHA-256', enc).then(function (buf) {
+        var b = new Uint8Array(buf), out = '';
+        for (var i = 0; i < b.length; i++) out += ('0' + b[i].toString(16)).slice(-2);
+        return out;
+      });
+    } catch (e) { return Promise.resolve(null); }
+  }
+  function apply() {
+    if (getCookie('consent_marketing') !== '1') return; // fail-safe: mai senza consenso
+    var user = {};
+    if (pending.email) user.email_sha256 = pending.email;
+    if (pending.phone) user.phone_number_sha256 = pending.phone;
+    if (!user.email_sha256 && !user.phone_number_sha256) return;
+    oaiqCall('init', { pixelId: PIXEL_ID, user: user });
+    try { console.log('[OpenAI Ads] advanced matching applicato'); } catch (e) {}
+  }
+  window.__cmsOpenAiIdentify = function (opts) {
+    opts = opts || {};
+    if (opts.email) sha256hex(norm(opts.email)).then(function (h) { if (h) { pending.email = h; apply(); } });
+    if (opts.phone) sha256hex(normPhone(opts.phone)).then(function (h) { if (h) { pending.phone = h; apply(); } });
+  };
+  apply();
+  window.addEventListener('cms:marketing-granted', apply);
+  if (AUTO && document && document.addEventListener) {
+    document.addEventListener('submit', function (ev) {
+      try {
+        var f = ev.target; if (!f || !f.querySelector) return;
+        var email = f.querySelector('input[type="email"], input[name*="mail" i], input[name*="email" i]');
+        var phone = f.querySelector('input[type="tel"], input[name*="tel" i], input[name*="phone" i], input[name*="telefono" i]');
+        var o = {};
+        if (email && email.value) o.email = email.value;
+        if (phone && phone.value) o.phone = phone.value;
+        if (o.email || o.phone) window.__cmsOpenAiIdentify(o);
+      } catch (e) {}
+    }, true);
+  }
 })();
 </script>
 <% } %>

@@ -69,6 +69,14 @@ export default {
   cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN || "",
   deployWebhookUrl: process.env.DEPLOY_WEBHOOK_URL || "",
 
+  // OpenAI / ChatGPT Ads — Conversions API lato server. Default: l'endpoint di
+  // ingestion eventi usato dall'SDK ufficiale (stesso host del pixel).
+  // Sovrascrivibile via env se la documentazione ufficiale indica un endpoint
+  // server-to-server dedicato con autenticazione a chiave.
+  openaiAdsEndpoint: process.env.OPENAI_ADS_ENDPOINT || "https://bzr.openai.com/v1/sdk/events",
+  // URL dell'SDK del pixel OpenAI (configurabile per-sito in admin, qui il default).
+  openaiAdsSdkUrl: process.env.OPENAI_ADS_SDK_URL || "https://bzrcdn.openai.com/sdk/oaiq.min.js",
+
   twitterBearerToken: process.env.TWITTER_BEARER_TOKEN || "",
   linkedinAccessToken: process.env.LINKEDIN_ACCESS_TOKEN || "",
   facebookPageToken: process.env.FACEBOOK_PAGE_TOKEN || "",

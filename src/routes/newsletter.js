@@ -10,7 +10,7 @@ import { sendCsv } from "../services/csv.js";
 import { logger } from "../services/logger.js";
 import { EMAIL_TEMPLATE_KINDS, listEmailTemplates, setEmailTemplate, deleteEmailTemplate } from "../services/email-templates.js";
 import { listTags } from "../services/contacts.js";
-import { sendMetaCapiEvent, isMarketingConsentGranted } from "../services/tracking.js";
+import { sendMetaCapiEvent, sendOpenAiAdsEvent, isMarketingConsentGranted } from "../services/tracking.js";
 
 const router = Router();
 
@@ -668,6 +668,12 @@ router.get("/newsletter/confirm/:token", async (req, res, next) => {
     if (result.rows.length > 0) {
       const sub = result.rows[0];
       sendMetaCapiEvent(sub.site_id, "CompleteRegistration", {
+        email: sub.email, eventSourceUrl: req.headers["referer"], clientIp: req.ip,
+        userAgent: req.headers["user-agent"], consentGranted: isMarketingConsentGranted(req),
+        dedupKey: sub.id,
+      }).catch(() => {});
+      // OpenAI / ChatGPT Ads server-side conversion (fire-and-forget)
+      sendOpenAiAdsEvent(sub.site_id, "CompleteRegistration", {
         email: sub.email, eventSourceUrl: req.headers["referer"], clientIp: req.ip,
         userAgent: req.headers["user-agent"], consentGranted: isMarketingConsentGranted(req),
         dedupKey: sub.id,

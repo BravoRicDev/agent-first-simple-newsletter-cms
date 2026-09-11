@@ -556,9 +556,13 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/seo", requireAuth, requireAge
     if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
 
     const seo = (await query(
-      "SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image FROM page_seo WHERE page_id = $1",
+      "SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, schema_type, schema_json FROM page_seo WHERE page_id = $1",
       [page.id]
-    )).rows[0] || { meta_title: null, meta_description: null, meta_keywords: null, canonical_url: null, noindex: false, og_image: null };
+    )).rows[0] || { meta_title: null, meta_description: null, meta_keywords: null, canonical_url: null, noindex: false, og_image: null, schema_type: null, schema_json: null };
+    // Schema JSON: restituisci come oggetto (non stringa) per comodità dell'agente
+    if (seo.schema_json && typeof seo.schema_json === "string") {
+      try { seo.schema_json = JSON.parse(seo.schema_json); } catch { seo.schema_json = null; }
+    }
 
     res.json({ page_id: page.id, layout_mode: page.layout_mode, ...seo });
   } catch (err) { next(err); }
@@ -572,12 +576,23 @@ router.put("/api/agent/sites/:siteId/pages/:pageId/seo", requireAuth, requireAge
     const page = (await query("SELECT id FROM pages WHERE id = $1 AND site_id = $2", [req.params.pageId, siteId])).rows[0];
     if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
 
-    const { meta_title, meta_description, meta_keywords, canonical_url, og_image } = req.body;
+    const { meta_title, meta_description, meta_keywords, canonical_url, og_image, schema_type } = req.body;
     const noindex = typeof req.body.noindex === "boolean" ? req.body.noindex : req.body.noindex === "true";
+    // Schema JSON: accetta oggetto o stringa JSON, valida, salva come JSONB
+    let parsedSchemaJson = null;
+    if (req.body.schema_json) {
+      let raw = req.body.schema_json;
+      if (typeof raw === "string") {
+        try { raw = JSON.parse(raw); } catch { raw = null; }
+      }
+      if (raw && typeof raw === "object" && raw["@context"] && raw["@type"]) {
+        parsedSchemaJson = raw;
+      }
+    }
 
     const seo = (await query(
-      `INSERT INTO page_seo (page_id, meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, updated_at)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, false), $7, NOW())
+      `INSERT INTO page_seo (page_id, meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, schema_type, schema_json, updated_at)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, false), $7, $8, $9::jsonb, NOW())
        ON CONFLICT (page_id) DO UPDATE
        SET meta_title = COALESCE($2, page_seo.meta_title),
            meta_description = COALESCE($3, page_seo.meta_description),
@@ -585,11 +600,19 @@ router.put("/api/agent/sites/:siteId/pages/:pageId/seo", requireAuth, requireAge
            canonical_url = COALESCE($5, page_seo.canonical_url),
            noindex = COALESCE($6, page_seo.noindex),
            og_image = COALESCE($7, page_seo.og_image),
+           schema_type = COALESCE($8, page_seo.schema_type),
+           schema_json = COALESCE($9, page_seo.schema_json),
            updated_at = NOW()
-       RETURNING meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image`,
+       RETURNING meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, schema_type, schema_json`,
       [page.id, meta_title ?? null, meta_description ?? null, meta_keywords ?? null, canonical_url ?? null,
-       "noindex" in req.body ? noindex : null, og_image ?? null]
+       "noindex" in req.body ? noindex : null, og_image ?? null,
+       schema_type ?? null, parsedSchemaJson ? JSON.stringify(parsedSchemaJson) : null]
     )).rows[0];
+
+    // Restituisci schema_json come oggetto (non stringa)
+    if (seo.schema_json && typeof seo.schema_json === "string") {
+      try { seo.schema_json = JSON.parse(seo.schema_json); } catch { seo.schema_json = null; }
+    }
 
     res.json({ page_id: page.id, ...seo });
     exportPublishedPages({ siteId, pageIds: [page.id] }).catch(() => {});

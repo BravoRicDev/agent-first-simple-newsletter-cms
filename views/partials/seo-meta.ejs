@@ -29,9 +29,12 @@
 <% } %>
 <% if (typeof twitterHandle !== 'undefined' && twitterHandle) { %><meta name="twitter:site" content="<%= twitterHandle.startsWith('@') ? twitterHandle : '@' + twitterHandle %>">
 <% } %>
-<% if (typeof websiteJsonLd !== 'undefined' && websiteJsonLd) { %>
-<script type="application/ld+json"><%- websiteJsonLd %></script>
+<% if (typeof manualSchemaJsonLd !== 'undefined' && manualSchemaJsonLd) { %>
+<script type="application/ld+json"><%- manualSchemaJsonLd %></script>
 <% } %>
 <% if (typeof webpageJsonLd !== 'undefined' && webpageJsonLd) { %>
 <script type="application/ld+json"><%- webpageJsonLd %></script>
+<% } %>
+<% if (typeof websiteJsonLd !== 'undefined' && websiteJsonLd) { %>
+<script type="application/ld+json"><%- websiteJsonLd %></script>
 <% } %>

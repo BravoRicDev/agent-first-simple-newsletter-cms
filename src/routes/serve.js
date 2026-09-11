@@ -8,7 +8,7 @@ import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js"
 import { getSiteTrackingConfigMasked, getEffectiveTrackingConfig, renderTrackingBlocks, injectTrackingIntoStandalone } from "../services/tracking.js";
 import { getSiteSeoConfig } from "../services/site-seo.js";
 import {
-  getPublishedPagesForSitemap, buildSitemapXml, buildRobotsTxt,
+  getPublishedPagesForSitemap, buildSitemapXml, buildRobotsTxt, buildLlmsTxt, groupPagesForLlms,
   buildCanonicalUrl, toAbsoluteUrl, buildWebsiteJsonLd, buildWebPageJsonLd, serializeJsonLd,
   injectSeoIntoStandalone,
 } from "../services/seo.js";
@@ -206,6 +206,21 @@ router.get("/robots.txt", resolveSite, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get("/llms.txt", resolveSite, async (req, res, next) => {
+  try {
+    if (!req.site?.id) return res.status(404).send("Sito non trovato");
+    const baseUrl = await getCanonicalBaseUrl(req.site.id, { req });
+    const siteSeo = await getSiteSeoConfig(req.site.id);
+    const pages = await getPublishedPagesForSitemap(req.site.id);
+    const themeVars = { ...(await getSiteThemeVars(req.site.id)) };
+    const sections = groupPagesForLlms(pages, baseUrl);
+    const description = siteSeo.llmsDescription || themeVars.brandName || "";
+    const txt = buildLlmsTxt({ siteName: themeVars.brandName, description, baseUrl, sections });
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.type("text/plain; charset=utf-8").send(txt);
+  } catch (err) { next(err); }
+});
+
 // Catch-all del sito pubblico: risolve qualunque path come pagina del sito
 // (o redirect alla home se non esiste), quindi NON restituisce mai il
 // controllo con next() a chi viene dopo. Sta su un router separato,
@@ -238,7 +253,7 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
   // che non interrogava mai page_seo.
   async function buildSeoLocals(page, urlPath, isHomepage) {
     const seo = (await query(
-      "SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image FROM page_seo WHERE page_id = $1",
+      "SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, schema_type, schema_json FROM page_seo WHERE page_id = $1",
       [page.id]
     )).rows[0] || {};
     const baseUrl = await getCanonicalBaseUrl(siteId, { req });
@@ -254,7 +269,9 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
     const websiteJsonLd = isHomepage
       ? serializeJsonLd(buildWebsiteJsonLd({ name: themeVars.brandName, url: baseUrl }))
       : null;
-    return { meta_title: metaTitle, meta_description: metaDescription, meta_keywords: seo.meta_keywords || "", canonicalUrl, noindex, ogImage, twitterHandle: siteSeo.twitterHandle, brandName: themeVars.brandName, webpageJsonLd, websiteJsonLd };
+    // JSON-LD manuale: se presente, iniettato con priorità (il browser/crawler usa quello manuale e ignora l'auto)
+    const manualSchemaJsonLd = !noindex && seo.schema_json ? serializeJsonLd(seo.schema_json) : null;
+    return { meta_title: metaTitle, meta_description: metaDescription, meta_keywords: seo.meta_keywords || "", canonicalUrl, noindex, ogImage, twitterHandle: siteSeo.twitterHandle, brandName: themeVars.brandName, webpageJsonLd, websiteJsonLd, manualSchemaJsonLd };
   }
 
   try {

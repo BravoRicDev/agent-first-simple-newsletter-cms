@@ -154,7 +154,7 @@ router.get("/admin/pages/:id/edit", requireAuth, resolveSite, authorize("pages",
     if (result.rows.length === 0) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
     const snippets = (await query("SELECT id, name FROM snippets WHERE site_id = $1 ORDER BY name", [result.rows[0].site_id])).rows;
     const site = (await query("SELECT id, name, domain FROM sites WHERE id = $1", [result.rows[0].site_id])).rows[0];
-    const seo = (await query("SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image FROM page_seo WHERE page_id = $1", [result.rows[0].id])).rows[0] || {};
+    const seo = (await query("SELECT meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, schema_type, schema_json FROM page_seo WHERE page_id = $1", [result.rows[0].id])).rows[0] || {};
     // Override tracking di pagina (opzionale, tri-state: assente/null = eredita
     // dal sito) — vedi services/tracking.js. Esposti come page.tracking_* per
     // l'editor (stesso pattern dei campi SEO qui sopra).
@@ -244,9 +244,23 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
 
     const { meta_title, meta_description, meta_keywords, canonical_url, og_image } = req.body;
     const noindex = req.body.noindex === "on";
+    // Schema strutturato: accetta JSON valido via campo schema_json, tipo opzionale
+    let parsedSchemaJson = null;
+    let schemaType = req.body.schema_type || null;
+    if (req.body.schema_json) {
+      try {
+        parsedSchemaJson = JSON.parse(req.body.schema_json);
+        if (!parsedSchemaJson["@context"] || !parsedSchemaJson["@type"]) {
+          parsedSchemaJson = null;
+          schemaType = null;
+        } else {
+          schemaType = schemaType || parsedSchemaJson["@type"] || null;
+        }
+      } catch { parsedSchemaJson = null; schemaType = null; }
+    }
     await query(
-      `INSERT INTO page_seo (page_id, meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      `INSERT INTO page_seo (page_id, meta_title, meta_description, meta_keywords, canonical_url, noindex, og_image, schema_type, schema_json, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
        ON CONFLICT (page_id) DO UPDATE
        SET meta_title = EXCLUDED.meta_title,
            meta_description = EXCLUDED.meta_description,
@@ -254,8 +268,10 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
            canonical_url = EXCLUDED.canonical_url,
            noindex = EXCLUDED.noindex,
            og_image = EXCLUDED.og_image,
+           schema_type = EXCLUDED.schema_type,
+           schema_json = EXCLUDED.schema_json,
            updated_at = NOW()`,
-      [req.params.id, meta_title || null, meta_description || null, meta_keywords || null, canonical_url || null, noindex, og_image || null]
+      [req.params.id, meta_title || null, meta_description || null, meta_keywords || null, canonical_url || null, noindex, og_image || null, schemaType, parsedSchemaJson ? JSON.stringify(parsedSchemaJson) : null]
     ).catch(() => {});
 
     // Override tracking di pagina: select vuota ("") → null (eredita dal
