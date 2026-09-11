@@ -1,6 +1,180 @@
 import { query } from "../../../db.js";
 import { upsertByExternalId, findInternalId } from "../upsert.js";
 
+/**
+ * Helper: upserta singola opportunità dal CRM sorgente.
+ * Usata sia da syncAll (globale) che da syncForContacts (per-contatto).
+ */
+async function upsertOpportunity(ctx, opp, contactGhlId = null) {
+  const { siteId, dryRun, addStat, log } = ctx;
+
+  // Resolve pipeline
+  let pipelineId = null;
+  if (opp.pipelineId) {
+    pipelineId = await findInternalId("pipelines", siteId, opp.pipelineId);
+  }
+
+  // Resolve stage: pipelineStageId → pipeline_stages.ghl_id → key
+  // oppure lazy-create con key=label
+  let stage = "";
+  if (opp.pipelineStageId && pipelineId) {
+    const stageRow = (await query(
+      "SELECT key FROM pipeline_stages WHERE ghl_id=$1 AND pipeline_id=$2",
+      [opp.pipelineStageId, pipelineId]
+    )).rows[0];
+    if (stageRow) {
+      stage = stageRow.key;
+    } else if (opp.stage) {
+      const newStage = (await query(
+        `INSERT INTO pipeline_stages (pipeline_id, key, label, ghl_id)
+         VALUES ($1, $2, $2, $3)
+         ON CONFLICT (pipeline_id, key) DO UPDATE SET ghl_id=$3
+         RETURNING key`,
+        [pipelineId, opp.stage, opp.pipelineStageId]
+      )).rows[0];
+      stage = newStage?.key || "";
+    }
+  }
+
+  // Resolve owner. Verificato con una chiamata reale in produzione
+  // (GET /opportunities/search live, 2026-08-26): assignedTo è una
+  // stringa piatta (l'id utente), NON un oggetto {id}.
+  let ownerId = null;
+  if (opp.assignedTo) {
+    ownerId = await findInternalId("users", siteId, opp.assignedTo);
+  }
+
+  // Risolvi contact_email dal contatto locale.
+  // contactGhlId può arrivare dal chiamante (syncForContacts conosce già
+  // l'id contatto) oppure dal campo opp.contactId / opp.contact?.id
+  // (syncAll globale).
+  let contactEmail = "";
+  const resolvedContactId = contactGhlId || opp.contactId || opp.contact?.id || null;
+  if (resolvedContactId) {
+    const contactRow = (await query(
+      "SELECT email FROM contacts WHERE ghl_id=$1 AND site_id=$2",
+      [resolvedContactId, siteId]
+    )).rows[0];
+    if (contactRow) {
+      contactEmail = contactRow.email;
+
+      // Discovery: se il contatto non è ancora noto localmente, segnalalo
+      // per il fetch successivo (stesso pattern di forms.js).
+      if (!ctx.knownContacts?.has(resolvedContactId)) {
+        ctx.discoveredContacts?.add(resolvedContactId);
+      }
+    }
+  }
+
+  const cols = {
+    title: opp.name || "",
+    amount: opp.monetaryValue || 0,
+    status: opp.status || "open",
+    stage,
+    pipeline_id: pipelineId,
+    owner_id: ownerId,
+    lost_reason: opp.lostReasonId || "",
+    source: opp.source || "",
+    last_status_change: opp.lastStatusChangeAt,
+    expected_close_at: opp.forecastExpectedCloseDate,
+    probability: opp.forecastProbability ?? 0,
+    contact_email: contactEmail,
+    contact_name: opp.contact?.name || ""
+  };
+
+  const timestamps = {
+    createdAt: opp.createdAt,
+    updatedAt: opp.updatedAt
+  };
+
+  if (dryRun) {
+    addStat("opportunities", "upserted", 1);
+    return;
+  }
+
+  const { action } = await upsertByExternalId({
+    table: "opportunities",
+    siteId,
+    externalId: opp.id,
+    cols,
+    timestamps
+  });
+
+  if (action === "inserted") addStat("opportunities", "upserted", 1);
+  else if (action === "updated") addStat("opportunities", "updated", 1);
+  else addStat("opportunities", "skipped", 1);
+}
+
+/**
+ * Sync globale: scarica TUTTE le opportunità della location via
+ * POST /opportunities/search (locationId camelCase, senza contact_id).
+ * Paginazione cursore (searchAfter) con pageLimit=100.
+ * Mantiene syncForContacts esistente per la caccia per-contatto.
+ */
+export async function syncAll(ctx) {
+  const { siteId, client, cfg, dryRun, addStat, log } = ctx;
+
+  try {
+    const PAGE_LIMIT = 100;
+    let searchAfter = null;
+    let fetched = 0;
+    let pages = 0;
+
+    for (;;) {
+      if (pages >= 10000) {
+        log(`syncAll opportunities: MAX_PAGES raggiunto`);
+        break;
+      }
+
+      const body = { locationId: cfg.location_id, pageLimit: PAGE_LIMIT };
+      if (searchAfter) body.searchAfter = searchAfter;
+
+      const res = await client.raw("/opportunities/search", {
+        method: "POST",
+        body,
+        sendLocationId: false,
+      });
+
+      const opps = Array.isArray(res) ? res : res?.opportunities || [];
+      if (opps.length === 0) break;
+
+      pages++;
+      fetched += opps.length;
+      addStat("opportunities", "fetched", opps.length);
+
+      for (const opp of opps) {
+        try {
+          await upsertOpportunity(ctx, opp);
+        } catch (err) {
+          addStat("opportunities", "errors", 1);
+          log(`opportunity ${opp.id}: ${err.message}`);
+        }
+      }
+
+      // Stop se abbiamo raggiunto il totale o l'ultima pagina
+      const total = Number.isFinite(res?.total) ? res.total : null;
+      if (total !== null && fetched >= total) break;
+      if (opps.length < PAGE_LIMIT) break;
+
+      // Cursore per la pagina successiva. ATTENZIONE: il campo cursore
+      // nella RISPOSTA di ogni opportunità si chiama "sort" (verificato dal
+      // vivo su GHL reale: {"opportunities":[{... "sort":[ts,id] ...}]}),
+      // NON "searchAfter" come invece è il nome del parametro da rimandare
+      // nella richiesta della pagina successiva. Nomi diversi per lo stesso
+      // concetto (pattern search_after stile Elasticsearch): leggere
+      // last.searchAfter qui sarebbe sempre undefined e fermerebbe la
+      // paginazione dopo la prima pagina, ogni volta.
+      const last = opps[opps.length - 1];
+      if (!last?.sort) break;
+      searchAfter = last.sort;
+    }
+  } catch (err) {
+    addStat("opportunities", "errors", 1);
+    log(`syncAll opportunities fallito: ${err.message}`);
+    throw err;
+  }
+}
+
 export async function syncForContacts(ctx, extIds) {
   const { siteId, client, cfg, dryRun, addStat, log } = ctx;
 
@@ -19,7 +193,7 @@ export async function syncForContacts(ctx, extIds) {
         // location_id (quello giusto, snake_case) presente e corretto.
         // Verificato dal vivo: 100% di fallimento su ogni contatto, nessuna
         // opportunità mai sincronizzata da quando esiste questo modulo, prima
-        // di questo fix (bug mai emerso prima perché "opportunities" non è
+        // di questo fix (bug mai emerso perché "opportunities" non è
         // in SWEEP_ORDER — parte solo da huntSubresources durante un giro
         // contatti completo, mai coperta da un run scoped su risorse singole).
         const oppsResp = await client.get("/opportunities/search", {
@@ -32,104 +206,7 @@ export async function syncForContacts(ctx, extIds) {
 
         for (const opp of opps) {
           try {
-            // Risolvi pipeline
-            let pipelineId = null;
-            if (opp.pipelineId) {
-              pipelineId = await findInternalId("pipelines", siteId, opp.pipelineId);
-            }
-
-            // Risolvi stage: pipelineStageId → pipeline_stages.ghl_id → key
-            // oppure lazy-create con key=label
-            let stage = "";
-            if (opp.pipelineStageId && pipelineId) {
-              const stageRow = (await query(
-                "SELECT key FROM pipeline_stages WHERE ghl_id=$1 AND pipeline_id=$2",
-                [opp.pipelineStageId, pipelineId]
-              )).rows[0];
-              if (stageRow) {
-                stage = stageRow.key;
-              } else if (opp.stage) {
-                const newStage = (await query(
-                  `INSERT INTO pipeline_stages (pipeline_id, key, label, ghl_id)
-                   VALUES ($1, $2, $2, $3)
-                   ON CONFLICT (pipeline_id, key) DO UPDATE SET ghl_id=$3
-                   RETURNING key`,
-                  [pipelineId, opp.stage, opp.pipelineStageId]
-                )).rows[0];
-                stage = newStage?.key || "";
-              }
-            }
-
-            // Risolvi owner. Verificato con una chiamata reale in produzione
-            // (GET /opportunities/search live, 2026-08-26): assignedTo è una
-            // stringa piatta (l'id utente), NON un oggetto {id}. opp.assignedTo?.id
-            // era quindi sempre undefined — l'owner non veniva mai risolto.
-            let ownerId = null;
-            if (opp.assignedTo) {
-              ownerId = await findInternalId("users", siteId, opp.assignedTo);
-            }
-
-            // Risolvi contact_email dal contatto locale
-            let contactEmail = "";
-            const contactRow = (await query(
-              "SELECT email FROM contacts WHERE ghl_id=$1 AND site_id=$2",
-              [contactExtId, siteId]
-            )).rows[0];
-            if (contactRow) {
-              contactEmail = contactRow.email;
-            }
-
-            // Nomi campo verificati sulla risposta REALE (non solo doc, che
-            // non li mostrava): createdAt/updatedAt (non dateAdded/dateUpdated),
-            // lastStatusChangeAt (non lastStatusChange), lostReasonId — un id,
-            // non un testo — (non lostReason), forecastProbability (non
-            // probability), contact.name annidato (non contactName piatto).
-            const cols = {
-              title: opp.name || "",
-              amount: opp.monetaryValue || 0,
-              status: opp.status || "open",
-              stage,
-              pipeline_id: pipelineId,
-              owner_id: ownerId,
-              lost_reason: opp.lostReasonId || "",
-              source: opp.source || "",
-              last_status_change: opp.lastStatusChangeAt,
-              expected_close_at: opp.forecastExpectedCloseDate,
-              // ?? 0, non || 0: il sorgente restituisce forecastProbability
-              // ESPLICITAMENTE null (non lo omette). upsertByExternalId
-              // filtra dai cols solo i valori undefined, non null: un null
-              // esplicito arriva fino alla INSERT/UPDATE e viola il vincolo
-              // NOT NULL di opportunities.probability (colonna con DEFAULT
-              // 0, ma il default si applica solo quando la colonna è
-              // OMESSA, non quando è passata esplicitamente a NULL).
-              // Verificato dal vivo: 3/3 opportunità fallite con questo
-              // errore una volta risolto il 422 di sendLocationId sopra.
-              probability: opp.forecastProbability ?? 0,
-              contact_email: contactEmail,
-              contact_name: opp.contact?.name || ""
-            };
-
-            const timestamps = {
-              createdAt: opp.createdAt,
-              updatedAt: opp.updatedAt
-            };
-
-            if (dryRun) {
-              addStat("opportunities", "upserted", 1);
-              continue;
-            }
-
-            const { action } = await upsertByExternalId({
-              table: "opportunities",
-              siteId,
-              externalId: opp.id,
-              cols,
-              timestamps
-            });
-
-            if (action === "inserted") addStat("opportunities", "upserted", 1);
-            else if (action === "updated") addStat("opportunities", "updated", 1);
-            else addStat("opportunities", "skipped", 1);
+            await upsertOpportunity(ctx, opp, contactExtId);
           } catch (err) {
             addStat("opportunities", "errors", 1);
             log(`opportunity ${opp.id}: ${err.message}`);

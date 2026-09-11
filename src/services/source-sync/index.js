@@ -26,6 +26,7 @@ const SWEEP_ORDER = [
   "pipelines",
   "calendars",
   "contacts",
+  "opportunities",
   "forms",
   "surveys",
   "campaigns",
@@ -226,6 +227,16 @@ export async function runSync(siteId, { resources = null, dryRun = false, mode =
             await mod.syncAll(ctx, async (pageExtIds) => {
               await huntSubresources(mappers, ctx, pageExtIds);
             });
+          } else if (key === "opportunities" && siblingSiteId) {
+            // No-op qui: cloneContactsFromSibling (sopra) clona GIÀ le
+            // opportunità insieme ai contatti (stesso giro, vedi
+            // clone-sibling.js). Senza questo ramo esplicito, "opportunities"
+            // ricadrebbe nella clausola di sicurezza generica più sotto
+            // ("else if (siblingSiteId)"), che chiama mod.syncAll(ctx) — il
+            // sync REALE verso GHL, non una clonazione — facendo sì che
+            // anche lo slave chiami GHL per le opportunità, raddoppiando il
+            // costo e vanificando l'invariante "un solo chiamante per
+            // location" del master/slave (db/129).
           } else if (key === "custom-fields" && siblingSiteId) {
             await cloneCustomFieldsFromSibling(ctx, siblingSiteId);
           } else if (key === "custom-values" && siblingSiteId) {

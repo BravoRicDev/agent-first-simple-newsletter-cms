@@ -206,7 +206,31 @@ export async function createMockSource(fixture, { onCall } = {}) {
       const c = (fixture.contacts || []).find((x) => x.id === ca[1]);
       return ok({ events: c?.appointments || [] });
     }
-    // opportunities search per contatto — doc CRM sorgente 2021-07-28: contact_id/
+    // POST /opportunities/search GLOBALE (senza contact_id): usata da
+    // syncAll (sync globale opportunità). Body {locationId, pageLimit,
+    // searchAfter?}, risposta {opportunities:[...], total}. Cursore per
+    // item = "sort" (verificato dal vivo su GHL reale, 2026-09-11: il nome
+    // del CAMPO in risposta è "sort", diverso dal nome del PARAMETRO da
+    // rimandare nella richiesta successiva, che è "searchAfter" — pattern
+    // search_after stile Elasticsearch con nomi asimmetrici).
+    if (path === "/opportunities/search" && req.method === "POST") {
+      let body = {};
+      try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
+      const all = fixture.opportunities || [];
+      let startIdx = 0;
+      if (Array.isArray(body.searchAfter)) {
+        const [, afterId] = body.searchAfter;
+        const idx = all.findIndex((o) => o.id === afterId);
+        if (idx >= 0) startIdx = idx + 1;
+      }
+      const pageLimit = Math.min(100, parseInt(body.pageLimit || 100, 10));
+      const pageItems = all.slice(startIdx, startIdx + pageLimit).map((o, i) => ({
+        ...o,
+        sort: [Date.parse(o.createdAt || o.updatedAt || 0) || startIdx + i, o.id],
+      }));
+      return ok({ opportunities: pageItems, total: all.length });
+    }
+    // opportunities search per contatto (GET, query string) — doc CRM
     // location_id in snake_case (a differenza di /contacts, camelCase).
     if (path === "/opportunities/search") {
       const c = (fixture.contacts || []).find((x) => x.id === q.contact_id);
