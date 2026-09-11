@@ -8,6 +8,7 @@ const SEO_KEYS = {
   defaultOgImage: "seo_default_og_image",
   twitterHandle: "seo_twitter_handle",
   robotsExtra: "seo_robots_extra",
+  llmsDescription: "seo_llms_description",
 };
 
 function emptyConfig() {

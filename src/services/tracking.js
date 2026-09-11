@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import ejs from "ejs";
 import { query } from "../db.js";
 import { logger } from "./logger.js";
+import config from "../config.js";
 
 const VIEWS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../views");
 
@@ -20,6 +21,19 @@ const TRACKING_KEYS = {
   metaCapiTestCode: "tracking_meta_capi_test_code",
   clarityId: "tracking_clarity_id",
   searchConsoleVerification: "tracking_search_console_verification",
+  // OpenAI / ChatGPT Ads server-side conversions
+  openaiAdsPixelId: "tracking_openai_ads_pixel_id",
+  openaiAdsApiKey: "tracking_openai_ads_api_key",
+  openaiAdsTestCode: "tracking_openai_ads_test_code",
+  // URL dell'SDK del pixel (default da env OPENAI_ADS_SDK_URL, sovrascrivibile per-sito).
+  openaiAdsSdkUrl: "tracking_openai_ads_sdk_url",
+  // Advanced matching: invia email/telefono in SHA-256 (client via WebCrypto, server
+  // via crypto). "1" = attivo. Richiede sempre il consenso marketing.
+  openaiAdsAdvancedMatching: "tracking_openai_ads_advanced_matching",
+  // Auto-identify: oltre all'API esplicita window.__cmsOpenAiIdentify(), cattura
+  // automaticamente email/telefono dai campi del form al submit (solo se advanced
+  // matching è attivo). "1" = attivo.
+  openaiAdsAutoIdentify: "tracking_openai_ads_auto_identify",
   // Testi del banner di consenso: personalizzabili, con default sensati se
   // il sito attiva il tracking senza toccarli — mai vuoti a schermo.
   consentBannerText: "tracking_consent_banner_text",
@@ -118,7 +132,7 @@ export async function getSiteTrackingConfig(siteId) {
 
   const c = {};
   for (const [field, key] of Object.entries(TRACKING_KEYS)) c[field] = map[key] || "";
-  c.hasAnyTracking = !!(c.ga4Id || c.gtmId || c.metaPixelId || c.clarityId);
+  c.hasAnyTracking = !!(c.ga4Id || c.gtmId || c.metaPixelId || c.clarityId || c.openaiAdsPixelId);
   if (c.hasAnyTracking) {
     for (const [field, defaultValue] of Object.entries(CONSENT_DEFAULTS)) {
       if (!c[field]) c[field] = defaultValue;
@@ -143,6 +157,8 @@ export async function getSiteTrackingConfig(siteId) {
   // ulteriori controlli di undefined.
   const parsedHours = parseInt(c.consentCookieHours, 10);
   c.consentCookieHours = Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : DEFAULT_CONSENT_COOKIE_HOURS;
+  // OpenAI Ads: URL dell'SDK di default dal config (sovrascrivibile per-sito).
+  if (!c.openaiAdsSdkUrl) c.openaiAdsSdkUrl = config.openaiAdsSdkUrl;
   return c;
 }
 
@@ -151,7 +167,11 @@ export async function getSiteTrackingConfig(siteId) {
 // credenziali SMTP della newsletter.
 export async function getSiteTrackingConfigMasked(siteId) {
   const full = await getSiteTrackingConfig(siteId);
-  return { ...full, metaCapiToken: full.metaCapiToken ? "••••••••" : "" };
+  return {
+    ...full,
+    metaCapiToken: full.metaCapiToken ? "••••••••" : "",
+    openaiAdsApiKey: full.openaiAdsApiKey ? "••••••••" : "",
+  };
 }
 
 export async function setSiteTrackingConfig(siteId, fields) {
@@ -249,6 +269,84 @@ export async function sendMetaCapiEvent(siteId, eventName, {
     return { sent: true, eventId: event.event_id };
   } catch (err) {
     logger.error(`Meta CAPI: errore rete (site=${siteId}, event=${eventName}): ${err.message}`);
+    return { sent: false, reason: "network_error" };
+  }
+}
+
+// ── OpenAI / ChatGPT Ads server-side conversions ────────────────────────────
+// Vocabolario eventi FISSO e diverso da Meta: il nome evento dev'essere uno di
+// quelli documentati dall'SDK (page_viewed, lead_created, registration_completed,
+// appointment_scheduled, ...). La categoria (customer_action/contents/...) è
+// anche il valore OBBLIGATORIO di `data.type`: l'SDK scarta l'evento se manca o
+// non combacia (verificato eseguendo l'SDK ufficiale). Mappiamo qui gli stessi
+// eventi interni passati a sendMetaCapiEvent.
+// endpoint: config.openaiAdsEndpoint (default: ingestion SDK ufficiale).
+const OPENAI_EVENT_MAP = {
+  Lead: { name: "lead_created", category: "customer_action" },
+  CompleteRegistration: { name: "registration_completed", category: "customer_action" },
+  Schedule: { name: "appointment_scheduled", category: "customer_action" },
+};
+
+export async function sendOpenAiAdsEvent(siteId, eventName, {
+  email, phone, eventSourceUrl, actionSource = "website",
+  clientIp, userAgent, customData, consentGranted, dedupKey,
+} = {}) {
+  if (!consentGranted) return { sent: false, reason: "no_consent" };
+
+  const trackingConfig = await getSiteTrackingConfig(siteId);
+  if (!trackingConfig.openaiAdsPixelId || !trackingConfig.openaiAdsApiKey) {
+    return { sent: false, reason: "not_configured" };
+  }
+
+  const mapped = OPENAI_EVENT_MAP[eventName] || { name: "custom", category: "custom" };
+
+  // event_id DETERMINISTICO (stesso schema di Meta): stesso dedupKey/email entro
+  // 60s → stesso id → OpenAI deduplica, niente doppi conteggi.
+  const bucket = Math.floor(Date.now() / 60000);
+  const rawKey = dedupKey
+    ? `${siteId}:${eventName}:${dedupKey}`
+    : `${siteId}:${eventName}:${String(email || "")}:${bucket}`;
+  const eventId = crypto.createHash("sha256").update(rawKey).digest("hex").slice(0, 32);
+
+  // data.type = categoria (obbligatorio). Advanced matching (solo se attivo):
+  // email/telefono in SHA-256 sotto le chiavi attese dall'SDK (email_sha256 /
+  // phone_number_sha256 → wire "em"/"ph"). Mai inviare PII in chiaro.
+  const data = { type: mapped.category };
+  if (trackingConfig.openaiAdsAdvancedMatching === "1") {
+    if (email) data.email_sha256 = sha256(email);
+    if (phone) data.phone_number_sha256 = sha256(phone);
+  }
+  if (customData && typeof customData === "object") Object.assign(data, customData);
+
+  const event = {
+    type: mapped.name,
+    timestamp_ms: Date.now(),
+    id: eventId,
+    ...(eventSourceUrl ? { source_url: eventSourceUrl } : {}),
+    data,
+  };
+
+  const params = new URLSearchParams({ pid: trackingConfig.openaiAdsPixelId });
+  if (trackingConfig.openaiAdsTestCode) params.set("test_event_code", trackingConfig.openaiAdsTestCode);
+  const url = `${config.openaiAdsEndpoint}?${params.toString()}`;
+  const headers = { "Content-Type": "application/json" };
+  if (trackingConfig.openaiAdsApiKey) headers.Authorization = `Bearer ${trackingConfig.openaiAdsApiKey}`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ events: [event] }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      logger.error(`OpenAI Ads CAPI: invio fallito (site=${siteId}, event=${eventName}): ${res.status} ${text}`);
+      return { sent: false, reason: "http_error" };
+    }
+    return { sent: true, eventId, openaiEvent: mapped.name };
+  } catch (err) {
+    logger.error(`OpenAI Ads CAPI: errore rete (site=${siteId}, event=${eventName}): ${err.message}`);
     return { sent: false, reason: "network_error" };
   }
 }
@@ -390,12 +488,12 @@ export async function getEffectiveTrackingConfig(siteId, pageId) {
   // trackPageview default true se c'è tracking, trackLead dipende da leadPages/leadEventName (logica client-side)
   const effective = { ...siteConfig };
 
-  // pixelEnabled: default true se il sito ha metaPixelId, altrimenti false
-  // ma se l'override è esplicito (true/false/null), usa quello
+  // pixelEnabled: default true se il sito ha un pixel pubblicitario (Meta o
+  // OpenAI), altrimenti false. Se l'override di pagina è esplicito vince quello.
   if (pageOverride.pixel_enabled !== undefined && pageOverride.pixel_enabled !== null) {
     effective.pixelEnabled = pageOverride.pixel_enabled;
   } else {
-    effective.pixelEnabled = !!siteConfig.metaPixelId;
+    effective.pixelEnabled = !!(siteConfig.metaPixelId || siteConfig.openaiAdsPixelId);
   }
 
   // trackPageview: default true se il sito ha tracking, override se impostato

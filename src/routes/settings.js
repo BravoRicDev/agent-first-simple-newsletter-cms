@@ -221,6 +221,13 @@ router.post("/admin/settings/tracking", requireAuth, authorize("settings", "upda
       metaCapiTestCode: req.body.meta_capi_test_code,
       clarityId: req.body.clarity_id,
       searchConsoleVerification: req.body.search_console_verification,
+      // OpenAI / ChatGPT Ads
+      openaiAdsPixelId: req.body.openai_ads_pixel_id,
+      openaiAdsApiKey: req.body.openai_ads_api_key,
+      openaiAdsTestCode: req.body.openai_ads_test_code,
+      openaiAdsSdkUrl: req.body.openai_ads_sdk_url,
+      openaiAdsAdvancedMatching: req.body.openai_ads_advanced_matching === "on" ? "1" : "",
+      openaiAdsAutoIdentify: req.body.openai_ads_auto_identify === "on" ? "1" : "",
       consentBannerText: req.body.consent_banner_text,
       consentAcceptLabel: req.body.consent_accept_label,
       consentRejectLabel: req.body.consent_reject_label,
@@ -258,6 +265,12 @@ router.post("/admin/settings/tracking", requireAuth, authorize("settings", "upda
       fields.metaCapiToken = "";
     } else if (req.body.meta_capi_token) {
       fields.metaCapiToken = req.body.meta_capi_token;
+    }
+    // Stesso pattern per OpenAI Ads API key
+    if (req.body.remove_openai_ads_api_key === "1") {
+      fields.openaiAdsApiKey = "";
+    } else if (req.body.openai_ads_api_key) {
+      fields.openaiAdsApiKey = req.body.openai_ads_api_key;
     }
 
     await setSiteTrackingConfig(siteId, fields);
@@ -298,6 +311,7 @@ router.post("/admin/settings/seo", requireAuth, authorize("settings", "update"),
       defaultOgImage: req.body.default_og_image,
       twitterHandle: req.body.twitter_handle,
       robotsExtra: req.body.robots_extra,
+      llmsDescription: req.body.llms_description,
     });
     res.redirect(`/admin/settings/seo?site_id=${siteId}&saved=1`);
     exportPublishedPages({ siteId }).catch(() => {});

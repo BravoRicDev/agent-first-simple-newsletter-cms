@@ -5,8 +5,10 @@ export async function getPublishedPagesForSitemap(siteId) {
   // sitemap sono due segnali diversi, ma pubblicare in sitemap una pagina
   // che poi dichiara noindex è solo rumore per i crawler (e in alcuni casi
   // un segnale contrastante che Google Search Console segnala come errore).
+  // p.title / s.meta_title / s.meta_description servono anche a buildLlmsTxt
+  // (stessa sorgente di pagine pubblicate, già filtrata per noindex).
   return (await query(
-    `SELECT p.url_path, p.updated_at, s.og_image
+    `SELECT p.url_path, p.updated_at, p.title, s.meta_title, s.meta_description, s.og_image
      FROM pages p
      LEFT JOIN page_seo s ON s.page_id = p.id
      WHERE p.site_id = $1 AND p.published = true AND s.noindex IS NOT TRUE
@@ -119,6 +121,41 @@ export function serializeJsonLd(obj) {
   return JSON.stringify(obj).replace(/</g, "\\u003c");
 }
 
+// ── Structured data builders avanzati ──────────────────────────────────────
+// BreadcrumbList: generato automaticamente dal path URL (nessun input admin).
+export function buildBreadcrumbJsonLd({ baseUrl, urlPath, pageTitle }) {
+  const base = baseUrl.replace(/\/$/, "");
+  const parts = urlPath.split("/").filter(Boolean);
+  const itemListElement = [{ "@type": "ListItem", position: 1, name: "Home", item: base }];
+  let acc = "";
+  for (let i = 0; i < parts.length; i++) {
+    acc += "/" + parts[i];
+    const isLast = i === parts.length - 1;
+    itemListElement.push({
+      "@type": "ListItem",
+      position: i + 2,
+      name: isLast ? (pageTitle || parts[i].replace(/-/g, " ")) : parts[i].replace(/-/g, " "),
+      item: base + acc,
+    });
+  }
+  return { "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement };
+}
+
+// FAQPage: accetta array di { question, answer } (stringhe, niente HTML).
+export function buildFaqJsonLd(mainEntity) {
+  if (!Array.isArray(mainEntity) || mainEntity.length === 0) return null;
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: mainEntity.map((qa, i) => ({
+      "@type": "Question",
+      position: i + 1,
+      name: qa.question,
+      acceptedAnswer: { "@type": "Answer", text: qa.answer },
+    })),
+  };
+}
+
 const ATTR_ESCAPE_RE = /[&<>"']/g;
 const ATTR_ESCAPE_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -136,6 +173,71 @@ function metaNameRe(name) {
 
 function metaPropRe(prop) {
   return new RegExp(`<meta[^>]*property=["']${prop}["'][^>]*>`, "i");
+}
+
+// ── llms.txt builder ───────────────────────────────────────────────────────
+// Genera il file llms.txt per il sito: descrizione + sezioni con link.
+// Segue la spec comune (H1 + blockquote + sezioni con "- [Title](url): note").
+// llms.txt è testo/Markdown, non HTML: NON si usano entità HTML (finirebbero
+// letterali). Si normalizzano spazi/newline e si neutralizzano le parentesi
+// quadre che romperebbero la sintassi dei link "[Titolo](url)".
+function escapeLlms(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")");
+}
+
+export function buildLlmsTxt({ siteName, description, baseUrl, sections }) {
+  const base = String(baseUrl || "").replace(/\/$/, "");
+  const safeSections = Array.isArray(sections) ? sections : [];
+  const lines = [];
+  lines.push(`# ${escapeLlms(siteName)}`);
+  lines.push("");
+  lines.push(`> ${escapeLlms(description || "")}`);
+  lines.push("");
+  for (const { title, items } of safeSections) {
+    lines.push(`## ${escapeLlms(title)}`);
+    lines.push("");
+    for (const item of items) {
+      const titleEsc = escapeLlms(item.title);
+      const urlEsc = escapeLlms(item.url);
+      const descEsc = escapeLlms(item.description || "");
+      lines.push(`- [${titleEsc}](${urlEsc})${descEsc ? `: ${descEsc}` : ""}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n") + "\n";
+}
+
+// Helper: raggruppa le pagine per prefisso di primo livello (es. "/servizi/..." → "Servizi")
+export function groupPagesForLlms(pages, baseUrl) {
+  const base = String(baseUrl || "").replace(/\/$/, "");
+  const groups = new Map();
+  for (const p of pages) {
+    const path = p.url_path === "/" ? "/" : p.url_path;
+    // Prefisso di primo livello
+    const parts = path.split("/").filter(Boolean);
+    const prefix = parts.length >= 2 ? `/${parts[0]}` : "/";
+    const title = p.meta_title || p.title || path;
+    const desc = p.meta_description || "";
+    if (!groups.has(prefix)) {
+      // Etichetta leggibile: capitalizza il primo segmento
+      const label = prefix === "/" ? "Home" : prefix.slice(1).replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      groups.set(prefix, { title: label, items: [] });
+    }
+    groups.get(prefix).items.push({
+      title,
+      url: base.replace(/\/$/, "") + path,
+      description: desc
+    });
+  }
+  // Ordina per etichetta, home per prima
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => (a === "/" ? -1 : b === "/" ? 1 : a.localeCompare(b)))
+    .map(([, v]) => v);
 }
 
 // Iniezione SEO per le pagine "standalone" (HTML completo già pronto nel
@@ -228,9 +330,11 @@ export function injectSeoIntoStandalone(html, seoLocals = {}) {
     // JSON-LD: iniettato solo se l'HTML non ne ha già uno. Gli schema scritti
     // a mano (es. Article in un articolo editoriale) hanno priorità: due script
     // concorrenti per la stessa pagina confondono i crawler.
+    // Ordine di priorità: schema_json manuale > webpageJsonLd > websiteJsonLd
     const jsonLdTags = [];
-    if (seoLocals.websiteJsonLd) jsonLdTags.push(`<script type="application/ld+json">${seoLocals.websiteJsonLd}</script>`);
+    if (seoLocals.manualSchemaJsonLd) jsonLdTags.push(`<script type="application/ld+json">${seoLocals.manualSchemaJsonLd}</script>`);
     if (seoLocals.webpageJsonLd) jsonLdTags.push(`<script type="application/ld+json">${seoLocals.webpageJsonLd}</script>`);
+    if (seoLocals.websiteJsonLd) jsonLdTags.push(`<script type="application/ld+json">${seoLocals.websiteJsonLd}</script>`);
     if (jsonLdTags.length > 0 && !/<script[^>]+type=["']application\/ld\+json["']/i.test(html)) {
       inserted.push(...jsonLdTags);
     }

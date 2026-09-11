@@ -62,4 +62,21 @@ window.__cmsMarketingGranted = false;
 </script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=<%= metaPixelId %>&ev=PageView&noscript=1"/></noscript>
 <% } %>
+
+<% if (typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false) { %>
+<!-- OpenAI / ChatGPT Ads Pixel — SDK ufficiale (bzrcdn.openai.com, global "oaiq").
+     Stub a coda d'array, il pattern supportato dall'SDK: le chiamate fatte PRIMA
+     del caricamento vengono riprodotte quando lo script arriva. Consenso NEGATO
+     subito (fail-safe: nessun evento parte finché l'utente non accetta il
+     marketing; l'SDK considera "granted" il consenso nullo, quindi va negato
+     esplicitamente). PageView / Lead / CompleteRegistration partono da
+     tracking-body.ejs (applyConsent). pixelEnabled === false salta l'init. -->
+<script>
+window.oaiq = window.oaiq || [];
+window.oaiq.push(['consent', false]);
+window.oaiq.push(['init', { pixelId: <%- JSON.stringify(String(openaiAdsPixelId)).replace(/</g, '\\u003c') %> }]);
+window.__cmsOpenAiPixelId = <%- JSON.stringify(String(openaiAdsPixelId)).replace(/</g, '\\u003c') %>;
+</script>
+<script async src="<%= (typeof openaiAdsSdkUrl !== 'undefined' && openaiAdsSdkUrl) ? openaiAdsSdkUrl : 'https://bzrcdn.openai.com/sdk/oaiq.min.js' %>"></script>
+<% } %>
 <% } %>

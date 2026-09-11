@@ -9,7 +9,7 @@ import { resolveLayoutName, getSiteThemeVars } from "./site-render.js";
 import { getSiteTrackingConfigMasked, getEffectiveTrackingConfig, renderTrackingBlocks, injectTrackingIntoStandalone } from "./tracking.js";
 import { getSiteSeoConfig } from "./site-seo.js";
 import {
-  getPublishedPagesForSitemap, buildSitemapXml, buildRobotsTxt,
+  getPublishedPagesForSitemap, buildSitemapXml, buildRobotsTxt, buildLlmsTxt, groupPagesForLlms,
   buildCanonicalUrl, toAbsoluteUrl, buildWebsiteJsonLd, buildWebPageJsonLd, serializeJsonLd,
   injectSeoIntoStandalone,
 } from "./seo.js";
@@ -56,7 +56,9 @@ function buildSeoLocals(page, urlPath, { baseUrl, siteSeo, brandName, isHomepage
     name: metaTitle, description: metaDescription, url: canonicalUrl, image: ogImage || undefined,
   }));
   const websiteJsonLd = isHomepage ? serializeJsonLd(buildWebsiteJsonLd({ name: brandName, url: baseUrl })) : null;
-  return { meta_title: metaTitle, meta_description: metaDescription, meta_keywords: page.meta_keywords || "", canonicalUrl, noindex, ogImage, twitterHandle: siteSeo.twitterHandle, brandName, webpageJsonLd, websiteJsonLd };
+  // JSON-LD manuale: se presente, iniettato con priorità (quello manuale batte l'auto)
+  const manualSchemaJsonLd = !noindex && page.schema_json ? serializeJsonLd(page.schema_json) : null;
+  return { meta_title: metaTitle, meta_description: metaDescription, meta_keywords: page.meta_keywords || "", canonicalUrl, noindex, ogImage, twitterHandle: siteSeo.twitterHandle, brandName, webpageJsonLd, websiteJsonLd, manualSchemaJsonLd };
 }
 
 async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
@@ -224,6 +226,11 @@ export async function generateSeoFiles(siteId, baseUrl) {
     ensureDir(dir);
     fs.writeFileSync(path.join(dir, "sitemap.xml"), buildSitemapXml(baseUrl, pages), "utf-8");
     fs.writeFileSync(path.join(dir, "robots.txt"), buildRobotsTxt(baseUrl, siteSeo.robotsExtra), "utf-8");
+    // llms.txt per AI/GEO (stesso pattern)
+    const themeVars = { ...(await getSiteThemeVars(siteId)) };
+    const sections = groupPagesForLlms(pages, baseUrl);
+    const description = siteSeo.llmsDescription || themeVars.brandName || "";
+    fs.writeFileSync(path.join(dir, "llms.txt"), buildLlmsTxt({ siteName: themeVars.brandName, description, baseUrl, sections }), "utf-8");
     return { ok: true };
   } catch (err) {
     logger.error(`SEO files generation failed: site=${siteId}`, { error: err.message });
@@ -243,7 +250,7 @@ export async function generate404Page(siteId) {
       `SELECT p.id, p.url_path, p.title, p.content, p.layout_mode,
               COALESCE(s.meta_title, p.title) AS meta_title,
               COALESCE(s.meta_description, '') AS meta_description,
-              s.canonical_url, s.og_image
+              s.canonical_url, s.og_image, s.schema_type, s.schema_json
        FROM pages p
        LEFT JOIN page_seo s ON s.page_id = p.id
        WHERE p.site_id = $1 AND p.url_path = $2 AND p.published = true`,
@@ -338,7 +345,8 @@ async function exportPublishedPagesInner(siteId, pageIds) {
     SELECT p.id, p.url_path, p.title, p.content, p.layout_mode,
            COALESCE(s.meta_title, p.title) AS meta_title,
            COALESCE(s.meta_description, '') AS meta_description,
-           s.meta_keywords, s.canonical_url, s.noindex, s.og_image
+           s.meta_keywords, s.canonical_url, s.noindex, s.og_image,
+           s.schema_type, s.schema_json
     FROM pages p
     LEFT JOIN page_seo s ON s.page_id = p.id
     WHERE p.site_id = $1 AND p.published = true

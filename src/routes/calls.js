@@ -12,7 +12,7 @@ import {
   listCalendars, getCalendar, createCalendar, updateCalendar, deleteCalendar,
   listSiteUsers, resolveBookingTarget, listAllCallsForSite,
 } from "../services/calls.js";
-import { sendMetaCapiEvent, isMarketingConsentGranted } from "../services/tracking.js";
+import { sendMetaCapiEvent, sendOpenAiAdsEvent, isMarketingConsentGranted } from "../services/tracking.js";
 
 const router = Router();
 
@@ -306,6 +306,12 @@ async function handleBooking(req, res) {
   }
 
   sendMetaCapiEvent(siteId, "Schedule", {
+    email, eventSourceUrl: req.headers["referer"], clientIp: req.ip,
+    userAgent: req.headers["user-agent"], consentGranted: isMarketingConsentGranted(req),
+    dedupKey: result.ok ? result.id : undefined,
+  }).catch(() => {});
+  // OpenAI / ChatGPT Ads server-side conversion (fire-and-forget)
+  sendOpenAiAdsEvent(siteId, "Schedule", {
     email, eventSourceUrl: req.headers["referer"], clientIp: req.ip,
     userAgent: req.headers["user-agent"], consentGranted: isMarketingConsentGranted(req),
     dedupKey: result.ok ? result.id : undefined,
