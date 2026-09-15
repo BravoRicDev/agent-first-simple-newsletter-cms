@@ -50,42 +50,42 @@ describe("Opportunities Stats API", () => {
   }
 
   test("GET /search — ricerca opportunità", async () => {
-    const res = await fetch(`${baseUrl}/search?q=test`, { headers: authHeader() });
+    const res = await fetch(`${baseUrl}/api/opportunities/search?q=test`, { headers: authHeader() });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.data !== undefined);
   });
 
   test("GET /revenue — statistiche revenue", async () => {
-    const res = await fetch(`${baseUrl}/revenue`, { headers: authHeader() });
+    const res = await fetch(`${baseUrl}/api/opportunities/stats/revenue`, { headers: authHeader() });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.byStatus !== undefined);
   });
 
   test("GET /conversion — funnel di conversione", async () => {
-    const res = await fetch(`${baseUrl}/conversion?pipeline_id=${pipeline.id}`, { headers: authHeader() });
+    const res = await fetch(`${baseUrl}/api/opportunities/stats/conversion?pipeline_id=${pipeline.id}`, { headers: authHeader() });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.funnel !== undefined);
   });
 
   test("GET /vendor — statistiche vendor", async () => {
-    const res = await fetch(`${baseUrl}/vendor`, { headers: authHeader() });
+    const res = await fetch(`${baseUrl}/api/opportunities/stats/vendor`, { headers: authHeader() });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.vendors !== undefined);
   });
 
   test("GET /trend — trend", async () => {
-    const res = await fetch(`${baseUrl}/trend`, { headers: authHeader() });
+    const res = await fetch(`${baseUrl}/api/opportunities/stats/trend`, { headers: authHeader() });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.trend !== undefined);
   });
 
   test("PUT /:id/owner — riassegnazione owner", async () => {
-    const res = await fetch(`${baseUrl}/999/owner`, {
+    const res = await fetch(`${baseUrl}/api/opportunities/999/owner`, {
       method: "PUT",
       headers: { ...authHeader(), "Content-Type": "application/json" },
       body: JSON.stringify({ vendor: "test vendor" }),

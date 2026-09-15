@@ -6,7 +6,7 @@ import { searchOpportunities, getRevenueStats, getConversionFunnel, getVendorSta
 
 const router = Router();
 
-router.get("/search", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+router.get("/api/opportunities/search", requireAuth, authorize("forms", "read"), async (req, res, next) => {
   try {
     const siteId = req.user.role === "superadmin" && req.query.site_id
       ? parseInt(req.query.site_id, 10) : req.user.site_id;
@@ -14,7 +14,7 @@ router.get("/search", requireAuth, authorize("forms", "read"), async (req, res, 
   } catch (err) { next(err); }
 });
 
-router.get("/revenue", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+router.get("/api/opportunities/stats/revenue", requireAuth, authorize("forms", "read"), async (req, res, next) => {
   try {
     const siteId = req.user.role === "superadmin" && req.query.site_id
       ? parseInt(req.query.site_id, 10) : req.user.site_id;
@@ -22,7 +22,7 @@ router.get("/revenue", requireAuth, authorize("forms", "read"), async (req, res,
   } catch (err) { next(err); }
 });
 
-router.get("/conversion", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+router.get("/api/opportunities/stats/conversion", requireAuth, authorize("forms", "read"), async (req, res, next) => {
   try {
     const siteId = req.user.role === "superadmin" && req.query.site_id
       ? parseInt(req.query.site_id, 10) : req.user.site_id;
@@ -33,7 +33,7 @@ router.get("/conversion", requireAuth, authorize("forms", "read"), async (req, r
   } catch (err) { next(err); }
 });
 
-router.get("/vendor", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+router.get("/api/opportunities/stats/vendor", requireAuth, authorize("forms", "read"), async (req, res, next) => {
   try {
     const siteId = req.user.role === "superadmin" && req.query.site_id
       ? parseInt(req.query.site_id, 10) : req.user.site_id;
@@ -41,7 +41,7 @@ router.get("/vendor", requireAuth, authorize("forms", "read"), async (req, res, 
   } catch (err) { next(err); }
 });
 
-router.get("/trend", requireAuth, authorize("forms", "read"), async (req, res, next) => {
+router.get("/api/opportunities/stats/trend", requireAuth, authorize("forms", "read"), async (req, res, next) => {
   try {
     const siteId = req.user.role === "superadmin" && req.query.site_id
       ? parseInt(req.query.site_id, 10) : req.user.site_id;
@@ -49,7 +49,7 @@ router.get("/trend", requireAuth, authorize("forms", "read"), async (req, res, n
   } catch (err) { next(err); }
 });
 
-router.put("/:id/owner", requireAuth, authorize("forms", "update"), async (req, res, next) => {
+router.put("/api/opportunities/:id/owner", requireAuth, authorize("forms", "update"), async (req, res, next) => {
   try {
     const siteId = req.user.role === "superadmin" && req.body.site_id
       ? parseInt(req.body.site_id, 10) : req.user.site_id;
