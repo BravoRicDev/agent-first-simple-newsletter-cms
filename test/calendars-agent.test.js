@@ -19,7 +19,7 @@ describe("agent: calendari CRUD + calendar_id su calls", () => {
       "INSERT INTO site_modules (site_id, module_key, enabled) VALUES ($1, 'call_scheduling', true) ON CONFLICT (site_id, module_key) DO UPDATE SET enabled = true",
       [site.id]
     );
-    const created = await createApiToken(user.id, "agent calendars test", 30);
+    const created = await createApiToken(user.id, "agent calendars test", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

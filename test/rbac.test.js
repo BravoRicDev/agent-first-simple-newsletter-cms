@@ -31,9 +31,9 @@ describe("crm: rbac, turni operatori e audit", () => {
     admin = await createTestUser(site.id, "admin");
     collab = await createTestUser(site.id, "collaboratore");
     user2 = await createTestUser(site2.id, "admin");
-    const created = await createApiToken(admin.id, "rbac test", 30);
+    const created = await createApiToken(admin.id, "rbac test", 30, ["read", "write"]);
     token = created.token;
-    const created2 = await createApiToken(user2.id, "rbac test 2", 30);
+    const created2 = await createApiToken(user2.id, "rbac test 2", 30, ["read", "write"]);
     token2 = created2.token;
 
     const app = express();

@@ -26,7 +26,7 @@ describe("crm: proposta di risposta all'operatore (reply suggestions)", () => {
     config.llmApiKey = "";
     site = await createTestSite("CRM Reply Suggestions Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "reply suggestions", 30);
+    const created = await createApiToken(user.id, "reply suggestions", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

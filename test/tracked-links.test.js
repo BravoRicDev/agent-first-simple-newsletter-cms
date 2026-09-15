@@ -25,7 +25,7 @@ describe("feature 39: link tracciati (QR / link corto)", () => {
   before(async () => {
     site = await createTestSite("Tracked Links Test");
     user = await createTestUser(site.id, "admin");
-    token = (await createApiToken(user.id, "tracked links test", 30)).token;
+    token = (await createApiToken(user.id, "tracked links test", 30, ["read", "write"])).token;
 
     // ── Router agent (auth) ─────────────────────────────────────────────
     const r = Router();

@@ -20,7 +20,7 @@ describe("crm: export/import completo", () => {
   before(async () => {
     site = await createTestSite("CRM Export Import Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm export import", 30);
+    const created = await createApiToken(user.id, "crm export import", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

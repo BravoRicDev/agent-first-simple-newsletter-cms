@@ -34,7 +34,7 @@ describe("agent: questionari (quiz) CRUD + submissions", () => {
   before(async () => {
     site = await createTestSite("Agent Quizzes Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "agent quizzes test", 30);
+    const created = await createApiToken(user.id, "agent quizzes test", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

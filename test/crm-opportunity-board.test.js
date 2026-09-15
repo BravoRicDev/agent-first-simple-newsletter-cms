@@ -19,7 +19,7 @@ describe("crm: kanban board opportunità", () => {
   before(async () => {
     site = await createTestSite("CRM Board Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "board", 30);
+    const created = await createApiToken(user.id, "board", 30, ["read", "write"]);
     token = created.token;
 
     // Pipeline con stages custom (multi-funnel)

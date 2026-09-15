@@ -34,7 +34,7 @@ describe("crm: quote/rate-limit per canale con avvisi", () => {
 
     site = await createTestSite("CRM Channel Limits Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm limits", 30);
+    const created = await createApiToken(user.id, "crm limits", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

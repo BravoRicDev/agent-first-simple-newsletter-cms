@@ -15,7 +15,7 @@ describe("crm: opportunità + preventivi PDF", () => {
   before(async () => {
     site = await createTestSite("CRM Opportunities Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm opp", 30);
+    const created = await createApiToken(user.id, "crm opp", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

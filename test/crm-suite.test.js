@@ -15,7 +15,7 @@ describe("crm: scoring, task, tracking, preferenze, merge, pipeline", () => {
   before(async () => {
     site = await createTestSite("CRM Suite Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm suite", 30);
+    const created = await createApiToken(user.id, "crm suite", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

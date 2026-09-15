@@ -16,7 +16,7 @@ describe("Opportunities Stats API", () => {
   before(async () => {
     site = await createTestSite("Opportunities Stats Test");
     user = await createTestUser(site.id, "admin");
-    const apiToken = await createApiToken(user.id, "test-token", 30);
+    const apiToken = await createApiToken(user.id, "test-token", 30, ["read", "write"]);
     token = apiToken.token;
 
     const pipelineResult = await query(

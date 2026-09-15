@@ -26,7 +26,7 @@ describe("crm: riepilogo IA delle chiamate", () => {
     config.llmApiKey = "";
     site = await createTestSite("CRM Call Summaries Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm call summaries", 30);
+    const created = await createApiToken(user.id, "crm call summaries", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

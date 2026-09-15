@@ -24,7 +24,7 @@ describe("feature 40: dashboard realtime CRM", () => {
   before(async () => {
     site = await createTestSite("CRM Dashboard Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "dashboard test", 30);
+    const created = await createApiToken(user.id, "dashboard test", 30, ["read", "write"]);
     token = created.token;
 
     // Dati di test via query dirette: 2 lead recenti (facebook, google),

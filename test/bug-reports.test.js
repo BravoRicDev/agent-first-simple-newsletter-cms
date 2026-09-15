@@ -23,8 +23,8 @@ describe("segnalazioni bug: CRUD self-service + admin, notifica email, esposizio
     site = await createTestSite("Bug Reports Test");
     admin = await createTestUser(site.id, "admin");
     collaboratore = await createTestUser(site.id, "collaboratore");
-    adminToken = (await createApiToken(admin.id, "admin test", 30)).token;
-    collabToken = (await createApiToken(collaboratore.id, "collab test", 30)).token;
+    adminToken = (await createApiToken(admin.id, "admin test", 30, ["read", "write"])).token;
+    collabToken = (await createApiToken(collaboratore.id, "collab test", 30, ["read", "write"])).token;
 
     const app = express();
     app.use(express.json());

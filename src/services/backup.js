@@ -98,11 +98,39 @@ function dumpToFile(databaseUrl, tmpFile) {
 // rifà nulla — safe da chiamare ad ogni tick dello scheduler). Non tocca
 // i backup manuali pre-deploy-*.sql già presenti in backups/, solo i file
 // prefissati "auto-" che gestisce lui.
+//
+// SANITY CHECK anti-reset: prima di dumpare verifica che il DB contenga
+// (a) almeno un sito e (b) almeno una pagina pubblicata. Se il DB ha siti
+// ma 0 pagine pubblicate, quasi certamente il volume è stato ricreato da
+// zero (deploy con `docker compose down -v` che azzera pgdata: il backup
+// nightly salverebbe altrimenti il DB vuoto come se nulla fosse). In quel
+// caso il backup di oggi NON viene creato e viene loggato un errore ben
+// visibile: il file mancante + l'errore nei log rendono il problema
+// impossibile da ignorare.
 export async function runScheduledBackup() {
   if (!config.backupEnabled) return;
 
   const file = path.join(BACKUP_DIR, `auto-${todayStr()}.sql.gz`);
   if (fs.existsSync(file)) return;
+
+  try {
+    const { query } = await import("../db.js");
+    const siteCount = (await query("SELECT count(*)::int AS n FROM sites")).rows[0].n;
+    const pubPages = (await query("SELECT count(*)::int AS n FROM pages WHERE published = true")).rows[0].n;
+    if (siteCount === 0) {
+      logger.error("BACKUP SOSPETTO: nessun sito nel DB (volume resettato?). Backup di oggi NON creato.");
+      return;
+    }
+    if (pubPages === 0) {
+      logger.error(`BACKUP SOSPETTO: ${siteCount} sito/i ma 0 pagine pubblicate — DB probabilmente resettato/seed incompleto. Backup di oggi NON creato.`);
+      return;
+    }
+  } catch (err) {
+    // Se il check fallisce (es. tabella pages mancante), meglio NON bloccare
+    // il backup: logga e prosegui col dump (fallirà da solo se il DB è
+    // davvero irraggiungibile).
+    logger.warn(`Sanity check backup non eseguito: ${err.message}`);
+  }
 
   // Tmp univoco per processo+istante: il tick dello scheduler e il run manuale
   // (backup-jobs.js) possono scrivere lo stesso giorno — con un tmp condiviso

@@ -22,7 +22,7 @@ describe("agent: runtime conversazionale per canale (feature 29)", () => {
     config.llmApiKey = "";
     site = await createTestSite("Agent Runtime Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "agent runtime test", 30);
+    const created = await createApiToken(user.id, "agent runtime test", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

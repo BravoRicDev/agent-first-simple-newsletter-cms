@@ -20,7 +20,7 @@ describe("crm: task ricorrenti + follow-up intelligente", () => {
   before(async () => {
     site = await createTestSite("CRM Recurring Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "recurring", 30);
+    const created = await createApiToken(user.id, "recurring", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

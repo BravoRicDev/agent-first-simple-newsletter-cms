@@ -15,7 +15,7 @@ describe("crm: note lead + conversazioni email/whatsapp", () => {
   before(async () => {
     site = await createTestSite("CRM Conversations Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm conv", 30);
+    const created = await createApiToken(user.id, "crm conv", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

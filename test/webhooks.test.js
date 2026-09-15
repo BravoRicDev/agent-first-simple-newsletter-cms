@@ -48,7 +48,7 @@ describe("feature 35: webhook in/out", () => {
   before(async () => {
     site = await createTestSite("CRM Webhook Test");
     const user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "webhook test", 30);
+    const created = await createApiToken(user.id, "webhook test", 30, ["read", "write"]);
     token = created.token;
 
     // Server di cattura (200) e server che fallisce (500) su porta effimera.

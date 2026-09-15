@@ -21,7 +21,7 @@ describe("crm: sandbox/staging (dry-run + scenari)", () => {
     site = await createTestSite("CRM Sandbox Test");
     otherSite = await createTestSite("CRM Sandbox Altro Sito");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "sandbox", 30);
+    const created = await createApiToken(user.id, "sandbox", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

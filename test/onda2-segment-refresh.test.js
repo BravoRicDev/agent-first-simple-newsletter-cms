@@ -20,7 +20,7 @@ describe("crm: refresh periodico segmenti dinamici", () => {
   before(async () => {
     site = await createTestSite("CRM Segment Refresh Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "segrefresh", 30);
+    const created = await createApiToken(user.id, "segrefresh", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

@@ -13,7 +13,7 @@ describe("crm: workflow a trigger", () => {
   before(async () => {
     site = await createTestSite("CRM Workflows Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm workflows", 30);
+    const created = await createApiToken(user.id, "crm workflows", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

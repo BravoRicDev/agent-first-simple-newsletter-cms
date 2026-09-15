@@ -34,7 +34,7 @@ describe("clienti + servizi (area clienti generica)", () => {
   before(async () => {
     site = await createTestSite("Clienti Servizi Test");
     user = await createTestUser(site.id, "admin");
-    token = (await createApiToken(user.id, "client-services test", 30)).token;
+    token = (await createApiToken(user.id, "client-services test", 30, ["read", "write"])).token;
 
     // Il DB di test non viene ripulito tra i run: il catalogo servizi è una
     // tabella di configurazione, la svuotiamo (cascade su client_services).

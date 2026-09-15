@@ -17,7 +17,7 @@ describe("crm: knowledge base aziendale", () => {
   before(async () => {
     site = await createTestSite("CRM KB Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "kb", 30);
+    const created = await createApiToken(user.id, "kb", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

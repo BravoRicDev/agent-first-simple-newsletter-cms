@@ -24,13 +24,13 @@ describe("token API di lunga durata: creazione, verifica, revoca, integrazione c
   after(async () => { server.close(); await closeDb(); });
 
   test("il token generato ha il prefisso atteso ed è riconosciuto come tale", async () => {
-    const created = await createApiToken(user.id, "test token", 30);
+    const created = await createApiToken(user.id, "test token", 30, ["read", "write"]);
     assert.ok(isApiTokenFormat(created.token));
     assert.ok(created.token.startsWith("agtok_"));
   });
 
   test("requireAuth accetta un token valido via header Authorization", async () => {
-    const created = await createApiToken(user.id, "http test", 30);
+    const created = await createApiToken(user.id, "http test", 30, ["read", "write"]);
     const res = await fetch(`${baseUrl}/api/whoami`, { headers: { Authorization: `Bearer ${created.token}` } });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -44,7 +44,7 @@ describe("token API di lunga durata: creazione, verifica, revoca, integrazione c
   });
 
   test("un token revocato smette immediatamente di funzionare", async () => {
-    const created = await createApiToken(user.id, "revoke test", 30);
+    const created = await createApiToken(user.id, "revoke test", 30, ["read", "write"]);
     assert.ok(await verifyApiToken(created.token));
 
     await revokeApiToken(user.id, created.id);
@@ -53,7 +53,7 @@ describe("token API di lunga durata: creazione, verifica, revoca, integrazione c
 
   test("revocare il token di un altro utente non ha effetto (IDOR)", async () => {
     const otherUser = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "isolato", 30);
+    const created = await createApiToken(user.id, "isolato", 30, ["read", "write"]);
 
     await revokeApiToken(otherUser.id, created.id); // tenta di revocare un token non suo
     assert.ok(await verifyApiToken(created.token), "il token del legittimo proprietario deve restare valido");

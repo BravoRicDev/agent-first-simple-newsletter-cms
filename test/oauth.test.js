@@ -30,7 +30,7 @@ describe("feature 36: oauth google", () => {
   before(async () => {
     site = await createTestSite("CRM OAuth Test");
     user = await createTestUser(site.id, "admin");
-    token = (await createApiToken(user.id, "oauth test", 30)).token;
+    token = (await createApiToken(user.id, "oauth test", 30, ["read", "write"])).token;
 
     const r = Router();
     r.use("/api/agent", requireAuth, requireAgent);

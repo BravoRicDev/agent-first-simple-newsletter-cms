@@ -35,8 +35,8 @@ describe("media protetti: route con autorizzazione (deny by default)", () => {
     site = await createTestSite("Media Protetti Test");
     adminUser = await createTestUser(site.id, "admin");
     collabUser = await createTestUser(site.id, "collaboratore");
-    adminToken = (await createApiToken(adminUser.id, "media-protected admin", 30)).token;
-    collabToken = (await createApiToken(collabUser.id, "media-protected collab", 30)).token;
+    adminToken = (await createApiToken(adminUser.id, "media-protected admin", 30, ["read", "write"])).token;
+    collabToken = (await createApiToken(collabUser.id, "media-protected collab", 30, ["read", "write"])).token;
 
     const app = express();
     app.use((req, res, next) => { res.locals.t = (k) => k; next(); });

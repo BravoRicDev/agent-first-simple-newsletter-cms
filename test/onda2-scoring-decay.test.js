@@ -17,7 +17,7 @@ describe("crm: scoring decay configurabile + soglie below", () => {
   before(async () => {
     site = await createTestSite("CRM Decay Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "decay", 30);
+    const created = await createApiToken(user.id, "decay", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

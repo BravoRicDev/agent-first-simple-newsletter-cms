@@ -25,7 +25,7 @@ describe("agent: override tracking per-pagina", () => {
       "INSERT INTO pages (site_id, url_path, title, published) VALUES ($1, '/altro-sito', 'Altra', true) RETURNING id",
       [otherSite.id]
     )).rows[0];
-    const created = await createApiToken(user.id, "agent page tracking test", 30);
+    const created = await createApiToken(user.id, "agent page tracking test", 30, ["read", "write"]);
     token = created.token;
 
     const app = express();

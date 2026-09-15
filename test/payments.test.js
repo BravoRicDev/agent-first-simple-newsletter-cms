@@ -31,7 +31,7 @@ describe("feature 38: link di pagamento stripe", () => {
 
     site = await createTestSite("CRM Payment Test");
     const createdUser = await createTestUser(site.id, "admin");
-    const created = await createApiToken(createdUser.id, "payments test", 30);
+    const created = await createApiToken(createdUser.id, "payments test", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

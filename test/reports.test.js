@@ -32,7 +32,7 @@ describe("crm: report periodici ai clienti", () => {
 
     site = await createTestSite("CRM Report Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm reports", 30);
+    const created = await createApiToken(user.id, "crm reports", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

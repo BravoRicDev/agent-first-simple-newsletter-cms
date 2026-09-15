@@ -1,6 +1,16 @@
 import { Router } from "express";
+import { z } from "zod";
 import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { requireTokenWrite } from "../middleware/scopes.js";
+import {
+  createOpportunity as createOpportunityV1,
+  updateOpportunity as updateOpportunityV1,
+} from "../services/opportunities-v1.js";
+import {
+  createContact as createContactV1,
+  updateContact as updateContactV1,
+} from "../services/contacts-v1.js";
 import { PIPELINE_STAGES } from "../constants/pipeline.js";
 
 const router = Router();
@@ -246,6 +256,121 @@ router.post("/api/call-verdict", requireAuth, requireAgentApi, async (req, res, 
       motivo: v.motivazione || null,
     });
   } catch (err) { next(err); }
+});
+
+// ── Scrittura (token con scope "write") ────────────────────────────────────
+// Endpoint di creazione/aggiornamento per i moduli satellite. Protetti da
+// requireTokenWrite: un agtok_ in sola lettura riceve 403; le sessioni
+// interattive non usano questa surface (requireAgentApi). Il perimetro dati
+// resta sempre il site_id dell'utente/token: nessun satellite può scrivere
+// fuori dal proprio tenant.
+//
+// Convenzione risposte: oggetto flat della risorsa serializzata (stesso stile
+// delle GET sopra), errori 400 input non valido / 404 risorsa altrui o assente.
+
+const opportunityWriteSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  email: z.string().email().max(255).optional(),
+  value: z.union([z.number(), z.string()]).optional(),
+  amount: z.union([z.number(), z.string()]).optional(),
+  stage: z.string().max(100).optional(),
+  status: z.enum(["open", "won", "lost"]).optional(),
+  probability: z.union([z.number(), z.string()]).optional(),
+  expected_close_at: z.string().max(40).nullable().optional(),
+  notes: z.string().max(5000).optional(),
+}).strict();
+
+// Alias del modulo sales: "value" ≡ "amount" (importo opportunità).
+function opportunityPayloadOf(body) {
+  const data = { ...body };
+  if (data.value !== undefined && data.amount === undefined) data.amount = data.value;
+  delete data.value;
+  return data;
+}
+
+router.post("/api/opportunities", requireAuth, requireAgentApi, requireTokenWrite, async (req, res, next) => {
+  try {
+    const body = opportunityWriteSchema.parse(req.body || {});
+    if (!body.title || !body.email) {
+      return res.status(400).json({ error: "title_and_email_required" });
+    }
+    const created = await createOpportunityV1(siteIdOf(req), opportunityPayloadOf(body));
+    if (!created) return res.status(400).json({ error: "invalid_input" });
+    res.status(201).json(created);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "validation_error", details: err.errors });
+    }
+    next(err);
+  }
+});
+
+router.put("/api/opportunities/:id", requireAuth, requireAgentApi, requireTokenWrite, async (req, res, next) => {
+  try {
+    const id = intParamOf(req.params.id);
+    if (id === null) return res.status(400).json({ error: "invalid_id" });
+    const body = opportunityWriteSchema.parse(req.body || {});
+    if (Object.keys(body).length === 0) {
+      return res.status(400).json({ error: "no_fields_to_update" });
+    }
+    const updated = await updateOpportunityV1(siteIdOf(req), id, opportunityPayloadOf(body));
+    if (!updated) return res.status(404).json({ error: "opportunity_not_found" });
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "validation_error", details: err.errors });
+    }
+    next(err);
+  }
+});
+
+const contactWriteSchema = z.object({
+  email: z.string().email().max(255),
+  name: z.string().max(255).optional(),
+  firstName: z.string().max(100).optional(),
+  lastName: z.string().max(100).optional(),
+  phone: z.string().max(50).optional(),
+  companyName: z.string().max(255).optional(),
+  website: z.string().max(255).optional(),
+  tags: z.array(z.string().max(100)).max(50).optional(),
+  status: z.string().max(100).optional(),
+  notes: z.string().max(5000).optional(),
+}).strict();
+
+router.post("/api/contacts", requireAuth, requireAgentApi, requireTokenWrite, async (req, res, next) => {
+  try {
+    const body = contactWriteSchema.parse(req.body || {});
+    const { contact, created, duplicateId } = await createContactV1(siteIdOf(req), body);
+    if (!created && !contact) {
+      // Email già presente nel tenant: il satellite può riusare duplicate_id.
+      return res.status(409).json({ error: "contact_exists", contact_id: duplicateId });
+    }
+    res.status(201).json(contact);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "validation_error", details: err.errors });
+    }
+    next(err);
+  }
+});
+
+router.put("/api/contacts/:id", requireAuth, requireAgentApi, requireTokenWrite, async (req, res, next) => {
+  try {
+    const id = intParamOf(req.params.id);
+    if (id === null) return res.status(400).json({ error: "invalid_id" });
+    const body = contactWriteSchema.partial().parse(req.body || {});
+    if (Object.keys(body).length === 0) {
+      return res.status(400).json({ error: "no_fields_to_update" });
+    }
+    const updated = await updateContactV1(siteIdOf(req), id, body);
+    if (!updated) return res.status(404).json({ error: "contact_not_found" });
+    res.json(updated);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: "validation_error", details: err.errors });
+    }
+    next(err);
+  }
 });
 
 export default router;

@@ -22,7 +22,7 @@ describe("crm: sync calendario bidirezionale", () => {
   before(async () => {
     site = await createTestSite("CRM Calendar Sync Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm calendar sync", 30);
+    const created = await createApiToken(user.id, "crm calendar sync", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();

@@ -41,7 +41,7 @@ describe("access grants: servizio + rotta pubblica /shared/:token + API agente",
   before(async () => {
     site = await createTestSite("Access Grants Test");
     user = await createTestUser(site.id, "admin");
-    token = (await createApiToken(user.id, "access grants test", 30)).token;
+    token = (await createApiToken(user.id, "access grants test", 30, ["read", "write"])).token;
 
     // File di test dentro la sottocartella del sito in media-protected
     fs.mkdirSync(path.join(PROTECTED_ROOT, String(site.id)), { recursive: true });

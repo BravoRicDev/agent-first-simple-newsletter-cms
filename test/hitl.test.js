@@ -25,7 +25,7 @@ describe("crm: human-in-the-loop (coda di approvazione)", () => {
   before(async () => {
     site = await createTestSite("CRM HITL Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "crm hitl", 30);
+    const created = await createApiToken(user.id, "crm hitl", 30, ["read", "write"]);
     token = created.token;
 
     // JWT "umano" admin: non è un token API (niente api_token), quindi può

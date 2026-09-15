@@ -24,7 +24,7 @@ describe("crm: agent builder + sandbox di test", () => {
     config.llmApiKey = "";
     site = await createTestSite("CRM Agent Builder Test");
     user = await createTestUser(site.id, "admin");
-    const created = await createApiToken(user.id, "agent builder", 30);
+    const created = await createApiToken(user.id, "agent builder", 30, ["read", "write"]);
     token = created.token;
 
     const r = Router();
