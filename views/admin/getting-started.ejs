@@ -1,0 +1,84 @@
+<h1>Primi passi</h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (!checklist) { %>
+<p style="color:#999;font-size:14px;">Seleziona un sito per vedere la checklist.</p>
+<% } else { %>
+
+<h2 style="font-size:16px;">Checklist — <%= site.name %></h2>
+<div style="display:flex;flex-direction:column;gap:8px;max-width:600px;margin-bottom:30px;">
+  <% checklist.forEach(item => { %>
+  <a href="<%= item.href %>" style="display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid #e5e7eb;border-radius:6px;text-decoration:none;color:inherit;<%= item.done ? 'background:#f0fdf4;' : '' %>">
+    <span style="font-size:16px;"><%= item.done ? '✅' : '⬜' %></span>
+    <span style="font-size:14px;<%= item.done ? 'color:#666;text-decoration:line-through;' : '' %>"><%= item.label %></span>
+  </a>
+  <% }) %>
+</div>
+
+<h2 style="font-size:16px;">Cosa c'è nel pannello</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;max-width:900px;margin-bottom:30px;">
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+    <strong>📄 Pagine, snippet, template</strong>
+    <p style="font-size:13px;color:#666;margin-top:4px;">Contenuto del sito pubblico, con versioning e blocchi riusabili.</p>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+    <strong>🖼️ Media</strong>
+    <p style="font-size:13px;color:#666;margin-top:4px;">Upload, import da URL/Google Drive, compressione video automatica.</p>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+    <strong>📋 Form</strong>
+    <p style="font-size:13px;color:#666;margin-top:4px;">Costruisci form senza scrivere HTML — domande, iscrizione newsletter automatica, ricerca negli invii.</p>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+    <strong>👤 Contatti</strong>
+    <p style="font-size:13px;color:#666;margin-top:4px;">Chi ha compilato cosa, tag, note, esportazione/cancellazione dati (GDPR).</p>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+    <strong>✉️ Newsletter</strong>
+    <p style="font-size:13px;color:#666;margin-top:4px;">Campagne broadcast e sequenze evergreen, richiede SMTP configurato.</p>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+    <strong>📊 Tracking & Analytics</strong>
+    <p style="font-size:13px;color:#666;margin-top:4px;">GA4, Meta Pixel, Google Tag Manager, Clarity — con banner di consenso GDPR incluso.</p>
+  </div>
+</div>
+
+<h2 style="font-size:16px;">Moduli opzionali (disattivati di default)</h2>
+<p style="font-size:13px;color:#666;max-width:600px;margin-bottom:10px;">
+  Funzionalità aggiuntive, attivabili solo per i siti che ne hanno bisogno — da
+  <a href="/admin/sites/<%= siteId %>/edit">Modifica sito</a>.
+</p>
+<div style="display:flex;flex-direction:column;gap:8px;max-width:600px;">
+  <% Object.entries(modulesRegistry).forEach(([key, mod]) => { %>
+  <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border:1px solid #e5e7eb;border-radius:6px;">
+    <span style="font-size:16px;"><%= enabledModules.includes(key) ? '✅' : '⬜' %></span>
+    <div>
+      <strong><%= mod.name %></strong>
+      <div style="font-size:12px;color:#666;"><%= mod.description %></div>
+    </div>
+  </div>
+  <% }) %>
+</div>
+
+<h2 style="font-size:16px;margin-top:30px;">Pilotare tutto da fuori (agente AI / n8n)</h2>
+<p style="font-size:13px;color:#666;max-width:600px;">
+  Ogni funzionalità di questo pannello ha un equivalente via API: crea un
+  <a href="/admin/api-tokens">token API di lunga durata</a> (per n8n o
+  automazioni non interattive) oppure fai login come agente da riga di
+  comando<% if (typeof user !== 'undefined' && user && user.role === 'superadmin') { %> — documentazione completa in <a href="/admin/agent">Agente AI</a><% } %>.
+  Guida completa sempre disponibile via <code>GET /api/agent/guide</code>.
+</p>
+
+<% } %>

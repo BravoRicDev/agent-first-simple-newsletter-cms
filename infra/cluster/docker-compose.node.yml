@@ -1,0 +1,129 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.node.yml — stack "gemello" per UN nodo del cluster CMS.
+#
+# Questo file va avviato su OGNI nodo del cluster (A e B) con valori diversi
+# via --env-file. Aggiunge al nodo:
+#   - etcd        : membro del DCS Patroni (quorum richiede 3 membri totali)
+#   - patroni     : Spilo 16 = PostgreSQL 16 + Patroni + pg_dump/psql integrati.
+#                   Uno dei due nodi sarà il leader (primary), l'altro lo
+#                   standby; Patroni promuove automaticamente in caso di guasto.
+#   - syncthing   : sincronizzazione BIDIREZIONALE di media/, media-protected/,
+#                   static/, backups/ tra i nodi (copie gemelle dei file).
+#
+# N.B. Il servizio `db` del docker-compose.yml base NON deve girare sui nodi
+# cluster (è sostituito da Patroni/Spilo). Si avvia l'app con il compose
+# dedicato infra/cluster/docker-compose.app.yml.
+#
+# Uso su ogni nodo (es. nodo A):
+#   export NODE_ID=A NODE_IP=10.0.0.1 PATRONI_NAME=node-a
+#   docker compose --env-file .env.cluster -f infra/cluster/docker-compose.node.yml up -d
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.5.16
+    container_name: etcd-${NODE_ID}
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd-${NODE_ID}
+      - --data-dir=/etcd-data
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://${NODE_IP}:2379
+      - --initial-advertise-peer-urls=http://${NODE_IP}:2380
+      - --initial-cluster=etcd-a=http://${NODE_A_IP}:2380,etcd-b=http://${NODE_B_IP}:2380,etcd-witness=http://${ETCD_WITNESS_IP}:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=cms-cluster-etcd
+      - --log-level=info
+    volumes:
+      - etcd-data:/etcd-data
+    networks:
+      - cluster_net
+
+  patroni:
+    # Spilo = stack completo Patroni + PostgreSQL 16 + tool pg_* in un container.
+    image: ${PATRONI_IMAGE:-ghcr.io/zalando/spilo-16:3.1-p1}
+    container_name: patroni-${NODE_ID}
+    restart: unless-stopped
+    environment:
+      # Identità nel cluster Patroni (cambia per nodo)
+      PATRONI_NAME: ${PATRONI_NAME}
+      PATRONI_SCOPE: ${PATRONI_SCOPE:-cms_cluster}
+      # DCS: indirizzi di TUTTI i membri etcd (3, per il quorum)
+      PATRONI_ETCD3_HOSTS: etcd-a:2379,etcd-b:2379,etcd-witness:2379
+      # API Patroni (usata per health-check del load balancer)
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: ${NODE_IP}:8008
+      # Postgres (replica streaming tra i nodi)
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: ${NODE_IP}:5432
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: ${DB_PASSWORD}
+      PATRONI_REPLICATION_USERNAME: ${REPLICATION_USER:-replicator}
+      PATRONI_REPLICATION_PASSWORD: ${REPLICATION_PASSWORD}
+      PATRONI_ADMIN_USERNAME: ${PATRONI_ADMIN_USER:-admin}
+      PATRONI_ADMIN_PASSWORD: ${PATRONI_ADMIN_PASSWORD}
+      # Preferenze di boot
+      PATRONI_INITIALIZE_TIMEOUT: 60
+      # Config PostgreSQL di base (identica su tutti i nodi)
+      POSTGRESQL_CONFIG: |
+        wal_level = replica
+        max_wal_senders = 5
+        max_replication_slots = 5
+        hot_standby = on
+        wal_keep_size = 256MB
+        checkpoint_timeout = 10min
+        max_connections = 200
+        shared_buffers = 128MB
+    volumes:
+      - pgdata:/home/postgres/pgdata
+    expose:
+      - "5432"
+      - "8008"
+    ports:
+      - "${NODE_IP}:5432:5432"
+      - "${NODE_IP}:8008:8008"
+    networks:
+      - cluster_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8008/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  syncthing:
+    # Sincronizzazione bidirezionale dei contenuti tra i nodi.
+    # NOTA: PUID/PGID=0 (root) perché media-protected ha permessi 700/root e
+    # il sync deve preservare ownership e permessi. Da eseguire solo su rete
+    # privata del DC e con autenticazione API/disk configurata (vedi README).
+    image: syncthing/syncthing:1.27
+    container_name: syncthing-${NODE_ID}
+    hostname: ${NODE_ID}
+    restart: unless-stopped
+    environment:
+      PUID: "0"
+      PGID: "0"
+    volumes:
+      - ./syncthing/config:/config
+      - ../../media:/media:rshared
+      - ../../media-protected:/media-protected:rshared
+      - ../../static:/static:rshared
+      - ../../backups:/backups:rshared
+    ports:
+      - "8384:8384"           # Web UI (proteggere!)
+      - "22000:22000/tcp"     # trasferimento
+      - "22000:22000/udp"
+      - "21027:21027/udp"     # discovery LAN
+    networks:
+      - cluster_net
+
+volumes:
+  etcd-data:
+  pgdata:
+
+networks:
+  cluster_net:
+    external: true

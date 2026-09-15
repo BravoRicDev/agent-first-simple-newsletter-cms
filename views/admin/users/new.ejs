@@ -1,0 +1,42 @@
+<h1>Nuovo utente</h1>
+<form method="POST" action="/admin/users">
+  <div class="form-group">
+    <label>Email</label>
+    <input type="email" name="email" required>
+  </div>
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name">
+  </div>
+  <div class="form-group">
+    <label>Cognome</label>
+    <input type="text" name="surname">
+  </div>
+  <div class="form-group">
+    <label>Ruolo</label>
+    <select name="role" onchange="document.getElementById('role-hint').textContent = this.options[this.selectedIndex].dataset.hint">
+      <option value="admin" data-hint="Può gestire pagine, snippet, utenti e impostazioni del sito. Non può creare o eliminare siti.">Admin</option>
+      <option value="collaboratore" data-hint="Può modificare pagine e snippet. Non può gestire utenti né impostazioni.">Collaboratore</option>
+      <option value="setter" data-hint="Account di servizio per il modulo vendite esterno (collego-sales): accesso SSO/API, nessun permesso admin.">Setter</option>
+      <option value="closer" data-hint="Account di servizio per il modulo vendite esterno (collego-sales): accesso SSO/API, nessun permesso admin.">Closer</option>
+    </select>
+    <div id="role-hint" style="font-size:12px;color:#666;margin-top:4px;">Può gestire pagine, snippet, utenti e impostazioni del sito. Non può creare o eliminare siti.</div>
+  </div>
+  <% if (sites && sites.length > 1) { %>
+  <div class="form-group">
+    <label>Sito</label>
+    <select name="site_id">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>"><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <% } else if (sites && sites.length === 1) { %>
+  <%# Superadmin con un solo sito: il select non serve, ma il site_id va
+       comunque inviato. Prima partiva senza e l'utente nasceva con
+       site_id NULL (invisibile da ovunque). %>
+  <input type="hidden" name="site_id" value="<%= sites[0].id %>">
+  <% } %>
+  <button type="submit" class="btn">Crea utente</button>
+  <a href="/admin/users" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

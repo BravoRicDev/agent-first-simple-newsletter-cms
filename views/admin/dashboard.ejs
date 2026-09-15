@@ -1,0 +1,92 @@
+<h1>Dashboard</h1>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:30px;">
+  <% if (stats.sites_total !== undefined) { %>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#4f46e5;"><%= stats.sites_total %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Siti totali</div>
+  </div>
+  <% } %>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#059669;"><%= stats.pages_published || 0 %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Pagine pubblicate</div>
+  </div>
+  <% if (stats.pages_draft !== undefined) { %>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#d97706;"><%= stats.pages_draft %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Bozze</div>
+  </div>
+  <% } %>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#6b7280;"><%= stats.snippets_total || 0 %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Snippet</div>
+  </div>
+  <% if (stats.users_active !== undefined) { %>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#6b7280;"><%= stats.users_active %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Utenti attivi</div>
+  </div>
+  <% } %>
+</div>
+
+<% if (stats.last_edits && stats.last_edits.length > 0) { %>
+<div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <h3 style="font-size:15px;margin-bottom:12px;">Ultime modifiche</h3>
+  <table> ...
+  </table>
+</div>
+<% } %>
+
+<% if (typeof deployResult !== 'undefined') { %>
+<div style="margin-top:15px;background:<%= deployResult.ok ? '#d1fae5' : '#fee2e2' %>;border-radius:6px;padding:12px 16px;font-size:14px;color:<%= deployResult.ok ? '#065f46' : '#991b1b' %>;">
+  <%= deployResult.message %>
+</div>
+<% } %>
+
+<hr style="margin:30px 0;">
+<h2 style="font-size:16px;margin-bottom:10px;">Static Export</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  Esporta le pagine pubblicate come file statici per il Caddy Gestito (fallback durante manutenzione).
+</p>
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:25px;">
+  <form method="POST" action="/admin/export-static" onsubmit="event.preventDefault();fetch('/admin/export-static',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);}).catch(()=>{alert('Errore export');});">
+    <button type="submit" class="btn" style="background:#059669;">
+      📦 Esporta pagine statiche
+    </button>
+  </form>
+  <% if (user.role === 'superadmin') { %>
+  <form method="POST" action="/admin/export-static-all" onsubmit="event.preventDefault();fetch('/admin/export-static-all',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);}).catch(()=>{alert('Errore export');});">
+    <button type="submit" class="btn" style="background:#2563eb;">
+      🔄 Esporta TUTTI i siti
+    </button>
+  </form>
+  <% } %>
+</div>
+
+<hr style="margin:30px 0;">
+<h2 style="font-size:16px;margin-bottom:10px;">🤖 Guida Agente AI</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  L'agente AI ha accesso a tutti gli endpoint del CMS tramite API.
+  Leggi la guida completa per capire cosa può fare e come usarlo correttamente.
+</p>
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:25px;">
+  <a href="/api/agent/guide" target="_blank" class="btn" style="background:#7c3aed;">
+    📖 Leggi AGENT.md (guida API completa)
+  </a>
+</div>
+
+<hr style="margin:30px 0;">
+<h2 style="font-size:16px;margin-bottom:10px;">Deploy</h2>
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  Invalida la cache Cloudflare e notifica i webhook configurati.
+  Usa dopo modifiche importanti alle pagine.
+</p>
+<form method="POST" action="/admin/deploy" id="deployForm">
+  <div class="form-group">
+    <label>Nota <span style="font-weight:normal;color:#999;">(opzionale)</span></label>
+    <input type="text" name="note" placeholder="es. Aggiornamento prezzi pagina prodotti" style="max-width:500px;">
+  </div>
+  <button type="submit" class="btn" onclick="this.textContent='⏳ Deploy in corso...';this.disabled=true;">
+    🚀 Lancia Deploy
+  </button>
+</form>

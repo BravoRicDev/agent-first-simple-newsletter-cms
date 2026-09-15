@@ -1,0 +1,82 @@
+<% if (typeof searchConsoleVerification !== 'undefined' && searchConsoleVerification) { %>
+<meta name="google-site-verification" content="<%= searchConsoleVerification %>">
+<% } %>
+
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking) { %>
+<!-- Consent Mode v2: default negato, aggiornato dal banner sotto. Deve
+     essere impostato PRIMA che GTM/gtag/pixel vengano caricati. -->
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){ dataLayer.push(arguments); }
+gtag('consent', 'default', {
+  'ad_storage': 'denied',
+  'analytics_storage': 'denied',
+  'ad_user_data': 'denied',
+  'ad_personalization': 'denied',
+  'wait_for_update': 500
+});
+</script>
+
+<% if (typeof gtmId !== 'undefined' && gtmId) { %>
+<!-- Google Tag Manager -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','<%= gtmId %>');</script>
+<% } %>
+
+<% if (typeof ga4Id !== 'undefined' && ga4Id) { %>
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=<%= ga4Id %>"></script>
+<script>gtag('js', new Date()); gtag('config', '<%= ga4Id %>');</script>
+<% } %>
+
+<% if (typeof metaPixelId !== 'undefined' && metaPixelId && pixelEnabled !== false) { %>
+<!-- Meta Pixel: caricato SEMPRE nel <head> (così Events Manager / Pixel
+     Helper rilevano il codice base), ma con consenso marketing REVOCATO di
+     default (Consent Mode v2). PageView ed eventi conversione (Lead,
+     CompleteRegistration, ...) partono SOLO dopo che l'utente accetta il
+     marketing nel banner: vedi tracking-body.ejs (applyConsent).
+     pixelEnabled === false (override per-pagina) salta completamente l'init. -->
+<script>
+!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+// NON riassegnare mai window.fbq dopo questa riga (es. con un wrapper di
+// dedup "a valle"): lo stub sopra instrada ogni chiamata su n.callMethod
+// SE E SOLO SE n è ESATTAMENTE l'oggetto a cui fbevents.js, caricandosi in
+// modo asincrono, aggancia il proprio motore di invio (mutando in place
+// l'oggetto che trova in window.fbq/window._fbq — non sostituendolo).
+// Un wrapper che intercetta le chiamate e poi fa `_fbqStub.apply(...)`
+// spezza questo handoff: n.callMethod resta per sempre undefined sullo
+// stub originale, quindi OGNI evento (anche quelli chiamati a libreria già
+// caricata) finisce in n.queue.push(arguments) e non viene mai consegnato
+// — fallimento silenzioso al 100%, senza errori in console. Bug introdotto
+// dal commit 3f866d8 (dedup PageView "a livello di fbq") e dal fix
+// successivo cfb5646 (che aveva solo silenziato il sintomo visibile,
+// "multiple pixels", lasciando la consegna eventi rotta); rimossi entrambi
+// qui, verificato riproducendo il contratto esatto dello stub in sandbox:
+// senza wrapper, ogni fbq(...) chiamato dopo l'aggancio di callMethod
+// arriva a destinazione; con un wrapper, resta bloccato in coda per sempre.
+// La deduplicazione del PageView resta comunque garantita a monte, da chi
+// CHIAMA fbq (window.__cmsApplyConsent in tracking-body.ejs, guardia
+// window.__cmsPageViewFired) — mai dentro fbq stesso.
+fbq('consent', 'revoke'); // PRIMA di init: nessun segnale può partire nella finestra tra le due chiamate (ordine documentato da Meta e usato dai CMP)
+fbq('init', '<%= metaPixelId %>');
+window.__cmsMarketingGranted = false;
+</script>
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=<%= metaPixelId %>&ev=PageView&noscript=1"/></noscript>
+<% } %>
+
+<% if (typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false) { %>
+<!-- OpenAI / ChatGPT Ads Pixel — SDK ufficiale (bzrcdn.openai.com, global "oaiq").
+     Stub a coda d'array, il pattern supportato dall'SDK: le chiamate fatte PRIMA
+     del caricamento vengono riprodotte quando lo script arriva. Consenso NEGATO
+     subito (fail-safe: nessun evento parte finché l'utente non accetta il
+     marketing; l'SDK considera "granted" il consenso nullo, quindi va negato
+     esplicitamente). PageView / Lead / CompleteRegistration partono da
+     tracking-body.ejs (applyConsent). pixelEnabled === false salta l'init. -->
+<script>
+window.oaiq = window.oaiq || [];
+window.oaiq.push(['consent', false]);
+window.oaiq.push(['init', { pixelId: <%- JSON.stringify(String(openaiAdsPixelId)).replace(/</g, '\\u003c') %> }]);
+window.__cmsOpenAiPixelId = <%- JSON.stringify(String(openaiAdsPixelId)).replace(/</g, '\\u003c') %>;
+</script>
+<script async src="<%= (typeof openaiAdsSdkUrl !== 'undefined' && openaiAdsSdkUrl) ? openaiAdsSdkUrl : 'https://bzrcdn.openai.com/sdk/oaiq.min.js' %>"></script>
+<% } %>
+<% } %>

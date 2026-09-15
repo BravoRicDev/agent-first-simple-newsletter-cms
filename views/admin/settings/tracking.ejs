@@ -1,0 +1,246 @@
+<h1>Tracking & Analytics — <%= site ? site.name : '' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;">Cambia</button>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/settings?site_id=<%= selectedSiteId %>" class="btn" style="background:#6b7280;">← Impostazioni</a>
+</div>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin:15px 0;color:#065f46;font-size:14px;">
+  ✅ Salvato. Il banner di consenso cookie compare automaticamente sul sito pubblico non appena almeno un ID qui sotto è configurato.
+</div>
+<% } %>
+
+<% const canUpdateTracking = user && (user.role === "superadmin" || user.role === "admin"); %>
+
+<% if (canUpdateTracking) { %>
+<form method="POST" action="/admin/settings/tracking" style="max-width:600px;">
+  <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+
+  <h2 style="font-size:15px;margin-top:10px;">Google</h2>
+  <div class="form-group">
+    <label>Google Analytics 4 — Measurement ID</label>
+    <input type="text" name="ga4_id" value="<%= trackingConfig.ga4Id %>" placeholder="G-XXXXXXXXXX">
+  </div>
+  <div class="form-group">
+    <label>Google Tag Manager — Container ID (opzionale, alternativa/aggiunta a GA4)</label>
+    <input type="text" name="gtm_id" value="<%= trackingConfig.gtmId %>" placeholder="GTM-XXXXXXX">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Se gestisci già GA4 dentro GTM, non compilare anche il campo sopra: eviti di contare le visite due volte.</div>
+  </div>
+  <div class="form-group">
+    <label>Verifica Google Search Console</label>
+    <input type="text" name="search_console_verification" value="<%= trackingConfig.searchConsoleVerification %>" placeholder="Codice del tag meta di verifica">
+  </div>
+
+  <h2 style="font-size:15px;margin-top:24px;">Meta (Facebook/Instagram)</h2>
+  <div class="form-group">
+    <label>Meta Pixel ID</label>
+    <input type="text" name="meta_pixel_id" value="<%= trackingConfig.metaPixelId %>" placeholder="1234567890123456">
+  </div>
+  <div class="form-group">
+    <label>Meta Conversions API — Access Token</label>
+    <input type="text" name="meta_capi_token" value="" placeholder="<%= trackingConfig.metaCapiToken ? 'Già impostato — lascia vuoto per non modificarlo' : 'Incolla il token generato in Gestione Eventi' %>">
+    <% if (trackingConfig.metaCapiToken) { %>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      <label style="font-weight:normal;"><input type="checkbox" name="remove_meta_capi_token" value="1"> Rimuovi il token esistente</label>
+    </div>
+    <% } %>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Invia lato server gli eventi Lead (invio form), CompleteRegistration (conferma newsletter) e Schedule (prenotazione chiamata) — solo per i visitatori che hanno accettato i cookie di marketing dal banner. Più affidabile del solo pixel (non bloccato da ad-blocker/iOS).
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Meta CAPI — Test Event Code (opzionale)</label>
+    <input type="text" name="meta_capi_test_code" value="<%= trackingConfig.metaCapiTestCode %>" placeholder="Per verificare gli eventi in Gestione Eventi > Test">
+  </div>
+
+  <h2 style="font-size:15px;margin-top:24px;">OpenAI / ChatGPT Ads</h2>
+  <div class="form-group">
+    <label>OpenAI Ads Pixel ID</label>
+    <input type="text" name="openai_ads_pixel_id" value="<%= trackingConfig.openaiAdsPixelId %>" placeholder="pixel_123456789">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Carica l'SDK ufficiale (oaiq) su ogni pagina e traccia PageView, Lead e CompleteRegistration dal browser, solo dopo il consenso marketing del banner. Stesse regole per-pagina del pixel Meta.
+    </div>
+  </div>
+  <div class="form-group">
+    <label>OpenAI Conversions API — Access Token</label>
+    <input type="text" name="openai_ads_api_key" value="" placeholder="<%= trackingConfig.openaiAdsApiKey ? 'Già impostato — lascia vuoto per non modificarlo' : 'Incolla il token generato in OpenAI Ads > Conversions API' %>">
+    <% if (trackingConfig.openaiAdsApiKey) { %>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      <label style="font-weight:normal;"><input type="checkbox" name="remove_openai_ads_api_key" value="1"> Rimuovi il token esistente</label>
+    </div>
+    <% } %>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Invia lato server gli stessi eventi (Lead, CompleteRegistration, Schedule) con identificativo di deduplicazione, per i visitatori che hanno accettato i cookie di marketing. Più affidabile del solo pixel. Gli eventi vengono tradotti nel vocabolario OpenAI (lead_created, registration_completed, appointment_scheduled).
+    </div>
+  </div>
+  <div class="form-group">
+    <label>OpenAI Ads CAPI — Test Event Code (opzionale)</label>
+    <input type="text" name="openai_ads_test_code" value="<%= trackingConfig.openaiAdsTestCode %>" placeholder="Per verificare gli eventi in OpenAI Ads > Test">
+  </div>
+  <div class="form-group">
+    <label style="font-weight:normal;"><input type="checkbox" name="openai_ads_advanced_matching" value="on" <%= trackingConfig.openaiAdsAdvancedMatching === '1' ? 'checked' : '' %>> Advanced matching (email/telefono in SHA-256)</label>
+    <div style="font-size:12px;color:#666;margin-top:3px;">Invia al pixel gli identificatori hashed (client via WebCrypto, server via crypto) per migliorare il matching degli utenti. Sempre e solo dopo consenso marketing.</div>
+  </div>
+  <div class="form-group">
+    <label style="font-weight:normal;"><input type="checkbox" name="openai_ads_auto_identify" value="on" <%= trackingConfig.openaiAdsAutoIdentify === '1' ? 'checked' : '' %>> Auto-identify dai form</label>
+    <div style="font-size:12px;color:#666;margin-top:3px;">Con advanced matching attivo, cattura automaticamente email/telefono dai campi del form al submit, oltre all'API esplicita <code>window.__cmsOpenAiIdentify()</code>.</div>
+  </div>
+  <div class="form-group">
+    <label>URL SDK del pixel (avanzato)</label>
+    <input type="text" name="openai_ads_sdk_url" value="<%= trackingConfig.openaiAdsSdkUrl || '' %>" placeholder="https://bzrcdn.openai.com/sdk/oaiq.min.js">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Default dall'installazione (env <code>OPENAI_ADS_SDK_URL</code>). Modificalo solo se l'SDK ufficiale cambia URL.</div>
+  </div>
+
+  <h2 style="font-size:15px;margin-top:24px;">Altro</h2>
+  <div class="form-group">
+    <label>Microsoft Clarity — Project ID</label>
+    <input type="text" name="clarity_id" value="<%= trackingConfig.clarityId %>" placeholder="Heatmap e registrazioni sessione, gratuito">
+  </div>
+
+  <h2 style="font-size:15px;margin-top:24px;">Banner di consenso cookie</h2>
+  <p style="font-size:12px;color:#666;margin-bottom:10px;">
+    Testi mostrati nel banner (visibile solo se almeno un ID sopra è configurato). Lasciando vuoto un campo si usa il testo di default.
+  </p>
+  <div class="form-group">
+    <label>Messaggio</label>
+    <textarea name="consent_banner_text" style="min-height:60px;" placeholder="Usiamo cookie tecnici necessari e, solo con il tuo consenso, cookie di analisi e marketing."><%= trackingConfig.consentBannerText %></textarea>
+  </div>
+  <div class="form-group">
+    <label>Link "Scopri di più" (opzionale — es. la tua pagina privacy policy)</label>
+    <input type="text" name="consent_privacy_url" value="<%= trackingConfig.consentPrivacyUrl %>" placeholder="/privacy">
+  </div>
+  <div style="display:flex;gap:15px;">
+    <div class="form-group" style="flex:1;">
+      <label>Testo pulsante "Accetta"</label>
+      <input type="text" name="consent_accept_label" value="<%= trackingConfig.consentAcceptLabel %>" placeholder="Accetta tutti">
+    </div>
+    <div class="form-group" style="flex:1;">
+      <label>Testo pulsante "Rifiuta"</label>
+      <input type="text" name="consent_reject_label" value="<%= trackingConfig.consentRejectLabel %>" placeholder="Solo necessari">
+    </div>
+  </div>
+  <div class="form-group" style="max-width:260px;">
+    <label>Durata del consenso (ore)</label>
+    <input type="number" name="consent_cookie_hours" min="1" step="1" value="<%= trackingConfig.consentCookieHours %>" placeholder="1">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Scaduta, il banner ricompare e l'utente deve ridare il consenso (di default 1 ora). Puoi anche impostarla per singola pagina nell'editor della pagina.
+    </div>
+  </div>
+
+  <h2 style="font-size:15px;margin-top:24px;">Provider del banner di consenso</h2>
+  <p style="font-size:12px;color:#666;margin-bottom:10px;">
+    "Libreria" usa la libreria cookieconsent condivisa del CMS (sicura, con fallback automatico al banner integrato): consigliata per un aspetto più ricco, configurabile qui sotto per-sito (testi, posizione, lingua). "CMS integrato" è il banner semplice di default. Lascialo se non devi cambiare nulla.
+    Non è più possibile collegare uno script di consenso completamente esterno/personalizzato per-sito: un bridge scritto fuori dal CMS può duplicare o perdere eventi Meta (PageView/Lead) perché non conosce le sue guardie anti-doppio invio.
+  </p>
+  <div class="form-group">
+    <label>Provider</label>
+    <select name="consent_provider">
+      <option value="" <%= (!trackingConfig.consentProvider || trackingConfig.consentProvider === 'native') ? 'selected' : '' %>>CMS integrato (default)</option>
+      <option value="library" <%= trackingConfig.consentProvider === 'library' ? 'selected' : '' %>>Libreria condivisa (consigliato)</option>
+    </select>
+  </div>
+
+  <% if (trackingConfig.consentProvider === 'library') { %>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-bottom:12px;">
+    <p style="font-size:12px;color:#555;margin-bottom:10px;">Testi del banner a libreria (vuoto = default). Posizione e lingua configurabili.</p>
+    <div style="display:flex;gap:15px;">
+      <div class="form-group" style="flex:1;">
+        <label>Posizione</label>
+        <select name="consent_position">
+          <option value="bottom right" <%= trackingConfig.consentPosition === 'bottom right' ? 'selected' : '' %>>In basso a destra (box)</option>
+          <option value="bottom left" <%= trackingConfig.consentPosition === 'bottom left' ? 'selected' : '' %>>In basso a sinistra (box)</option>
+          <option value="bottom center" <%= trackingConfig.consentPosition === 'bottom center' ? 'selected' : '' %>>In basso al centro (bar)</option>
+          <option value="top center" <%= trackingConfig.consentPosition === 'top center' ? 'selected' : '' %>>In alto al centro (bar)</option>
+          <option value="middle" <%= trackingConfig.consentPosition === 'middle' ? 'selected' : '' %>>Centro (dialog)</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Lingua</label>
+        <select name="consent_language">
+          <option value="it" <%= (trackingConfig.consentLanguage || 'it') === 'it' ? 'selected' : '' %>>Italiano</option>
+          <option value="en" <%= trackingConfig.consentLanguage === 'en' ? 'selected' : '' %>>English</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Revisione (per ri-mostrare il banner ai visitatori)</label>
+        <input type="text" name="consent_revision" value="<%= trackingConfig.consentRevision || '' %>" placeholder="0">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Titolo</label>
+      <input type="text" name="consent_title" value="<%= trackingConfig.consentTitle || '' %>" placeholder="Privacy & Cookie">
+    </div>
+    <div class="form-group">
+      <label>Descrizione</label>
+      <textarea name="consent_description" style="min-height:50px;" placeholder="Utilizziamo cookie tecnici e, previo tuo consenso, cookie di analisi e marketing."><%= trackingConfig.consentDescription || '' %></textarea>
+    </div>
+    <div class="form-group">
+      <label>Titolo finestra preferenze</label>
+      <input type="text" name="consent_preferences_title" value="<%= trackingConfig.consentPreferencesTitle || '' %>" placeholder="Preferenze Cookie">
+    </div>
+    <div style="display:flex;gap:15px;">
+      <div class="form-group" style="flex:1;"><label>Pulsante "Accetta tutto"</label><input type="text" name="consent_accept_all_label" value="<%= trackingConfig.consentAcceptAllLabel || '' %>" placeholder="Accetta tutto"></div>
+      <div class="form-group" style="flex:1;"><label>Pulsante "Rifiuta non essenziali"</label><input type="text" name="consent_reject_label" value="<%= trackingConfig.consentRejectLabelLib || '' %>" placeholder="Rifiuta non essenziali"></div>
+    </div>
+    <div style="display:flex;gap:15px;">
+      <div class="form-group" style="flex:1;"><label>Pulsante "Preferenze"</label><input type="text" name="consent_preferences_label" value="<%= trackingConfig.consentPreferencesLabel || '' %>" placeholder="Preferenze"></div>
+      <div class="form-group" style="flex:1;"><label>"Salva preferenze"</label><input type="text" name="consent_save_label" value="<%= trackingConfig.consentSaveLabel || '' %>" placeholder="Salva preferenze"></div>
+    </div>
+    <div class="form-group">
+      <label>Sezione "Necessari"</label>
+      <div style="display:flex;gap:15px;">
+        <input type="text" name="consent_necessary_title" value="<%= trackingConfig.consentNecessaryTitle || '' %>" placeholder="Necessari" style="flex:1;">
+        <input type="text" name="consent_necessary_desc" value="<%= trackingConfig.consentNecessaryDesc || '' %>" placeholder="Cookie strettamente necessari al funzionamento del sito. Sempre attivi." style="flex:2;">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Sezione "Analisi"</label>
+      <div style="display:flex;gap:15px;">
+        <input type="text" name="consent_analytics_title" value="<%= trackingConfig.consentAnalyticsTitle || '' %>" placeholder="Analisi" style="flex:1;">
+        <input type="text" name="consent_analytics_desc" value="<%= trackingConfig.consentAnalyticsDesc || '' %>" placeholder="Ci aiutano a capire come utilizzi il sito (in forma aggregata)." style="flex:2;">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Sezione "Marketing"</label>
+      <div style="display:flex;gap:15px;">
+        <input type="text" name="consent_marketing_title" value="<%= trackingConfig.consentMarketingTitle || '' %>" placeholder="Marketing" style="flex:1;">
+        <input type="text" name="consent_marketing_desc" value="<%= trackingConfig.consentMarketingDesc || '' %>" placeholder="Usati per tracciare e personalizzare annunci pubblicitari." style="flex:2;">
+      </div>
+    </div>
+  </div>
+  <% } %>
+
+  <h2 style="font-size:15px;margin-top:24px;">Evento Lead automatico su pagine di conversione</h2>
+  <p style="font-size:12px;color:#666;margin-bottom:10px;">
+    Per siti con form esterni al CMS (es. un altro tool di lead generation) dove il CAPI server-side non può scattare: spara un evento Meta Pixel lato browser sulle pagine indicate, solo dopo consenso marketing, una volta per sessione. Lascia entrambi i campi vuoti per disattivare (nessuna modifica al comportamento attuale).
+  </p>
+  <div style="display:flex;gap:15px;">
+    <div class="form-group" style="flex:1;">
+      <label>Nome evento</label>
+      <input type="text" name="lead_event_name" value="<%= trackingConfig.leadEventName %>" placeholder="Lead">
+    </div>
+    <div class="form-group" style="flex:2;">
+      <label>Pagine (separate da virgola)</label>
+      <input type="text" name="lead_pages" value="<%= trackingConfig.leadPages %>" placeholder="/thank-you, /grazie">
+    </div>
+  </div>
+
+  <button type="submit" class="btn" style="margin-top:10px;">Salva</button>
+</form>
+<% } else { %>
+<p style="color:#999;font-size:14px;margin-top:10px;">Il tracking è configurato dal superadmin o da un admin. Non hai i permessi per modificarlo.</p>
+<% } %>

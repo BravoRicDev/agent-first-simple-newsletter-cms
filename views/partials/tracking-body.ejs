@@ -1,0 +1,550 @@
+<%
+  // Provider del banner di consenso (settings tracking_consent_provider):
+  //   "native"   → banner CMS integrato (default, retrocompatibile)
+  //   "library"  → libreria condivisa nel repo (public/consent/*)
+  // Un vecchio valore "external" (banner vendored per-sito, non più
+  // selezionabile dall'admin) arriva già normalizzato a "library" da
+  // getSiteTrackingConfig (src/services/tracking.js); il controllo qui
+  // sotto lo accetta comunque come sinonimo, per sicurezza in caso di
+  // chiamata diretta di questo partial con dati non passati da lì.
+  const _consentProvider = (typeof consentProvider !== 'undefined' && consentProvider) || 'native';
+
+  // JSON sicuro dentro <script>: JSON.stringify NON scappa "</script>" e un
+  // valore configurabile (es. consentScriptUrl, leadEventName) contenente
+  // "</script><script>..." verrebbe eseguito su ogni pagina pubblica.
+  // Sostituire "<" con "\u003c" rende innocua qualunque chiusura di tag
+  // (fix XSS persistente tracking, cross-sito e static-export).
+  const _jsonScript = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
+%>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking) { %>
+<!-- Banner nativo CMS: markup SEMPRE presente (usato anche come fallback dalla
+     modalità external/library). In modalità native lo script sotto lo mostra;
+     nelle altre modalità resta nascosto finché __cmsNativeConsentShow non lo
+     riattiva (fallback se la libreria esterna non parte). -->
+<div id="cms-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1f2937;color:#f3f4f6;padding:16px 20px;padding-bottom:calc(16px + env(safe-area-inset-bottom, 0px));font-size:13px;z-index:9999;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+  <span style="flex:1;min-width:200px;">
+    <%= typeof consentBannerText !== 'undefined' ? consentBannerText : '' %>
+    <% if (typeof consentPrivacyUrl !== 'undefined' && consentPrivacyUrl) { %>
+    <a href="<%= consentPrivacyUrl %>" style="color:#93c5fd;text-decoration:underline;">Scopri di più</a>
+    <% } %>
+  </span>
+  <span style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button type="button" id="cms-consent-reject" style="background:transparent;color:#f3f4f6;border:1px solid #6b7280;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;"><%= typeof consentRejectLabel !== 'undefined' ? consentRejectLabel : '' %></button>
+    <button type="button" id="cms-consent-accept" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;"><%= typeof consentAcceptLabel !== 'undefined' ? consentAcceptLabel : '' %></button>
+  </span>
+</div>
+<script>
+(function () {
+  // trackPageview: override per-pagina (true/false/null). null = eredita da sito.
+  var TRACK_PAGEVIEW = <%- _jsonScript(typeof trackPageview !== 'undefined' ? trackPageview : null) %>;
+  // Durata dei cookie di consenso: ore (default 1, configurabile per sito e
+  // per pagina — vedi src/services/tracking.js consentCookieHours). Scaduto,
+  // il banner ricompare e il consenso va ridato. setCookie() lavora ancora
+  // in "giorni" (compatibilità con le chiamate sotto): la conversione è
+  // esatta perché 86400000 (ms/giorno) è divisibile per 24.
+  var CONSENT_COOKIE_DAYS = (<%- _jsonScript(typeof consentCookieHours !== 'undefined' && consentCookieHours ? Number(consentCookieHours) : 1) %>) / 24;
+  // OpenAI / ChatGPT Ads pixel: OPENAI_PIXEL è il pixel id, oppure null se non
+  // configurato o disabilitato per questa pagina (pixelEnabled === false).
+  // oaiqCall funziona sia PRIMA del caricamento dell'SDK (push sulla coda, che
+  // l'SDK riproduce al load) sia DOPO (chiamata diretta sulla funzione esposta).
+  var OPENAI_PIXEL = <%- _jsonScript(typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false ? openaiAdsPixelId : null) %>;
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function cookieDomain() {
+    var h = location.hostname;
+    if (!h || h === 'localhost' || /^[\d.]+$/.test(h)) return null;
+    var parts = h.split('.');
+    if (parts.length >= 2) return '.' + parts.slice(-2).join('.');
+    return null;
+  }
+  function setCookie(name, value, days) {
+    var expires = new Date(Date.now() + days * 86400000).toUTCString();
+    var secure = location.protocol === 'https:' ? '; Secure' : '';
+    var domain = cookieDomain();
+    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/; SameSite=Lax'
+                      + (domain ? '; Domain=' + domain : '') + secure;
+  }
+  // Guardia ANTI-DOPPIO PageView: condivisa col bridge esterno/vendored
+  // (window.__cmsPageViewFired). Anche se applyConsent viene chiamato più
+  // volte (template a ogni load + bridge al ritorno + eventi banner), il
+  // PageView parte UNA SOLA volta per page load.
+  function applyConsent(analytics, marketing) {
+    if (window.gtag) { try { gtag('consent', 'update', {
+      'analytics_storage': analytics ? 'granted' : 'denied',
+      'ad_storage': marketing ? 'granted' : 'denied',
+      'ad_user_data': marketing ? 'granted' : 'denied',
+      'ad_personalization': marketing ? 'granted' : 'denied'
+    }); } catch (e) {} }
+    if (marketing) {
+      window.__cmsMarketingGranted = true;
+      if (window.fbq && typeof window.fbq === 'function') {
+        fbq('consent', 'grant');
+        if (TRACK_PAGEVIEW !== false && !window.__cmsPageViewFired) {
+          window.__cmsPageViewFired = true;
+          fbq('track', 'PageView');
+        }
+      }
+      // OpenAI / ChatGPT Ads: consenso + PageView (una sola volta per page load,
+      // guardia separata da quella Meta). Evento documentato: page_viewed
+      // (categoria contents, obbligatoria in data.type).
+      if (OPENAI_PIXEL) {
+        oaiqCall('consent', true);
+        if (TRACK_PAGEVIEW !== false && !window.__cmsOpenAiPageViewFired) {
+          window.__cmsOpenAiPageViewFired = true;
+          oaiqCall('measure', 'page_viewed', { type: 'contents' });
+        }
+      }
+      try { window.dispatchEvent(new Event('cms:marketing-granted')); } catch (e) {}
+    } else {
+      window.__cmsMarketingGranted = false;
+      if (window.fbq && typeof window.fbq === 'function') {
+        fbq('consent', 'revoke');
+      }
+      if (OPENAI_PIXEL) oaiqCall('consent', false);
+    }
+    <% if (typeof clarityId !== 'undefined' && clarityId) { %>
+    if (analytics && !window.clarity) {
+      (function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+      t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+      y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","<%= clarityId %>");
+    }
+    <% } %>
+  }
+  // Esposto globalmente: il bridge (public/consent/bridge.js) lo riusa così
+  // il re-apply è SEMPRE quello del CMS (guardia anti-doppio inclusa), anche
+  // in modalità external con bridge vecchio che non riapplica da solo.
+  window.__cmsApplyConsent = applyConsent;
+
+  var banner = document.getElementById('cms-consent-banner');
+
+  function showNativeBanner() {
+    if (!banner) return;
+    if (!banner.dataset.bound) {
+      banner.dataset.bound = '1';
+      document.getElementById('cms-consent-accept').addEventListener('click', function () {
+        setCookie('consent_analytics', '1', CONSENT_COOKIE_DAYS);
+        setCookie('consent_marketing', '1', CONSENT_COOKIE_DAYS);
+        applyConsent(true, true);
+        banner.style.display = 'none';
+        // Risolviamo il flag di revoca così il banner può riapparire
+        // se l'utente revoca in futuro (dare una seconda chance).
+        if (window.localStorage) window.localStorage.removeItem('cms-banner-revoked-at');
+      });
+      document.getElementById('cms-consent-reject').addEventListener('click', function () {
+        setCookie('consent_analytics', '0', CONSENT_COOKIE_DAYS);
+        setCookie('consent_marketing', '0', CONSENT_COOKIE_DAYS);
+        applyConsent(false, false);
+        banner.style.display = 'none';
+      });
+    }
+    banner.style.display = 'flex';
+  }
+  window.__cmsNativeConsentShow = showNativeBanner;
+
+  // ── Re-apply del consenso a OGNI page load (tutte le modalità) ─────────
+  // Questo è il fix "pixel morto al ritorno". In passato il re-apply avveniva
+  // SOLO in modalità native, e in external/library dipendeva dal bridge
+  // esterno (che se vecchio fa `return` prematuro e non riapplica MAI).
+  // Ora il CMS riapplica SEMPRE il consenso salvato (cookies) a ogni load,
+  // in native/external/library; idempotente grazie a __cmsPageViewFired.
+  var storedAnalytics = getCookie('consent_analytics');
+  var storedMarketing = getCookie('consent_marketing');
+  if (storedAnalytics !== null || storedMarketing !== null) {
+    // Ri-applichiamo il consenso (sia grant che revoke)
+    applyConsent(storedAnalytics === '1', storedMarketing === '1');
+
+    // fbq può essere caricato da uno script ESTERNO (provider external) che
+    // arriva DOPO questo script: finché fbq non esiste il grant non parte.
+    // Polling breve: appena fbq è DAVVERO pronto, ri-applichiamo (idempotente,
+    // PageView una sola volta). Copre anche bridge esterni che non riapplicano.
+    // NB: "window.fbq è una funzione" è vero fin dal primissimo tick (è lo
+    // stub del loader, che esiste da subito e nel frattempo accoda soltanto
+    // — vedi tracking-head.ejs). Non è un segnale di "libreria caricata": un
+    // grant riapplicato mentre fbevents.js non è ancora pronto finisce solo
+    // in coda insieme a tutto il resto, senza sbloccarne l'elaborazione.
+    // Il segnale corretto è window.fbq.callMethod, agganciato da fbevents.js
+    // SOLO a caricamento completato (mai presente sullo stub).
+    if (storedMarketing === '1') {
+      var _fbqTries = 0;
+      var _fbqTimer = setInterval(function () {
+        _fbqTries++;
+        if (window.fbq && window.fbq.callMethod) {
+          clearInterval(_fbqTimer);
+          applyConsent(storedAnalytics === '1', storedMarketing === '1');
+        } else if (_fbqTries > 100) { // ~10s max: reti lente, fbevents.js può metterci più di 3s
+          clearInterval(_fbqTimer);
+        }
+      }, 100);
+    }
+
+    // Se l'utente ha dato un esplicito consenso marketing revocato (0),
+    // mostriamo di nuovo il banner per dargli una seconda chance.
+    // Throttle: mostriamo solo una volta per sessione, dopo un breve delay.
+    if (<%- _jsonScript(_consentProvider) %> === 'native' && storedMarketing === '0') {
+      var key = 'cms-banner-revoked-at';
+      var now = Date.now();
+      var lastShown = window.localStorage && window.localStorage.getItem(key);
+      // Mostra se non l'abbiamo già mostrato in questa sessione (dopo ~2s dal load)
+      if (!lastShown && now > 2000) {
+        var delayedShow = setTimeout(function () {
+          // Idempotente: assicuriamoci che il banner non sia già visibile
+          // e che l'utente non abbia già accettato (storedMarketing potrebbe
+          // essere cambiato nel frattempo se l'accettazione è su un'altra tab).
+          var currentMarketing = getCookie('consent_marketing');
+          if (currentMarketing === '0' && banner && banner.style.display !== 'flex') {
+            banner.style.display = 'flex';
+            if (window.localStorage) window.localStorage.setItem(key, String(now));
+          }
+        }, 2000);
+      }
+    }
+  } else if (<%- _jsonScript(_consentProvider) %> === 'native') {
+    // Modalità NATIVE senza consenso salvato → mostra il banner CMS.
+    showNativeBanner();
+  }
+  // NB: in external/library senza consenso salvato il banner lo mostra la
+  // libreria esterna; il fallback nativo (__cmsNativeConsentShow) resta
+  // attivo se la libreria non parte (vedi blocco sotto).
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof leadEventName !== 'undefined' && leadEventName && (typeof leadPages !== 'undefined' && leadPages || typeof leadOverride !== 'undefined' && leadOverride)) { %>
+<!-- Evento Meta Pixel su pagine di conversione (leadEventName + leadPages).
+     Sparato SOLO con consenso marketing (Consent Mode v2), una volta per
+     PAGE LOAD (non per sessione: decisione esplicita del cliente, vedi
+     commento su window.__cmsLeadFired sotto). Provider-agnostico: funziona
+     sia con banner nativo sia esterno perché entrambi scrivono lo stesso
+     cookie consent_marketing e perché l'evento è agganciato a
+     'cms:marketing-granted' (emesso dal re-apply a ogni page load).
+     leadOverride: true = forza anche fuori leadPages, false = non sparare
+     mai qui. -->
+<script>
+(function () {
+  var EVENT_NAME = <%- _jsonScript(leadEventName) %>;
+  var PAGES = <%- _jsonScript((typeof leadPages !== 'undefined' && leadPages ? String(leadPages).split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [])) %>;
+  var LEAD_OVERRIDE = <%- _jsonScript(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
+
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function matchesPage() {
+    var target = (location.pathname + location.search).toLowerCase();
+    for (var i = 0; i < PAGES.length; i++) {
+      if (PAGES[i] && target.indexOf(PAGES[i].toLowerCase()) > -1) return true;
+    }
+    return false;
+  }
+  function shouldFireLead() {
+    if (LEAD_OVERRIDE === true) return true;
+    if (LEAD_OVERRIDE === false) return false;
+    return matchesPage();
+  }
+   function fireOnce() {
+    if (!shouldFireLead()) return;
+
+    // Guardia SOLO per-page-load (come il PageView, window.__cmsPageViewFired):
+    // evita il doppio/triplo sparo nello stesso caricamento, dato che
+    // fireOnce() viene invocato dalla chiamata diretta + dal listener
+    // cms:marketing-granted + dal retry di polling. NESSUNA memoria di
+    // sessione: ogni visita/reload della pagina thank-you spara un Lead.
+    // Scelta esplicita del cliente: preferisce un eventuale Lead duplicato
+    // (es. reload della thank-you) alla fragilità della guardia precedente
+    // (flag in sessionStorage impostato PRIMA della consegna effettiva: se
+    // qualcosa a valle falliva, il Lead risultava "già sparato" ma non era
+    // mai arrivato a Meta, soppresso per il resto della sessione).
+    if (window.__cmsLeadFired) return;
+
+    if (getCookie('consent_marketing') !== '1') return;
+    if (!(window.fbq && typeof window.fbq === 'function')) return;
+
+    window.__cmsLeadFired = true;
+
+    // Fire the event
+    fbq('track', EVENT_NAME);
+
+    // Log for debugging
+    try {
+      console.log('[Lead] ✓', EVENT_NAME, '→', location.pathname);
+    } catch (e) {}
+  }
+  // Visitatore di ritorno con consenso già presente, o provider esterno che
+  // ha già scritto il cookie prima che questo script giri.
+  fireOnce();
+  // Consenso concesso durante QUESTA visita (banner nativo o bridge esterno).
+  // Il re-apply del template a ogni page load emette questo evento anche al
+  // ritorno (e di nuovo appena fbq diventa disponibile), quindi copre anche
+  // i casi in cui il pixel arriva in ritardo da uno script esterno.
+  window.addEventListener('cms:marketing-granted', fireOnce);
+  // Retry autonomo: se il consenso marketing è già attivo ma fbq (caricato
+  // da uno script esterno) non è ancora pronto al load, riproviamo per ~3s.
+  // fireOnce è idempotente (flag di sessione), quindi nessun doppio Invio.
+  if (shouldFireLead() && getCookie('consent_marketing') === '1' && !(window.fbq && typeof window.fbq === 'function')) {
+    var _leadTries = 0;
+    var _leadTimer = setInterval(function () {
+      _leadTries++;
+      if (window.fbq && typeof window.fbq === 'function') {
+        clearInterval(_leadTimer);
+        fireOnce();
+      } else if (_leadTries > 30) {
+        clearInterval(_leadTimer);
+      }
+    }, 100);
+  }
+})();
+</script>
+<% } %>
+<% if (typeof completeRegistrationOverride !== 'undefined' && completeRegistrationOverride === true) { %>
+<!-- Evento Meta Pixel CompleteRegistration.
+     Sparato SOLO con consenso marketing (Consent Mode v2), una volta per
+     PAGE LOAD (non per sessione: decisione esplicita del cliente, vedi
+     commento su window.__cmsCompleteRegFired sotto). Evento fisso:
+     "CompleteRegistration". Nessuna lista PAGES / matchesPage() (qui non
+     esiste un equivalente site-wide). L'override esplicito è sempre
+     necessario, nessun trigger automatico via lista pagine. -->
+<script>
+(function () {
+  var EVENT_NAME = "CompleteRegistration";
+  var COMPLETE_REG_OVERRIDE = <%- _jsonScript(typeof completeRegistrationOverride !== 'undefined' ? completeRegistrationOverride : null) %>;
+
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function shouldFire() {
+    if (COMPLETE_REG_OVERRIDE === true) return true;
+    if (COMPLETE_REG_OVERRIDE === false) return false;
+    return false;
+  }
+  function fireOnce() {
+    if (window.__cmsCompleteRegFired) return;
+    if (getCookie("consent_marketing") !== "1") return;
+    if (!(window.fbq && typeof window.fbq === 'function')) return;
+
+    window.__cmsCompleteRegFired = true;
+
+    // Fire the event
+    fbq('track', EVENT_NAME);
+
+    // Log for debugging
+    try {
+      console.log('[CompleteRegistration] ✓', EVENT_NAME, '→', location.pathname);
+    } catch (e) {}
+  }
+  // Visitatore di ritorno con consenso già presente.
+  fireOnce();
+  // Consenso concesso durante QUESTA visita.
+  window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false && ((typeof leadPages !== 'undefined' && leadPages) || (typeof leadOverride !== 'undefined' && leadOverride))) { %>
+<!-- Evento OpenAI / ChatGPT Ads su pagine di conversione (stesso innesco di
+     Meta: leadPages + leadOverride). Sparato SOLO con consenso marketing, una
+     volta per page load. Vocabolario OpenAI: evento "lead_created", categoria
+     "customer_action" (data.type obbligatorio). -->
+<script>
+(function () {
+  var OPENAI_PIXEL = <%- _jsonScript(openaiAdsPixelId) %>;
+  var PAGES = <%- _jsonScript((typeof leadPages !== 'undefined' && leadPages ? String(leadPages).split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [])) %>;
+  var LEAD_OVERRIDE = <%- _jsonScript(typeof leadOverride !== 'undefined' ? leadOverride : null) %>;
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function matchesPage() {
+    var target = (location.pathname + location.search).toLowerCase();
+    for (var i = 0; i < PAGES.length; i++) {
+      if (PAGES[i] && target.indexOf(PAGES[i].toLowerCase()) > -1) return true;
+    }
+    return false;
+  }
+  function shouldFire() {
+    if (LEAD_OVERRIDE === true) return true;
+    if (LEAD_OVERRIDE === false) return false;
+    return matchesPage();
+  }
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function fireOnce() {
+    if (!shouldFire()) return;
+    if (window.__cmsOpenAiLeadFired) return;
+    if (getCookie('consent_marketing') !== '1') return;
+    window.__cmsOpenAiLeadFired = true;
+    oaiqCall('measure', 'lead_created', { type: 'customer_action' });
+    try { console.log('[OpenAI Ads][Lead] ✓ lead_created →', location.pathname); } catch (e) {}
+  }
+  fireOnce();
+  window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false && typeof completeRegistrationOverride !== 'undefined' && completeRegistrationOverride === true) { %>
+<!-- Evento OpenAI / ChatGPT Ads CompleteRegistration (stesso innesco override
+     di Meta). Vocabolario OpenAI: "registration_completed" / customer_action. -->
+<script>
+(function () {
+  function getCookie(name) {
+    var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function fireOnce() {
+    if (window.__cmsOpenAiCompleteRegFired) return;
+    if (getCookie('consent_marketing') !== '1') return;
+    window.__cmsOpenAiCompleteRegFired = true;
+    oaiqCall('measure', 'registration_completed', { type: 'customer_action' });
+    try { console.log('[OpenAI Ads][CompleteRegistration] ✓ →', location.pathname); } catch (e) {}
+  }
+  fireOnce();
+  window.addEventListener('cms:marketing-granted', fireOnce);
+})();
+</script>
+<% } %>
+<% if (typeof hasAnyTracking !== 'undefined' && hasAnyTracking && typeof openaiAdsPixelId !== 'undefined' && openaiAdsPixelId && pixelEnabled !== false && typeof openaiAdsAdvancedMatching !== 'undefined' && openaiAdsAdvancedMatching === '1') { %>
+<!-- OpenAI / ChatGPT Ads — Advanced matching (opzionale, attivo da Settings).
+     Hashing client-side con WebCrypto SHA-256 di email/telefono; inviati al pixel
+     SOLO dopo il consenso marketing (fail-safe). Espone l'API esplicita
+     window.__cmsOpenAiIdentify({ email, phone }). Se abilitato "auto-identify",
+     cattura i valori dai campi email/tel del form al submit. Mai PII in chiaro. -->
+<script>
+(function () {
+  var PIXEL_ID = <%- _jsonScript(openaiAdsPixelId) %>;
+  var AUTO = <%- _jsonScript(typeof openaiAdsAutoIdentify !== 'undefined' && openaiAdsAutoIdentify === '1') %>;
+  var pending = {};
+  function getCookie(name) { var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)'); return m ? decodeURIComponent(m[1]) : null; }
+  function oaiqCall() {
+    var q = window.oaiq;
+    if (typeof q === 'function') { try { q.apply(null, arguments); } catch (e) {} }
+    else if (q && typeof q.push === 'function') { q.push(Array.prototype.slice.call(arguments)); }
+  }
+  function norm(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+  function normPhone(v) { return String(v == null ? '' : v).replace(/[^\d+]/g, ''); }
+  function sha256hex(s) {
+    try {
+      if (!(window.crypto && window.crypto.subtle && window.TextEncoder)) return Promise.resolve(null);
+      var enc = new TextEncoder().encode(s);
+      return window.crypto.subtle.digest('SHA-256', enc).then(function (buf) {
+        var b = new Uint8Array(buf), out = '';
+        for (var i = 0; i < b.length; i++) out += ('0' + b[i].toString(16)).slice(-2);
+        return out;
+      });
+    } catch (e) { return Promise.resolve(null); }
+  }
+  function apply() {
+    if (getCookie('consent_marketing') !== '1') return; // fail-safe: mai senza consenso
+    var user = {};
+    if (pending.email) user.email_sha256 = pending.email;
+    if (pending.phone) user.phone_number_sha256 = pending.phone;
+    if (!user.email_sha256 && !user.phone_number_sha256) return;
+    oaiqCall('init', { pixelId: PIXEL_ID, user: user });
+    try { console.log('[OpenAI Ads] advanced matching applicato'); } catch (e) {}
+  }
+  window.__cmsOpenAiIdentify = function (opts) {
+    opts = opts || {};
+    if (opts.email) sha256hex(norm(opts.email)).then(function (h) { if (h) { pending.email = h; apply(); } });
+    if (opts.phone) sha256hex(normPhone(opts.phone)).then(function (h) { if (h) { pending.phone = h; apply(); } });
+  };
+  apply();
+  window.addEventListener('cms:marketing-granted', apply);
+  if (AUTO && document && document.addEventListener) {
+    document.addEventListener('submit', function (ev) {
+      try {
+        var f = ev.target; if (!f || !f.querySelector) return;
+        var email = f.querySelector('input[type="email"], input[name*="mail" i], input[name*="email" i]');
+        var phone = f.querySelector('input[type="tel"], input[name*="tel" i], input[name*="phone" i], input[name*="telefono" i]');
+        var o = {};
+        if (email && email.value) o.email = email.value;
+        if (phone && phone.value) o.phone = phone.value;
+        if (o.email || o.phone) window.__cmsOpenAiIdentify(o);
+      } catch (e) {}
+    }, true);
+  }
+})();
+</script>
+<% } %>
+<% if ((_consentProvider === 'library' || _consentProvider === 'external') && typeof consentLibUrl !== 'undefined' && consentLibUrl && typeof consentScriptUrl !== 'undefined' && consentScriptUrl) { %>
+<!-- Provider "library" (settings tracking_consent_provider=library): libreria
+     cookieconsent condivisa, asset serviti staticamente dal repo
+     (public/consent/*), nessuna dipendenza da media/<site>/consent.
+     Il markup del banner nativo (sopra) esiste ma resta nascosto; se la
+     libreria non parte, __cmsNativeConsentShow() lo riattiva come fallback
+     reale. Il controllo 'external' resta qui solo come sinonimo difensivo
+     (vedi commento su _consentProvider sopra): non più raggiungibile da UI,
+     getSiteTrackingConfig normalizza già external → library. -->
+<script>
+(function () {
+  // ── Config per-sito iniettata (XSS-safe via _jsonScript) ────────────────
+  window.__cmsConsentConfig = {
+    position: <%- _jsonScript(typeof consentPosition !== 'undefined' ? consentPosition : '') %>,
+    language: <%- _jsonScript(typeof consentLanguage !== 'undefined' ? consentLanguage : 'it') %>,
+    revision: <%- _jsonScript(typeof consentRevision !== 'undefined' && consentRevision ? String(consentRevision) : '0') %>,
+    // Durata (ore) dei cookie di consenso, letta dal bridge (public/consent/bridge.js)
+    // per il proprio cookie interno cc_cookie oltre a consent_analytics/marketing.
+    cookieHours: <%- _jsonScript(typeof consentCookieHours !== 'undefined' && consentCookieHours ? Number(consentCookieHours) : 1) %>,
+    title: <%- _jsonScript(typeof consentTitle !== 'undefined' ? consentTitle : '') %>,
+    description: <%- _jsonScript(typeof consentDescription !== 'undefined' ? consentDescription : '') %>,
+    preferencesTitle: <%- _jsonScript(typeof consentPreferencesTitle !== 'undefined' ? consentPreferencesTitle : '') %>,
+    acceptAllLabel: <%- _jsonScript(typeof consentAcceptAllLabel !== 'undefined' ? consentAcceptAllLabel : '') %>,
+    rejectLabel: <%- _jsonScript(typeof consentRejectLabelLib !== 'undefined' ? consentRejectLabelLib : '') %>,
+    preferencesLabel: <%- _jsonScript(typeof consentPreferencesLabel !== 'undefined' ? consentPreferencesLabel : '') %>,
+    saveLabel: <%- _jsonScript(typeof consentSaveLabel !== 'undefined' ? consentSaveLabel : '') %>,
+    closeLabel: <%- _jsonScript(typeof consentCloseLabel !== 'undefined' ? consentCloseLabel : '') %>,
+    necessaryTitle: <%- _jsonScript(typeof consentNecessaryTitle !== 'undefined' ? consentNecessaryTitle : '') %>,
+    necessaryDesc: <%- _jsonScript(typeof consentNecessaryDesc !== 'undefined' ? consentNecessaryDesc : '') %>,
+    analyticsTitle: <%- _jsonScript(typeof consentAnalyticsTitle !== 'undefined' ? consentAnalyticsTitle : '') %>,
+    analyticsDesc: <%- _jsonScript(typeof consentAnalyticsDesc !== 'undefined' ? consentAnalyticsDesc : '') %>,
+    marketingTitle: <%- _jsonScript(typeof consentMarketingTitle !== 'undefined' ? consentMarketingTitle : '') %>,
+    marketingDesc: <%- _jsonScript(typeof consentMarketingDesc !== 'undefined' ? consentMarketingDesc : '') %>
+  };
+  // Fallback nativo reale: se la lib non parte, riattiva il banner CMS.
+  var nativeFallbackPending = true;
+  window.__cmsConsentFallbackNative = function () {
+    if (!nativeFallbackPending) return;
+    nativeFallbackPending = false;
+    try {
+      var a = window.__cmsNativeConsentShow && window.__cmsNativeConsentShow();
+      // __cmsNativeConsentShow mostra il banner; il consenso fino ad ora
+      // resta quello dei cookie (default negato). Nessun tracciamento non voluto.
+    } catch (e) {}
+  };
+  // Se la lib esterna non è disponibile entro ~4s, fallback nativo.
+  var tmr = setTimeout(function () {
+    window.__cmsConsentFallbackNative && window.__cmsConsentFallbackNative();
+  }, 4000);
+
+  <% if (typeof consentLibCssUrl !== 'undefined' && consentLibCssUrl) { %>
+  var l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = <%- _jsonScript(consentLibCssUrl) %>;
+  document.head.appendChild(l);
+  <% } %>
+  var a = document.createElement('script');
+  a.src = <%- _jsonScript(consentLibUrl) %>;
+  a.onload = function () {
+    var b = document.createElement('script');
+    b.src = <%- _jsonScript(consentScriptUrl) %>;
+    // Al bridge arriva __cmsConsentFallbackNative già pronto.
+    document.head.appendChild(b);
+  };
+  a.onerror = function () { clearTimeout(tmr); window.__cmsConsentFallbackNative && window.__cmsConsentFallbackNative(); };
+  document.head.appendChild(a);
+  // Il bridge (bridge.js) fa anche lui polling su CookieConsent e, se fallisce,
+  // chiama lo stesso fallback nativo — il timeout qui è la rete di sicurezza.
+})();
+</script>
+<% } %>

@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.app.yml — applicazione CMS su un nodo CLUSTER (senza servizio
+# `db`: in modalità cluster il Postgres è gestito da Patroni/Spilo).
+#
+# Varianterispetto a docker-compose.yml base:
+#   - nessun servizio `db` (niente pgdata locale di compose)
+#   - DATABASE_URL punta all'endpoint Patroni leader del cluster
+#   - i volumi file (media, media-protected, static, backups) sono gli stessi
+#     dello stack Syncthing: questo nodo serve/scrive sui file locali, Syncthing
+#     li rende "gemelli" con l'altro nodo.
+#   - l'app resta:      ./docker-compose.yml (base)  → SOLO su nodo singolo
+#                       infra/cluster/docker-compose.app.yml  → su nodi cluster
+#
+# Uso:
+#   docker network create cluster_net   # una volta, su ogni nodo
+#   docker compose --env-file .env.cluster -f infra/cluster/docker-compose.app.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  gestione-siti:
+    build: ../..
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3000"
+    env_file: ../../.env
+    environment:
+      # URL del Postgres leader del cluster = host del container Patroni
+      # locale, che sulla rete cluster_net è sempre raggiungibile come
+      # "patroni-<NODE_ID>:5432" (Patroni lo fa puntare al leader reale).
+      DATABASE_URL: ${CLUSTER_DATABASE_URL}
+    volumes:
+      - ../../media:/app/media
+      - ../../media-protected:/app/media-protected
+      - ../../static:/app/static
+      - ../../caddy-config:/app/caddy-config
+      - ../../scripts:/app/scripts
+      - ../../backups:/app/backups
+    # NOTA: nessun depends_on cross-file (non supportato da docker compose).
+    # Avviare PRIMA lo stack infra/cluster/docker-compose.node.yml (etcd+Patroni
+    #+Syncthing) e POI questo file; start.sh esegue migrazioni (lockate) e l'app
+    # si riconnette al leader Patroni.
+    networks:
+      - cluster_net
+      - edge_net
+      - gestione_siti
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  cluster_net:
+    external: true
+  edge_net:
+    external: true
+  gestione_siti:
+    external: true

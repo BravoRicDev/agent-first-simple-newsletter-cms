@@ -1,0 +1,19 @@
+// Pattern di esclusione per le condivisioni Syncthing del cluster CMS.
+// Copia questo file identico in ./syncthing/config/ su OGNI nodo
+// (le regole devono essere le stesse su tutti).
+
+// File temporanei dell'app (rename atomici con .tmp.<pid>.<rand>)
+*.tmp
+*.tmp.*
+*.swp
+
+// File di sincronizzazione temporanei di Syncthing/editor
+~*
+.DS_Store
+Thumbs.db
+
+// Artefatti generati, MAI sincronizzati
+node_modules
+
+// Backup runtime interni a Syncthing (di solito fuori dalle cartelle condivise)
+.syncthing.*

@@ -1,0 +1,26 @@
+<h1>Backup database</h1>
+
+<p style="font-size:13px;color:#666;margin-bottom:20px;">
+  I backup automatici (prefisso <code>auto-</code>) vengono creati una volta al giorno dallo scheduler
+  se <code>BACKUP_ENABLED</code> è attivo, e ruotati secondo <code>BACKUP_RETENTION_DAYS</code>.
+  Gli altri file sono backup manuali pre-deploy.
+</p>
+
+<% if (files.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun backup trovato in <code>backups/</code>. Se ti aspettavi un backup automatico, controlla i log del server (potrebbe indicare <code>pg_dump</code> non disponibile o <code>BACKUP_ENABLED</code> non attivo).</p>
+<% } else { %>
+<table style="max-width:700px;">
+  <thead><tr><th>File</th><th>Tipo</th><th>Dimensione</th><th>Data</th><th></th></tr></thead>
+  <tbody>
+    <% files.forEach(f => { %>
+    <tr>
+      <td><code><%= f.name %></code></td>
+      <td><%= f.automatic ? 'Automatico' : 'Manuale' %></td>
+      <td><%= f.size_formatted %></td>
+      <td><%= new Date(f.mtime).toLocaleString('it-IT') %></td>
+      <td><a href="/admin/backups/<%= encodeURIComponent(f.name) %>/download" class="btn btn-sm">Scarica</a></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

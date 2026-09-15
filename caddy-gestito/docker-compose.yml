@@ -1,0 +1,24 @@
+services:
+  caddy-gestito:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    command: ["caddy", "run", "--watch", "--config", "/etc/caddy/Caddyfile.gestito"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ../media:/app/media:ro
+      - ../static:/app/static:ro
+      - ./Caddyfile.gestito:/etc/caddy/Caddyfile.gestito
+      - caddy_gestito_data:/data
+    networks:
+      - edge_net
+      - gestione_siti
+
+volumes:
+  caddy_gestito_data:
+
+networks:
+  edge_net:
+    external: true
+  gestione_siti:
+    external: true

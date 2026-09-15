@@ -1,0 +1,13 @@
+{
+  "submission": {
+    "id": "550e8400-e29b-41d4-a716-446655440200",
+    "surveyId": "550e8400-e29b-41d4-a716-446655440000",
+    "contactId": "550e8400-e29b-41d4-a716-446655440300",
+    "submittedAt": "2026-08-25T10:05:00.000Z",
+    "answers": {
+      "what_is_your_name": "John Doe",
+      "rate_your_experience": "excellent",
+      "visit_date": "2026-08-20"
+    }
+  }
+}

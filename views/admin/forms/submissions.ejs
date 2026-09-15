@@ -1,0 +1,42 @@
+<h1>Invii — <code><%= formSlug %></code></h1>
+<div class="actions">
+  <a href="/admin/forms?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Torna ai form</a>
+  <a href="/admin/forms/<%= formSlug %>/submissions/export?site_id=<%= siteId %>&from=<%= filterFrom %>&to=<%= filterTo %>" class="btn" style="background:#059669;">⬇ Esporta CSV</a>
+</div>
+
+<form method="GET" style="margin:15px 0;display:flex;gap:10px;align-items:flex-end;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Dal</label>
+    <input type="date" name="from" value="<%= filterFrom %>">
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Al</label>
+    <input type="date" name="to" value="<%= filterTo %>">
+  </div>
+  <button type="submit" class="btn">Filtra</button>
+</form>
+
+<% if (submissions.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun invio.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Data</th><th>Dati</th><th>IP</th><th>Referrer</th></tr>
+  </thead>
+  <tbody>
+    <% submissions.forEach(s => { %>
+    <tr>
+      <td style="white-space:nowrap;"><%= new Date(s.created_at).toLocaleString('it-IT') %></td>
+      <td>
+        <% Object.entries(s.data).forEach(([k, v]) => { %>
+          <div style="font-size:12px;"><strong><%= k %>:</strong> <%= v %></div>
+        <% }) %>
+      </td>
+      <td style="font-size:12px;color:#999;"><%= s.ip_address || '—' %></td>
+      <td style="font-size:12px;color:#999;"><%= s.referrer || '—' %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

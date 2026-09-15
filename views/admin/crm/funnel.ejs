@@ -1,0 +1,39 @@
+<h1>Funnel di conversione — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<p style="font-size:13px;color:#666;margin-bottom:15px;">
+  Snapshot giornalieri per canale (sorgente UTM). Le visite vengono conteggiate dalle page views, i lead dai form compilati, le chiamate dal modulo chiamate, i vinti dai contatti con stadio "vinto".
+</p>
+
+<% if (funnel.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessuno snapshot ancora. Il calcolo parte automaticamente dallo scheduler (ogni ~20 minuti) e si accumula giorno per giorno.</p>
+<% } else { %>
+<table>
+  <thead><tr><th>Data</th><th>Canale</th><th>Visite</th><th>Lead</th><th>Chiamate</th><th>Vinti</th><th>Revenue</th></tr></thead>
+  <tbody>
+    <% funnel.forEach(f => { %>
+    <tr>
+      <td><%= f.day %></td>
+      <td><%= f.channel || '(totale)' %></td>
+      <td><%= f.visits %></td>
+      <td><%= f.leads %></td>
+      <td><%= f.calls %></td>
+      <td><%= f.wins %></td>
+      <td><%= Number(f.revenue).toLocaleString('it-IT', { style: 'currency', currency: 'EUR' }) %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

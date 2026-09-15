@@ -1,0 +1,471 @@
+import { test, describe, before, after } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "crypto";
+import express from "express";
+import { query } from "../../src/db.js";
+import { createTestSite, closeDb } from "../helpers.js";
+import cloneRoutes from "../../src/routes/api-clone/index.js";
+
+// Onda G: Agency/Users/Teams/Locations clone API — CRUD con contratto shape completo.
+describe("Onda G — Agency clone", () => {
+  let server, baseUrl;
+  let site;
+  let apiKey;
+  let locationId;
+  let userId;
+  let teamId;
+
+  const mkKey = async (siteId, name) => {
+    const raw = "testkey_" + crypto.randomBytes(24).toString("hex");
+    const hash = crypto.createHash("sha256").update(raw).digest("hex");
+    const r = await query(
+      "INSERT INTO site_api_keys (site_id, name, token_hash, token_prefix, active) VALUES ($1, $2, $3, $4, true) RETURNING id",
+      [siteId, name, hash, raw.slice(0, 12)]
+    );
+    return { id: r.rows[0].id, raw };
+  };
+
+  const fetch = async (path, opts = {}) => {
+    // Auth dialetto moderno: Bearer api-key + locationId in query
+    const sep = path.includes("?") ? "&" : "?";
+    const url = `http://localhost:${server.address().port}${path}${sep}locationId=${site.id}`;
+    const res = await globalThis.fetch(url, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey.raw}`,
+        ...(opts.headers || {}),
+      },
+    });
+    const data = await res.json();
+    return { status: res.status, data };
+  };
+
+  before(async () => {
+    site = await createTestSite("Agency Clone");
+    apiKey = await mkKey(site.id, "test key");
+
+    const app = express();
+    app.use(express.json());
+    app.use(cloneRoutes);
+    app.use((req, res) => res.status(404).json({ statusCode: 404, message: "not found" }));
+    app.use((err, req, res, next) => {
+      res.status(500).json({ statusCode: 500, message: err.message });
+    });
+
+    server = await new Promise((resolve) => {
+      const srv = app.listen(0, () => {
+        baseUrl = `http://localhost:${srv.address().port}`;
+        resolve(srv);
+      });
+    });
+  });
+
+  after(async () => {
+    if (server) server.close();
+    await closeDb();
+  });
+
+  // ── LOCATIONS ────────────────────────────────────────────────────────
+
+  test("Location: create → list meta → get → PUT business-info", async () => {
+    // Create location
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Agenzia Roma", businessInfo: { city: "Roma" } }),
+    });
+    assert.equal(createRes.status, 201);
+    assert(createRes.data.location);
+    assert(createRes.data.location.id);
+    assert(createRes.data.location.locationId);
+    assert.equal(createRes.data.location.name, "Agenzia Roma");
+    assert.equal(typeof createRes.data.location.businessInfo, "object");
+    assert(createRes.data.location.dateAdded);
+    locationId = createRes.data.location.id;
+
+    // GET location by id
+    const getRes = await fetch(`/locations/${locationId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.location.id, locationId);
+    assert.equal(getRes.data.location.name, "Agenzia Roma");
+
+    // PUT business-info
+    const putRes = await fetch(`/locations/${locationId}/business-info`, {
+      method: "PUT",
+      body: JSON.stringify({ businessInfo: { city: "Roma", address: "Via del Corso" } }),
+    });
+    assert.equal(putRes.status, 200);
+    assert(putRes.data.location.businessInfo);
+    assert.equal(putRes.data.location.businessInfo.city, "Roma");
+    assert.equal(putRes.data.location.businessInfo.address, "Via del Corso");
+  });
+
+  test("Location: 404 not found", async () => {
+    const notFoundId = crypto.randomUUID();
+    const res = await fetch(`/locations/${notFoundId}`);
+    assert.equal(res.status, 404);
+    assert.equal(res.data.statusCode, 404);
+  });
+
+  // ── USERS ────────────────────────────────────────────────────────────
+
+  test("User: create → list meta → get → update → delete", async () => {
+    // Create user
+    const createRes = await fetch("/users", {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: "Mario",
+        lastName: "Rossi",
+        email: `mario-${crypto.randomBytes(4).toString("hex")}@test.local`,
+        roles: ["admin"],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    assert(createRes.data.user);
+    assert(createRes.data.user.id);
+    assert.equal(createRes.data.user.firstName, "Mario");
+    assert.equal(createRes.data.user.lastName, "Rossi");
+    assert(Array.isArray(createRes.data.user.roles));
+    assert.equal(createRes.data.user.roles[0], "admin");
+    assert(createRes.data.user.dateAdded);
+    userId = createRes.data.user.id;
+
+    // List users
+    const listRes = await fetch("/users");
+    assert.equal(listRes.status, 200);
+    assert(Array.isArray(listRes.data.users));
+    assert(listRes.data.meta);
+    assert(typeof listRes.data.meta.total === "number");
+    assert(listRes.data.users.some((u) => u.id === userId));
+
+    // GET user
+    const getRes = await fetch(`/users/${userId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.user.id, userId);
+    assert.equal(getRes.data.user.firstName, "Mario");
+
+    // Update user
+    const updateRes = await fetch(`/users/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify({ firstName: "Luigi", roles: ["collaboratore"] }),
+    });
+    assert.equal(updateRes.status, 200);
+    assert.equal(updateRes.data.user.firstName, "Luigi");
+    assert.equal(updateRes.data.user.roles[0], "collaboratore");
+
+    // Delete user
+    const deleteRes = await fetch(`/users/${userId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+    assert.equal(deleteRes.data.deleted, true);
+
+    // Verify deleted
+    const verifyRes = await fetch(`/users/${userId}`);
+    assert.equal(verifyRes.status, 404);
+  });
+
+  test("User: search by email", async () => {
+    const testEmail = `search-${crypto.randomBytes(4).toString("hex")}@test.local`;
+    const createRes = await fetch("/users", {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: "Anna",
+        lastName: "Bianchi",
+        email: testEmail,
+        roles: ["collaboratore"],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+
+    const searchRes = await fetch("/users/search", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail }),
+    });
+    assert.equal(searchRes.status, 200);
+    assert(Array.isArray(searchRes.data.users));
+    assert(searchRes.data.users.some((u) => u.email === testEmail));
+  });
+
+  test("User: 404 not found", async () => {
+    const notFoundId = crypto.randomUUID();
+    const res = await fetch(`/users/${notFoundId}`);
+    assert.equal(res.status, 404);
+  });
+
+  test("User: email obbligatoria", async () => {
+    const res = await fetch("/users", {
+      method: "POST",
+      body: JSON.stringify({ firstName: "Mario", lastName: "Rossi" }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.data.statusCode, 400);
+  });
+
+  // Parity source_id: round-trip su utente (le location/team NON hanno source_id,
+  // restano fuori scope).
+  test("Parity source_id: round-trip GET/PUT/DELETE utente col source_id reale", async () => {
+    const createRes = await fetch("/users", {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: "Rt",
+        lastName: "User",
+        email: `rtuser-${crypto.randomBytes(4).toString("hex")}@test.local`,
+        roles: ["collaboratore"],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = createRes.data.user;
+    assert.ok(created.id, "uuid assente");
+
+    const realSourceId = "sourceUSERparity001";
+    await query("UPDATE users SET source_id = $1 WHERE external_id = $2", [realSourceId, created.id]);
+
+    const getRes = await fetch(`/users/${realSourceId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.user.id, realSourceId, "id risposta deve essere il source_id reale");
+
+    const putRes = await fetch(`/users/${realSourceId}`, {
+      method: "PUT",
+      body: JSON.stringify({ firstName: "RtUpdated" }),
+    });
+    assert.equal(putRes.status, 200);
+    assert.equal(putRes.data.user.firstName, "RtUpdated");
+
+    const deleteRes = await fetch(`/users/${realSourceId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+
+    const getAfterDel = await fetch(`/users/${realSourceId}`);
+    assert.equal(getAfterDel.status, 404);
+  });
+
+  test("Parity source_id: id utente malformato (300 char) → 400", async () => {
+    const res = await fetch(`/users/${"x".repeat(300)}`);
+    assert.equal(res.status, 400);
+  });
+
+  // ── TEAMS ────────────────────────────────────────────────────────────
+
+  test("Team: create con member → list meta → get → update members → delete", async () => {
+    // Create user per il team
+    const userRes = await fetch("/users", {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: "Luigi",
+        lastName: "Verdi",
+        email: `luigi-${crypto.randomBytes(4).toString("hex")}@test.local`,
+        roles: ["collaboratore"],
+      }),
+    });
+    assert.equal(userRes.status, 201, `User creation failed: ${JSON.stringify(userRes.data)}`);
+    const memberId = userRes.data.user.id;
+
+    // Create team
+    const createRes = await fetch("/teams", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Sales Team",
+        members: [{ userId: memberId, role: "member" }],
+      }),
+    });
+    assert.equal(createRes.status, 201, `Team creation failed: ${JSON.stringify(createRes.data)}`);
+    assert(createRes.data.team);
+    assert(createRes.data.team.id);
+    assert.equal(createRes.data.team.name, "Sales Team");
+    assert(Array.isArray(createRes.data.team.members));
+    assert.equal(createRes.data.team.members.length, 1);
+    assert.equal(createRes.data.team.members[0].role, "member");
+    assert(createRes.data.team.dateAdded);
+    assert(createRes.data.team.dateUpdated);
+    teamId = createRes.data.team.id;
+
+    // List teams
+    const listRes = await fetch("/teams");
+    assert.equal(listRes.status, 200);
+    assert(Array.isArray(listRes.data.teams));
+    assert(listRes.data.meta);
+    assert(typeof listRes.data.meta.total === "number");
+    assert(listRes.data.teams.some((t) => t.id === teamId));
+
+    // GET team
+    const getRes = await fetch(`/teams/${teamId}`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.team.id, teamId);
+    assert.equal(getRes.data.team.name, "Sales Team");
+    assert.equal(getRes.data.team.members.length, 1);
+
+    // Update team name
+    const updateRes = await fetch(`/teams/${teamId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: "Marketing Team" }),
+    });
+    assert.equal(updateRes.status, 200);
+    assert.equal(updateRes.data.team.name, "Marketing Team");
+
+    // Delete team
+    const deleteRes = await fetch(`/teams/${teamId}`, { method: "DELETE" });
+    assert.equal(deleteRes.status, 200);
+    assert.equal(deleteRes.data.deleted, true);
+
+    // Verify deleted
+    const verifyRes = await fetch(`/teams/${teamId}`);
+    assert.equal(verifyRes.status, 404);
+  });
+
+  test("Team: 404 not found", async () => {
+    const notFoundId = crypto.randomUUID();
+    const res = await fetch(`/teams/${notFoundId}`);
+    assert.equal(res.status, 404);
+  });
+
+  test("Team: nome obbligatorio", async () => {
+    const res = await fetch("/teams", {
+      method: "POST",
+      body: JSON.stringify({ members: [] }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  // ── Parity location id (round 15) ──────────────────────────────────────
+  // sites NON ha colonna source_id: l'equivalente del "location id" di sorgente è
+  // location_external_id. Un'automazione n8n ha in mano QUEL id (20 char
+  // alfanumerici, non UUID): deve poterlo usare in GET/PUT e vederlo
+  // esposto come id/locazione in output. Prima di questo round:
+  // - GET /locations/{idSOURCE} andava in ERRORE 500 (confronto uuid = testo
+  //   non-UUID → 22P02) o 404 a seconda del formato;
+  // - PUT business-info risolveva SOLO l'UUID interno del site.
+
+  test("Parity location: id sorgente reale (non-UUID) accettato in GET/PUT ed esposto", async () => {
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Sede sorgente parity" }),
+    });
+    assert.equal(createRes.status, 201);
+    // NB: dopo il round 15 location.id ESPONE già il location_external_id
+    // (per le location create da noi è un UUID generato in createLocation).
+    const genLocationId = createRes.data.location.id;
+
+    // UUID interno del site (colonna external_id) — preso dal DB, non dalla
+    // risposta, che ora espone l'id pubblico sorgente-facing.
+    const siteUuid = (await query(
+      "SELECT external_id::text AS ext FROM sites WHERE location_external_id = $1",
+      [genLocationId]
+    )).rows[0].ext;
+    assert.ok(siteUuid, "site appena creato deve esistere");
+
+    // Simuliamo una location SINCRONIZZATA da sorgente: location_external_id =
+    // id reale stile sorgente (20 char alfanumerici, NON uuid-valid). Casuale
+    // per run: sites.location_external_id ha un UNIQUE globale e il volume
+    // di test persiste tra un'esecuzione e l'altra.
+    const realSourceLocationId = "eMjq" + crypto.randomBytes(8).toString("hex");
+    await query(
+      "UPDATE sites SET location_external_id = $1 WHERE external_id = $2",
+      [realSourceLocationId, siteUuid]
+    );
+
+    // GET col source_id reale → 200 (PRIMA: 500 per 22P02 su uuid=text) e
+    // l'id esposto è il source_id reale, non l'UUID interno.
+    const getRes = await fetch(`/locations/${realSourceLocationId}`);
+    assert.equal(getRes.status, 200, "GET con location id sorgente reale deve funzionare");
+    assert.equal(getRes.data.location.id, realSourceLocationId, "id in output = source location id reale");
+    assert.equal(getRes.data.location.locationId, realSourceLocationId);
+
+    // PUT business-info col source_id reale (prima risolveva solo l'UUID)
+    const putRes = await fetch(`/locations/${realSourceLocationId}/business-info`, {
+      method: "PUT",
+      body: JSON.stringify({ businessInfo: { city: "Milano" } }),
+    });
+    assert.equal(putRes.status, 200, "PUT business-info con source location id deve funzionare");
+    assert.equal(putRes.data.location.businessInfo.city, "Milano");
+    assert.equal(putRes.data.location.id, realSourceLocationId);
+
+    // Anche l'UUID interno del site continua a risolvere (hot-swap non
+    // regressivo per chi già lo usava).
+    const byUuid = await fetch(`/locations/${siteUuid}`);
+    assert.equal(byUuid.status, 200);
+    assert.equal(byUuid.data.location.id, realSourceLocationId, "UUID interno risolve, id esposto resta il source");
+
+    // Id inesistente ma ben formato → 404 (non 500)
+    const missing = await fetch("/locations/sourceLocationIdMancante");
+    assert.equal(missing.status, 404);
+  });
+
+  // ── Round 19: GET /locations/{id} serve il payload sorgente REALE ──────────
+  // source_location_info.raw è la risposta integrale catturata dal source-sync
+  // dal GET /locations/{id} del sorgente (campi che la shape locale ridotta
+  // non ha: timezone, settings, social, business, brandId, currency,
+  // dateAdded, permissions...). Con sync presente va servito quello,
+  // byte-per-byte: è il caso d'uso reale (siti 21/22 sincronizzati da sorgente).
+
+  test("Round 19: location sincronizzata → GET /locations/:id restituisce il raw sorgente integrale", async () => {
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Sede con sync" }),
+    });
+    assert.equal(createRes.status, 201);
+    const genLocationId = createRes.data.location.id;
+
+    const siteRow = (await query(
+      "SELECT id FROM sites WHERE location_external_id = $1",
+      [genLocationId]
+    )).rows[0];
+    assert.ok(siteRow, "site appena creato deve esistere");
+
+    // Payload REALE stile risposta sorgente GET /locations/{id}
+    const rawSourceLocation = {
+      id: genLocationId,
+      name: "Sede con sync",
+      address: "254 Chapman Road",
+      city: "Newark",
+      state: "Delaware",
+      postalCode: "19702",
+      country: "US",
+      phone: "+393515029767",
+      email: "sede@example.com",
+      website: "EXAMPLE LLC",
+      timezone: "Europe/Madrid",
+      currency: "EUR",
+      brandId: "oPjpulWqypReZ6qgCM72",
+      companyId: "cmpSOURCE000000000001",
+      social: { facebookUrl: "", googlePlacesId: "gp123" },
+      business: { city: "Newark", timezone: "Europe/Madrid" },
+      settings: { saasSettings: { saasMode: "not_activated" } },
+      dateAdded: "2026-08-01T10:00:00.000Z",
+    };
+    await query(
+      `INSERT INTO source_location_info
+         (site_id, source_id, name, address, city, state, postal_code, country,
+          phone, email, website, timezone, company_id, raw, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())`,
+      [
+        siteRow.id, genLocationId, rawSourceLocation.name, rawSourceLocation.address,
+        rawSourceLocation.city, rawSourceLocation.state, rawSourceLocation.postalCode,
+        rawSourceLocation.country, rawSourceLocation.phone, rawSourceLocation.email,
+        rawSourceLocation.website, rawSourceLocation.timezone, rawSourceLocation.companyId,
+        JSON.stringify(rawSourceLocation),
+      ]
+    );
+
+    // GET per location id → il raw INTEGRALE (deep-equal: nessun campo
+    // perduto, nessuna rinomina): parità byte-per-byte col sorgente.
+    const getRes = await fetch(`/locations/${genLocationId}`);
+    assert.equal(getRes.status, 200);
+    assert.deepEqual(getRes.data.location, rawSourceLocation, "risposta = payload sorgente reale integrale");
+    // Campi che la shape locale ridotta NON avrebbe mai:
+    assert.equal(getRes.data.location.timezone, "Europe/Madrid");
+    assert.equal(getRes.data.location.settings.saasSettings.saasMode, "not_activated");
+    assert.equal(getRes.data.location.social.googlePlacesId, "gp123");
+  });
+
+  test("Round 19: location SENZA sync → fallback shape locale invariata (no regressione)", async () => {
+    const createRes = await fetch("/locations", {
+      method: "POST",
+      body: JSON.stringify({ name: "Sede senza sync" }),
+    });
+    assert.equal(createRes.status, 201);
+    const getRes = await fetch(`/locations/${createRes.data.location.id}`);
+    assert.equal(getRes.status, 200);
+    // Shape locale: id/locationId/name/businessInfo/dateAdded, NON i campi
+    // sorgente-only (timezone ecc.) che arrivano solo col raw sincronizzato.
+    assert.ok(getRes.data.location.businessInfo, "shape locale con businessInfo");
+    assert.equal(getRes.data.location.timezone, undefined, "campi sorgente-only assenti senza sync");
+  });
+});

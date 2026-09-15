@@ -1,0 +1,32 @@
+{
+  "customFields": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440100",
+      "locationId": "location-uuid",
+      "name": "Company Phone",
+      "fieldKey": "company_phone",
+      "dataType": "TEXT",
+      "options": [],
+      "dateAdded": "2026-08-25T10:30:00.000Z",
+      "dateUpdated": "2026-08-25T10:30:00.000Z"
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440101",
+      "locationId": "location-uuid",
+      "name": "Service Type",
+      "fieldKey": "service_type",
+      "dataType": "DROPDOWN",
+      "options": [
+        { "id": "opt-1", "name": "Premium" },
+        { "id": "opt-2", "name": "Standard" }
+      ],
+      "dateAdded": "2026-08-25T10:30:00.000Z",
+      "dateUpdated": "2026-08-25T10:30:00.000Z"
+    }
+  ],
+  "meta": {
+    "total": 2,
+    "nextPage": null,
+    "prevPage": null
+  }
+}

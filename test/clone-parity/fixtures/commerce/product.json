@@ -1,0 +1,30 @@
+{
+  "product": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "locationId": "550e8400-e29b-41d4-a716-446655440001",
+    "name": "Premium Package",
+    "description": "A comprehensive package for businesses",
+    "type": "physical",
+    "active": true,
+    "prices": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440010",
+        "name": "Standard",
+        "amount": 99.99,
+        "currency": "EUR",
+        "billingType": "one_time",
+        "active": true
+      },
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440011",
+        "name": "Premium",
+        "amount": 149.99,
+        "currency": "EUR",
+        "billingType": "one_time",
+        "active": true
+      }
+    ],
+    "dateAdded": "2026-08-25T10:00:00Z",
+    "dateUpdated": "2026-08-25T10:00:00Z"
+  }
+}

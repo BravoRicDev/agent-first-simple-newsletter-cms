@@ -1,0 +1,24 @@
+<footer>
+  <div class="container">
+    <div>
+      <h4><%= brandName %></h4>
+      <% if (typeof footerTagline !== 'undefined' && footerTagline) { %>
+      <p><%= footerTagline %></p>
+      <% } %>
+    </div>
+    <div>
+      <h4>Contatti</h4>
+      <p><%= contactEmail %></p>
+    </div>
+    <div>
+      <h4>Link</h4>
+      <p><a href="/">Home</a></p>
+    </div>
+    <div class="bottom">
+      <%= legalLine %>
+      <% if (typeof aiDisclosureText !== 'undefined' && aiDisclosureText) { %>
+      <p style="margin-top:6px;font-size:12px;opacity:0.85;"><%= aiDisclosureText %></p>
+      <% } %>
+    </div>
+  </div>
+</footer>

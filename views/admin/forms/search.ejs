@@ -1,0 +1,40 @@
+<h1>Cerca negli invii</h1>
+
+<div class="actions">
+  <a href="/admin/forms?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Torna ai form</a>
+  <a href="/admin/contacts?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Contatti</a>
+</div>
+
+<form method="GET" style="margin:15px 0;display:flex;gap:10px;align-items:flex-end;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <div class="form-group" style="margin-bottom:0;flex:1;max-width:400px;">
+    <label>Cerca in tutti i form del sito</label>
+    <input type="text" name="q" value="<%= term %>" placeholder="Es. un'email, un nome, una parola nel messaggio..." autofocus>
+  </div>
+  <button type="submit" class="btn">Cerca</button>
+</form>
+
+<% if (term && term.length < 2) { %>
+  <p style="color:#999;font-size:14px;">Scrivi almeno 2 caratteri.</p>
+<% } else if (term && results.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun risultato per "<%= term %>".</p>
+<% } else if (results.length > 0) { %>
+<table>
+  <thead>
+    <tr><th>Form</th><th>Dati</th><th>Data</th></tr>
+  </thead>
+  <tbody>
+    <% results.forEach(r => { %>
+    <tr>
+      <td><code><%= r.form_slug %></code></td>
+      <td>
+        <% Object.entries(r.data).forEach(([k, v]) => { %>
+          <div style="font-size:12px;"><strong><%= k %>:</strong> <%= v %></div>
+        <% }) %>
+      </td>
+      <td style="white-space:nowrap;"><%= new Date(r.created_at).toLocaleString('it-IT') %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

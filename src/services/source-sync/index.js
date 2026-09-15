@@ -1,0 +1,475 @@
+import util from "util";
+import { query, getClient } from "../../db.js";
+import { logger } from "../logger.js";
+import { loadConfig, createSourceClient, SourceBudgetError } from "./client.js";
+import * as contactsMapper from "./mappers/contacts.js";
+import { resolveSiblingSource, cloneContactsFromSibling, cloneCustomFieldsFromSibling, cloneCustomValuesFromSibling, cloneTagsFromSibling, clonePipelinesFromSibling, cloneCalendarsFromSibling, cloneFormsFromSibling, cloneSurveysFromSibling, cloneCampaignsFromSibling, cloneSourceWorkflowsFromSibling, cloneFunnelsFromSibling, cloneCommerceFromSibling } from "./clone-sibling.js";
+import { emitContactEvent } from "../events.js";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Orchestratore source-sync (docs/SOURCE_SYNC_PLAN.md).
+// Esegue i mapper nell'ordine delle dipendenze e coordina la "caccia"
+// ricorsiva: le submission form/survey che referenziano contatti assenti
+// locali fanno scattare il fetch singolo + la caccia delle figlie.
+// ─────────────────────────────────────────────────────────────────────────
+
+const SWEEP_ORDER = [
+  // location-info PRIMA di users: se company_id non è configurato
+  // esplicitamente, lo popola da loc.companyId (richiesto da GET
+  // /users/search) sia su source_sync_config sia su ctx.cfg in memoria,
+  // sbloccando la sync utenti nello stesso run — vedi mappers/location-info.js.
+  "location-info",
+  "users",
+  "custom-fields",
+  "custom-values",
+  "tags",
+  "pipelines",
+  "calendars",
+  "contacts",
+  "opportunities",
+  "forms",
+  "surveys",
+  "campaigns",
+  "commerce",
+  "source-workflows",
+  "funnels",
+];
+
+async function loadMappers() {
+  // Import dinamici: i file mapper sono gestiti da agenti/fasi successive;
+  // un modulo assente viene semplicemente saltato con warning.
+  const names = {
+    "location-info": "./mappers/location-info.js",
+    users: "./mappers/users.js",
+    "custom-fields": "./mappers/custom-fields.js",
+    "custom-values": "./mappers/custom-values.js",
+    tags: "./mappers/tags.js",
+    pipelines: "./mappers/pipelines.js",
+    calendars: "./mappers/calendars.js",
+    contacts: "./mappers/contacts.js",
+    opportunities: "./mappers/opportunities.js",
+    conversations: "./mappers/conversations.js",
+    forms: "./mappers/forms.js",
+    surveys: "./mappers/surveys.js",
+    campaigns: "./mappers/campaigns.js",
+    commerce: "./mappers/commerce.js",
+    "source-workflows": "./mappers/source-workflows.js",
+    funnels: "./mappers/funnels.js",
+  };
+  const loaded = {};
+  for (const [key, path] of Object.entries(names)) {
+    try {
+      loaded[key] = await import(path);
+    } catch (err) {
+      if (err.code !== "ERR_MODULE_NOT_FOUND") throw err;
+      logger.warn(`source-sync: mapper ${key} non presente (${path})`);
+    }
+  }
+  return loaded;
+}
+
+function makeCtx(siteId, cfg, client, { dryRun }) {
+  const stats = {};
+  const addStat = (res, key, n = 1) => {
+    stats[res] = stats[res] || { fetched: 0, upserted: 0, updated: 0, skipped: 0, errors: 0 };
+    stats[res][key] = (stats[res][key] || 0) + n;
+  };
+  return {
+    siteId,
+    cfg,
+    client,
+    dryRun,
+    stats,
+    /** contatti la cui caccia è fallita: NON riprovati nei round successivi
+     *  (previene loop infiniti se il sorgente continua a referenziarli) */
+    failedContacts: new Set(),
+    addStat,
+    /** source_id (id sorgente, non uuid) dei contatti già presenti localmente */
+    knownContacts: new Set(),
+    /** contatti scoperti (submission) ancora non cacciati */
+    discoveredContacts: new Set(),
+    // NB: NON logger.info(prefix, ...a) — senza printf-token nel primo
+    // argomento, winston.format.splat() non concatena gli argomenti extra
+    // nel messaggio: li sparge come proprietà indicizzate sull'oggetto info
+    // (spread di stringa → {0:'c',1:'o',...}), e senza splat() vengono
+    // scartati in silenzio (il bug osservato: righe di log vuote per ogni
+    // errore reale del source-sync). util.format costruisce UNA stringa
+    // già pronta, indipendente dalla configurazione di winston.
+    log: (...a) => logger.info(util.format(`source-sync[${siteId}]:`, ...a)),
+  };
+}
+
+async function loadKnownContacts(siteId) {
+  // source_id, non external_id: doppio id, vedi db/120_source_id_columns.sql.
+  const r = await query("SELECT source_id FROM contacts WHERE site_id = $1 AND source_id <> ''", [siteId]);
+  return new Set(r.rows.map((x) => x.source_id));
+}
+
+/**
+ * Caccia delle risorse figlie per un lotto di contatti (per-contatto API del
+ * sorgente). Chiamata dall'orchestratore dopo ogni pagina di contatti e dopo
+ * ogni round di discovery.
+ */
+async function huntSubresources(mappers, ctx, extIds) {
+  if (!extIds.length) return;
+  const sub = [
+    ["contacts", "syncForContacts"], // note + tasks (dentro il mapper contatti)
+    ["opportunities", "syncForContacts"],
+    ["conversations", "syncForContacts"],
+    ["calendars", "syncAppointmentsForContacts"],
+  ];
+  for (const [key, fn] of sub) {
+    const mod = mappers[key];
+    if (mod && typeof mod[fn] === "function") {
+      await mod[fn](ctx, extIds);
+    }
+  }
+}
+
+export async function runSync(siteId, { resources = null, dryRun = false, mode = null } = {}) {
+  const cfg = await loadConfig(siteId);
+  if (!cfg || !cfg.enabled) {
+    return { ok: false, reason: "not_enabled" };
+  }
+
+  // Advisory lock per-site su connessione DEDICATA: il lock è legato alla
+  // connessione. Prima usava query() sul pool condiviso: se la connessione
+  // tornava nel pool col lock ancora attivo, quel lock NON veniva mai
+  // rilasciato davvero (i sync successivi dello stesso tenant restavano
+  // "already_running"), oppure l'unlock finiva su un'altra connessione e
+  // due sync paralleli potevano girare insieme. Con getClient() il lock
+  // vive su una connessione che teniamo aperta per tutto il run.
+  const lockKey = hashtext(`source-sync:${siteId}`);
+  let lockClient = null;
+  let locked = false;
+  try {
+    lockClient = await getClient();
+    const lockRes = await lockClient.query("SELECT pg_try_advisory_lock($1) AS locked", [lockKey]);
+    if (!lockRes.rows[0]?.locked) {
+      lockClient.release();
+      lockClient = null;
+      return { ok: false, reason: "already_running" };
+    }
+    locked = true;
+
+    // Ruolo master/slave ESPlicito (db/129_sync_master_slave.sql), risolto
+    // PRIMA di aprire un run così uno slave con master non disponibile salta
+    // senza lasciare una riga source_sync_runs "running". Un master (o un sito
+    // standalone senza master designato) fa SEMPRE il sync reale; uno slave
+    // clona SEMPRE dal master quando è una fonte affidabile — nessuna scelta
+    // basata sui conteggi contatti (era l'ambiguità simmetrica del vecchio
+    // findSiblingWithContacts che bloccava i dati).
+    // dryRun: mai clonazione (come prima) → si comporta da master in dry-run.
+    const sibling = !dryRun
+      ? await resolveSiblingSource(siteId, cfg)
+      : { mode: "master", cloneFrom: null, skip: false };
+    if (sibling.skip) {
+      // Scelta di sicurezza: lo slave NON fa fallback a un sync reale proprio
+      // quando il master è disabilitato/inesistente/catena/account diverso.
+      // Perché: l'invariante voluta è "un SOLO chiamante sorgente per location";
+      // un fallback sposterebbe silenziosamente il carico pesante (decine di
+      // migliaia di chiamate) su N slave appena il master va in pausa,
+      // ri-saturando le API (esattamente ciò che la clonazione gemella doveva
+      // evitare) e rendendo di nuovo possibile il drift. "Master disabilitato"
+      // = sync della location in pausa: lo slave aspetta, non si sostituisce.
+      logger.warn(`source-sync[${siteId}]: slave di ${cfg.sync_master_site_id} con master non disponibile (disabilitato/inesistente/catena/account diverso) — giro saltato, nessun fallback a sync reale`);
+      return { ok: false, reason: "master_disabled" };
+    }
+    const siblingSiteId = sibling.cloneFrom;
+    if (siblingSiteId) {
+      logger.info(`source-sync[${siteId}]: slave — clonazione locale dal master ${siblingSiteId} (sync_master_site_id esplicito, zero chiamate sorgente per le risorse clonate)`);
+    }
+
+    const requested = Array.isArray(resources) && resources.length ? resources : SWEEP_ORDER;
+    const runRow = (
+      await query(
+        "INSERT INTO source_sync_runs (site_id, mode, resources) VALUES ($1,$2,$3) RETURNING id",
+        [siteId, mode || (dryRun ? "dry" : "full"), requested]
+      )
+    ).rows[0];
+
+    let ctx;
+    let status = "ok";
+    let error = null;
+
+    try {
+      const client = createSourceClient(cfg);
+      ctx = makeCtx(siteId, cfg, client, { dryRun });
+      ctx.knownContacts = await loadKnownContacts(siteId);
+
+      const mappers = await loadMappers();
+
+      // siblingSiteId (clonazione dal master esplicito, db/129) è stato risolto
+      // sopra, prima di aprire il run. Quando è valorizzato lo sweep clona le
+      // risorse dal master (zero chiamate sorgente) invece di ri-scaricarle; gli
+      // unici due casi che restano SEMPRE un sync reale per-sito sono "users"
+      // (UNIQUE globale su email) e "location-info" (bootstrap company_id).
+
+      // Risorse la cui syncAll/clone di QUESTO giro è stata interrotta da
+      // un'eccezione (qualsiasi, non solo SourceBudgetError — vedi guardia
+      // sotto). NON basarsi su ctx.stats[res].errors per questo: quel
+      // contatore include anche errori "normali" per-item (es. un singolo
+      // /notes o /tasks che risponde 422 durante huntSubresources) che NON
+      // significano che il giro principale della risorsa si sia fermato a
+      // metà — solo un vero throw catturato qui sotto lo significa.
+      const incompleteResources = new Set();
+
+      // Sweep principale nell'ordine di dipendenza. contacts usa una hook di
+      // pagina: dopo ogni pagina caccia subito le figlie (memoria costante).
+      for (const key of SWEEP_ORDER) {
+        if (!requested.includes(key)) continue;
+        const mod = mappers[key];
+        if (!mod || typeof mod.syncAll !== "function") continue;
+        try {
+          if (key === "contacts" && siblingSiteId) {
+            await cloneContactsFromSibling(ctx, siblingSiteId);
+          } else if (key === "contacts") {
+            await mod.syncAll(ctx, async (pageExtIds) => {
+              await huntSubresources(mappers, ctx, pageExtIds);
+            });
+          } else if (key === "opportunities" && siblingSiteId) {
+            // No-op qui: cloneContactsFromSibling (sopra) clona GIÀ le
+            // opportunità insieme ai contatti (stesso giro, vedi
+            // clone-sibling.js). Senza questo ramo esplicito, "opportunities"
+            // ricadrebbe nella clausola di sicurezza generica più sotto
+            // ("else if (siblingSiteId)"), che chiama mod.syncAll(ctx) — il
+            // sync REALE verso sorgente, non una clonazione — facendo sì che
+            // anche lo slave chiami sorgente per le opportunità, raddoppiando il
+            // costo e vanificando l'invariante "un solo chiamante per
+            // location" del master/slave (db/129).
+          } else if (key === "custom-fields" && siblingSiteId) {
+            await cloneCustomFieldsFromSibling(ctx, siblingSiteId);
+          } else if (key === "custom-values" && siblingSiteId) {
+            await cloneCustomValuesFromSibling(ctx, siblingSiteId);
+          } else if (key === "tags" && siblingSiteId) {
+            await cloneTagsFromSibling(ctx, siblingSiteId);
+          } else if (key === "pipelines" && siblingSiteId) {
+            await clonePipelinesFromSibling(ctx, siblingSiteId);
+          } else if (key === "calendars" && siblingSiteId) {
+            await cloneCalendarsFromSibling(ctx, siblingSiteId);
+          } else if (key === "forms" && siblingSiteId) {
+            await cloneFormsFromSibling(ctx, siblingSiteId);
+          } else if (key === "surveys" && siblingSiteId) {
+            await cloneSurveysFromSibling(ctx, siblingSiteId);
+          } else if (key === "campaigns" && siblingSiteId) {
+            await cloneCampaignsFromSibling(ctx, siblingSiteId);
+          } else if (key === "source-workflows" && siblingSiteId) {
+            await cloneSourceWorkflowsFromSibling(ctx, siblingSiteId);
+          } else if (key === "funnels" && siblingSiteId) {
+            await cloneFunnelsFromSibling(ctx, siblingSiteId);
+          } else if (key === "commerce" && siblingSiteId) {
+            await cloneCommerceFromSibling(ctx, siblingSiteId);
+          } else if (key === "location-info" || key === "users") {
+            // Queste risorse rimangono sempre sincronizzate in modo indipendente
+            // via API: users ha un vincolo UNIQUE globale su email,
+            // location-info ha un effetto collaterale (bootstrap company_id)
+            await mod.syncAll(ctx);
+          } else if (siblingSiteId) {
+            // Per qualsiasi altra chiave non explicitamente gestita sopra,
+            // se esiste un sito gemello, proviamo la clonazione locale.
+            // (Questa clausola è di sicurezza per eventuali nuove risorse
+            // aggiunte in futuro.)
+            await mod.syncAll(ctx);
+          } else {
+            await mod.syncAll(ctx);
+          }
+        } catch (err) {
+          if (err instanceof SourceBudgetError) throw err;
+          // GUARDIA sync incrementale contatti (vedi mappers/contacts.js):
+          // un'interruzione non-budget di QUESTA risorsa in QUESTO giro
+          // deve impedire che last_status diventi 'ok' più sotto, altrimenti
+          // il prossimo giro potrebbe attivare l'early-stop credendo (a
+          // torto) che questo giro abbia completato l'intero walk — perdita
+          // dati silenziosa e permanente per i contatti mai raggiunti.
+          incompleteResources.add(key);
+          logger.error(`source-sync: mapper ${key} fallito: ${err.message}`);
+          // NON ctx.addStat(key, "errors", 1) qui: OGNI mapper (verificato
+          // su tutti quelli esistenti) già chiama addStat(key,"errors",1)
+          // nel proprio catch esterno di syncAll prima di ri-lanciare
+          // l'errore — un secondo addStat qui contava lo stesso fallimento
+          // 2 volte (osservato dal vivo: commerce con un solo errore reale
+          // mostrava "errors": 2 nel risultato del run). Il log resta qui
+          // come rete di sicurezza per un futuro mapper che non seguisse
+          // il pattern (throw senza aver già contato l'errore da solo).
+        }
+      }
+
+      // Ricorsione: submission che referenziano contatti sconosciuti
+      let guard = 0;
+      while (ctx.discoveredContacts.size > 0 && guard < 50) {
+        guard++;
+        const batch = [...ctx.discoveredContacts].slice(0, 50);
+        for (const id of batch) ctx.discoveredContacts.delete(id);
+        const fresh = [];
+        for (const extId of batch) {
+          if (ctx.knownContacts.has(extId)) continue;
+          if (ctx.failedContacts.has(extId)) continue; // già tentato e fallito
+          if (typeof contactsMapper.fetchSingle === "function") {
+            const row = await contactsMapper.fetchSingle(ctx, extId);
+            if (row) {
+              fresh.push(extId);
+              ctx.knownContacts.add(extId);
+            } else {
+              // fetch fallito/404: non riprovare ai round successivi
+              ctx.failedContacts.add(extId);
+            }
+          }
+        }
+        await huntSubresources(mappers, ctx, fresh);
+      }
+
+      // Watermark/statistiche per risorsa. last_status resta 'ok' SOLO se la
+      // risorsa non è tra quelle interrotte da un'eccezione in questo giro
+      // (vedi incompleteResources sopra) — chi legge last_status='ok' come
+      // "giro completo affidabile" (es. l'early-stop di mappers/contacts.js)
+      // deve poterselo fidare davvero.
+      for (const res of Object.keys(ctx.stats)) {
+        const resStatus = incompleteResources.has(res) ? "error" : "ok";
+        await query(
+          `INSERT INTO source_sync_state (site_id, resource_type, watermark, last_run_at, last_status, last_counts)
+           VALUES ($1,$2,NOW(),NOW(),$4,$3)
+           ON CONFLICT (site_id, resource_type) DO UPDATE SET
+             watermark = NOW(), last_run_at = NOW(), last_status = $4, last_counts = $3`,
+          [siteId, res, JSON.stringify(ctx.stats[res]), resStatus]
+        );
+      }
+    } catch (err) {
+      status = err instanceof SourceBudgetError ? "budget_exhausted" : "error";
+      error = err.message;
+      logger.error(`source-sync run ${runRow.id} errore: ${err.message}`);
+    } finally {
+      await query(
+        `UPDATE source_sync_runs SET status=$2, finished_at=NOW(), stats=$3, errors=$4 WHERE id=$1`,
+        [
+          runRow.id,
+          status,
+          JSON.stringify(ctx?.stats || {}),
+          JSON.stringify(error ? [{ error }] : []),
+        ]
+      );
+
+      // ── Bridging webhook OUT ──────────────────────────────────────────
+      // Emette un evento source_sync_completed nel bus così i webhook OUT/
+      // workflow configurati per quel trigger possono propagare l'esito a
+      // sistemi esterni (es. n8n per campagne cross-channel post-sync).
+      if (status === "ok" && ctx && !dryRun) {
+        try {
+          const contactCount = ctx.stats?.contacts?.upserted || 0;
+          await emitContactEvent(siteId, "", "source_sync_completed", {
+            sync_id: runRow.id,
+            status,
+            mode: mode || "full",
+            resources: requested,
+            stats: ctx.stats,
+            contact_count: contactCount,
+          }, { origin: "import" }).catch(() => {});
+        } catch (err) {
+          logger.error(`source-sync: emit source_sync_completed fallito (site ${siteId}): ${err.message}`);
+        }
+      }
+    }
+
+    return { ok: status === "ok" || status === "budget_exhausted", status, stats: ctx?.stats || {}, error };
+  } finally {
+    if (locked && lockClient) {
+      try {
+        await lockClient.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+      } catch (err) {
+        logger.error(`source-sync: unlock fallito (site ${siteId}): ${err.message}`);
+      }
+      lockClient.release();
+    }
+  }
+}
+
+/** Due run ravvicinati non devono sovrapporsi: usato anche dalle route manuali. */
+export async function isRunning(siteId) {
+  const r = await query(
+    "SELECT 1 FROM source_sync_runs WHERE site_id=$1 AND status='running' AND started_at > NOW()-interval '6 hours' LIMIT 1",
+    [siteId]
+  );
+  return r.rows.length > 0;
+}
+
+function hashtext(str) {
+  // pg_try_advisory_lock accetta bigint: hashtext non esiste lato JS,
+  // usiamo un hash numerico stabile semplice.
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+// ── Pulizia run orfani ("running" lasciati da un processo precedente) ──
+// Un container ricreato a metà run lascia la riga source_sync_runs in
+// status='running' per sempre: nessun codice la marcava 'error'/
+// 'interrupted' al riavvio (osservato in produzione: righe accumulate da
+// mesi). cleanupOrphanRunsOnce() gira una sola volta per avvio processo
+// (flag in memoria), al primo tick dello scheduler.
+//
+// NON un UPDATE incondizionato su tutte le 'running': db/migrate.js
+// documenta esplicitamente che più istanze del CMS possono girare in
+// parallelo sullo stesso cluster Postgres (deploy multi-nodo), e
+// runSync() stesso usa un advisory lock PER SITO (hashtext, sotto) proprio
+// per coordinarsi fra istanze concorrenti — non "un solo processo Node
+// serve tutti i siti". Un UPDATE senza soglia temporale, al boot di
+// un'istanza, rischierebbe di marcare 'interrupted' un run genuinamente in
+// corso su un'ALTRA istanza ancora viva (es. sovrapposizione durante un
+// deploy rolling), rompendo la garanzia stessa che l'advisory lock esiste
+// per dare. Usiamo perciò la STESSA soglia di staleness già stabilita da
+// isRunning() sotto (6 ore): solo righe più vecchie di quella finestra,
+// che isRunning() già considera "non più bloccanti", vengono chiuse.
+let orphanCleanupDone = false;
+async function cleanupOrphanRunsOnce() {
+  if (orphanCleanupDone) return;
+  orphanCleanupDone = true;
+  try {
+    const r = await query(
+      `UPDATE source_sync_runs SET status='interrupted', finished_at=NOW()
+       WHERE status='running' AND started_at <= NOW() - interval '6 hours'`
+    );
+    if (r.rowCount > 0) {
+      logger.warn(`source-sync: ${r.rowCount} run 'running' orfani (>6h) marcati 'interrupted' all'avvio`);
+    }
+  } catch (err) {
+    logger.error(`source-sync: cleanup run orfani fallito: ${err.message}`);
+  }
+}
+
+// ── Cron S4: siti con sync abilitato e intervallo scaduto ───────────────
+// Chiamata dallo scheduler a ogni tick; avvia al massimo un run per sito
+// (in-memory set + advisory lock in runSync come seconda barriera).
+const activeSites = new Set();
+
+export async function runSourceSyncDue() {
+  await cleanupOrphanRunsOnce();
+  const due = (
+    await query(
+      `SELECT c.site_id
+         FROM source_sync_config c
+        WHERE c.enabled = true
+          AND (
+            c.calls_date IS DISTINCT FROM (CURRENT_DATE AT TIME ZONE 'UTC')
+            OR c.calls_count < FLOOR(c.daily_quota * c.budget_percent / 100.0)
+          )
+          AND COALESCE(
+                (SELECT MAX(r.started_at) FROM source_sync_runs r WHERE r.site_id = c.site_id),
+                'epoch'
+              ) <= NOW() - make_interval(mins => GREATEST(c.min_interval_minutes, 1))
+        LIMIT 5`
+    )
+  ).rows;
+
+  let started = 0;
+  for (const row of due) {
+    const siteId = row.site_id;
+    if (activeSites.has(siteId)) continue;
+    activeSites.add(siteId);
+    started++;
+    runSync(siteId)
+      .catch((err) => logger.error(`source-sync cron site ${siteId}: ${err.message}`))
+      .finally(() => activeSites.delete(siteId));
+  }
+  return { started };
+}

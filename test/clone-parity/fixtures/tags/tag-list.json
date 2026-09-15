@@ -1,0 +1,23 @@
+{
+  "tags": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "locationId": "location-uuid",
+      "name": "VIP",
+      "color": "#FF0000",
+      "dateAdded": "2026-08-25T10:30:00.000Z"
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "locationId": "location-uuid",
+      "name": "Lead",
+      "color": null,
+      "dateAdded": "2026-08-25T10:30:00.000Z"
+    }
+  ],
+  "meta": {
+    "total": 2,
+    "nextPage": null,
+    "prevPage": null
+  }
+}

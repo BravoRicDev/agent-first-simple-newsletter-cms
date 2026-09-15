@@ -1,0 +1,109 @@
+<h1>Dashboard realtime — <%= site ? site.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <% if (isSuperadmin && sites.length > 0) { %>
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <% } %>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Intervallo</label>
+    <select name="range" onchange="this.form.submit()">
+      <% ["7d", "30d", "90d"].forEach(r => { %>
+        <option value="<%= r %>" <%= range === r ? 'selected' : '' %>><%= r === '7d' ? 'Ultimi 7 giorni' : r === '30d' ? 'Ultimi 30 giorni' : 'Ultimi 90 giorni' %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+
+<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:24px;">
+  <div style="flex:1;min-width:160px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
+    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Lead nel periodo</div>
+    <div style="font-size:26px;font-weight:700;"><%= kpis.leads %></div>
+    <div style="font-size:12px;color:#6b7280;">di cui <%= kpis.new_leads_7d %> negli ultimi 7 giorni</div>
+  </div>
+  <div style="flex:1;min-width:160px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
+    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Valore pipeline (open)</div>
+    <div style="font-size:26px;font-weight:700;">€ <%= Number(kpis.pipeline_value).toLocaleString('it-IT', { maximumFractionDigits: 0 }) %></div>
+    <div style="font-size:12px;color:#6b7280;"><%= kpis.open_opportunities %> opportunità · win rate <%= kpis.win_rate %>%</div>
+  </div>
+  <div style="flex:1;min-width:160px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
+    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Task aperte</div>
+    <div style="font-size:26px;font-weight:700;"><%= kpis.tasks_open %></div>
+    <div style="font-size:12px;color:#b91c1c;"><%= kpis.tasks_overdue %> in ritardo (SLA)</div>
+  </div>
+  <div style="flex:1;min-width:160px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
+    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">Conversazioni aperte</div>
+    <div style="font-size:26px;font-weight:700;"><%= kpis.conversations_open %></div>
+    <div style="font-size:12px;color:#6b7280;">
+      Email: sent <%= kpis.email_stats && kpis.email_stats.sent !== undefined ? kpis.email_stats.sent : 'n/d' %> ·
+      opened <%= kpis.email_stats && kpis.email_stats.opened !== undefined ? kpis.email_stats.opened : 'n/d' %>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;gap:30px;align-items:flex-start;flex-wrap:wrap;">
+  <div style="flex:1;min-width:300px;">
+    <h2 style="font-size:16px;">Lead per canale</h2>
+    <% if (kpis.leads_by_channel.length === 0) { %>
+      <p style="color:#999;font-size:14px;">Nessun lead nel periodo selezionato.</p>
+    <% } else { %>
+    <table>
+      <thead><tr><th>Canale</th><th>Lead</th></tr></thead>
+      <tbody>
+        <% kpis.leads_by_channel.forEach(c => { %>
+        <tr>
+          <td><%= c.channel %></td>
+          <td><%= c.count %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } %>
+  </div>
+
+  <div style="flex:1;min-width:300px;">
+    <h2 style="font-size:16px;">Attività recente</h2>
+    <% if (kpis.recent_activity.length === 0) { %>
+      <p style="color:#999;font-size:14px;">Nessuna attività registrata.</p>
+    <% } else { %>
+    <table>
+      <thead><tr><th>Evento</th><th>Contatto</th><th>Quando</th></tr></thead>
+      <tbody>
+        <% kpis.recent_activity.forEach(e => { %>
+        <tr>
+          <td><%= e.event_type %></td>
+          <td><%= e.email %></td>
+          <td style="font-size:12px;"><%= e.created_at ? new Date(e.created_at).toLocaleString('it-IT') : '' %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } %>
+  </div>
+
+  <div style="flex:1;min-width:260px;">
+    <h2 style="font-size:16px;">Viste salvate</h2>
+    <% if (views.length === 0) { %>
+      <p style="color:#999;font-size:14px;">Nessuna vista salvata. Le viste si creano via API agente/MCP (POST /api/agent/sites/:siteId/dashboard/views).</p>
+    <% } else { %>
+    <ul style="padding-left:18px;font-size:14px;">
+      <% views.forEach(v => { %>
+        <li><strong><%= v.name %></strong> — <%= v.config && Array.isArray(v.config.widgets) ? v.config.widgets.length + ' widget' : '0 widget' %></li>
+      <% }) %>
+    </ul>
+    <% } %>
+    <p style="color:#999;font-size:12px;margin-top:10px;">Aggiornato: <%= new Date(kpis.generated_at).toLocaleString('it-IT') %> (dati live, niente snapshot)</p>
+  </div>
+</div>

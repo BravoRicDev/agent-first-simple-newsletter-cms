@@ -1,0 +1,54 @@
+<h1>Newsletter<%= site ? ' — ' + site.name : '' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (!emailConfigured) { %>
+<div class="alert alert-info">
+  SMTP newsletter non configurato per questo sito. <a href="/admin/newsletter/settings?site_id=<%= siteId %>">Configuralo qui</a> prima di inviare campagne.
+</div>
+<% } %>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:30px;">
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#059669;"><%= subscriberCounts.confirmed %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Iscritti confermati</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#d97706;"><%= subscriberCounts.pending %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">In attesa di conferma</div>
+  </div>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:#6b7280;"><%= subscriberCounts.unsubscribed %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Disiscritti</div>
+  </div>
+  <% const complaintColor = complaintMetrics?.status === 'warn' ? '#dc2626' : '#059669'; %>
+  <div style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-align:center;">
+    <div style="font-size:32px;font-weight:700;color:<%= complaintColor %>;"><%= complaintMetrics?.complaintCount30d || 0 %></div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">Complaint (30gg)</div>
+    <% if (complaintMetrics?.rate !== null) { %>
+    <div style="font-size:11px;color:<%= complaintColor %>;margin-top:6px;">Rate: <%= (complaintMetrics.rate * 100).toFixed(3) %>%</div>
+    <% } %>
+  </div>
+</div>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap;">
+  <a href="/admin/newsletter/subscribers?site_id=<%= siteId %>" class="btn">Iscritti</a>
+  <a href="/admin/newsletter/campaigns?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Campagne</a>
+  <a href="/admin/newsletter/sequences?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Sequenze evergreen</a>
+  <a href="/admin/newsletter/settings?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Impostazioni SMTP</a>
+</div>
+
+<p style="font-size:13px;color:#999;margin-top:20px;">
+  Iscrizione pubblica: <code>POST <%= baseUrl %>/newsletter/<%= siteId %>/subscribe</code> (campo <code>email</code>, honeypot <code>website</code> opzionale, stesso pattern dei form).
+</p>

@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddyfile.lb — load balancer per il cluster CMS (2+ nodi, stesso DC).
+#
+# Questo Caddy gira su un host dedicato (o sul witness etcd) e distribuisce il
+# traffico ai Caddy per-nodo (porta 8080), che servono static/ e media/ locali
+# e fanno reverse_proxy verso l'app. Health check su /health: se un nodo cade,
+# il traffico passa all'altro senza intervento.
+#
+# NOTA: in produzione il TLS lo termina Cloudflare (zona già configurata):
+#   - Cloudflare Load Balancing → ssl/... :può puntare direttamente a questo
+#     Caddy :80 per proxy + failover L4, oppure
+#   - Cloudflare proxy → A:8080 e B:8080 direttamente se non vuoi l'host LB.
+#
+# Uso: sostituire gli indirizzi con gli IP reali dei nodi.
+# ─────────────────────────────────────────────────────────────────────────────
+
+:80 {
+    reverse_proxy {
+        to cms-node-a:8080 cms-node-b:8080
+        health_uri /health
+        health_interval 10s
+        health_timeout 5s
+        health_fails 3
+        lb_policy round_robin
+    }
+}
+
+# Variante con /admin e API sticky-free (JWT stateless: basta il round_robin).
+# Se in futuro servisse mantenere affinità per IP sorgente:
+#   lb_policy first   # oppure ip_hash con plugin, non core.

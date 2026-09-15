@@ -1,0 +1,365 @@
+import { test, describe, before, after } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "crypto";
+import express from "express";
+import { query } from "../../src/db.js";
+import { createTestSite, closeDb } from "../helpers.js";
+import cloneRoutes from "../../src/routes/api-clone/index.js";
+import publicSmsInboundRoutes from "../../src/routes/public-sms-inbound.js";
+
+describe("Onda F — Conversazioni clone (SMS/Email/WhatsApp)", () => {
+  let server, baseUrl;
+  let site;
+  let apiKey;
+  let contact;
+
+  const mkKey = async (siteId, name) => {
+    const raw = "testkey_" + crypto.randomBytes(24).toString("hex");
+    const hash = crypto.createHash("sha256").update(raw).digest("hex");
+    const r = await query(
+      "INSERT INTO site_api_keys (site_id, name, token_hash, token_prefix, active) VALUES ($1, $2, $3, $4, true) RETURNING id",
+      [siteId, name, hash, raw.slice(0, 12)]
+    );
+    return { id: r.rows[0].id, raw };
+  };
+
+  const fetch = async (path, opts = {}) => {
+    const sep = path.includes("?") ? "&" : "?";
+    const url = `http://localhost:${server.address().port}${path}${sep}locationId=${site.id}`;
+    const res = await globalThis.fetch(url, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey.raw}`,
+        ...(opts.headers || {}),
+      },
+    });
+    const data = res.ok ? await res.json() : null;
+    return { status: res.status, data };
+  };
+
+  before(async () => {
+    site = await createTestSite("Conversations Clone");
+    apiKey = await mkKey(site.id, "test key conversations");
+
+    // Crea contatto di test
+    const contactEmail = `contact-${crypto.randomBytes(4).toString("hex")}@test.local`;
+    const contactResult = await query(
+      "INSERT INTO contacts (site_id, email, status) VALUES ($1, $2, 'active') RETURNING id, external_id",
+      [site.id, contactEmail]
+    );
+    contact = { id: contactResult.rows[0].id, externalId: contactResult.rows[0].external_id };
+    if (!contact.externalId) {
+      const extResult = await query("SELECT external_id FROM contacts WHERE id = $1", [contact.id]);
+      contact.externalId = extResult.rows[0].external_id;
+    }
+
+    // Crea webhook IN per SMS inbound
+    await query(
+      "INSERT INTO webhooks (site_id, direction, name, active, secret, events) VALUES ($1, 'in', 'SMS Inbound', true, $2, $3)",
+      [site.id, "test_webhook_secret", JSON.stringify({ sms_received: { action: "emit_event" } })]
+    );
+
+    // Crea app express con entrambi i router (SMS inbound PRIMA del clone router)
+    const app = express();
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true })); // Twilio usa FormUrlEncoded
+    app.use(publicSmsInboundRoutes);
+    app.use(cloneRoutes);
+    app.use((req, res) => res.status(404).json({ statusCode: 404, message: "not found" }));
+    app.use((err, req, res, next) => {
+      res.status(500).json({ statusCode: 500, message: err.message });
+    });
+
+    server = await new Promise((resolve) => {
+      const srv = app.listen(0, () => {
+        baseUrl = `http://localhost:${srv.address().port}`;
+        resolve(srv);
+      });
+    });
+  });
+
+  after(async () => {
+    if (server) server.close();
+    await closeDb();
+  });
+
+  test("SMS: POST /conversations/messages → lista → GET messages → unbound → star → read", async () => {
+    // CREATE SMS message usando contatto di test
+    const createRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "SMS",
+        contactId: contact.externalId,
+        body: "Hello from SMS test",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    assert(createRes.data.message);
+    assert(createRes.data.message.id);
+    assert.equal(createRes.data.message.type, "SMS");
+    assert.equal(createRes.data.message.direction, "outbound");
+    assert.equal(createRes.data.message.status, "sent");
+    const messageId = createRes.data.message.id;
+
+    // LIST conversations
+    const listRes = await fetch("/conversations");
+    assert.equal(listRes.status, 200);
+    assert(listRes.data.conversations);
+    assert(listRes.data.conversations.conversation);
+    assert.ok(listRes.data.conversations.conversation.length >= 1);
+    const thread = listRes.data.conversations.conversation[0];
+    assert(thread.id);
+    assert.equal(thread.type, "SMS");
+    assert.equal(thread.direction, undefined); // Non c'è direction in thread
+    assert.equal(thread.unreadCount, 0); // Outbound non aumenta unread
+    assert.equal(thread.starred, false);
+    assert(thread.lastMessageBody.includes("Hello from SMS test"));
+    assert(thread.dateAdded);
+    const conversationId = thread.id;
+
+    // GET /conversations/:id/messages
+    const messagesRes = await fetch(`/conversations/${conversationId}/messages`);
+    assert.equal(messagesRes.status, 200);
+    assert(messagesRes.data.messages);
+    assert.ok(messagesRes.data.messages.length >= 1);
+    const msg = messagesRes.data.messages[0];
+    assert.equal(msg.id, messageId);
+    assert.equal(msg.direction, "outbound");
+    assert.equal(msg.type, "SMS");
+
+    // Note: inbound webhook testato separatamente nel test "SMS inbound webhook"
+
+    // PUT /conversations/:id/star
+    const starRes = await fetch(`/conversations/${conversationId}/star`, {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(starRes.status, 200);
+    assert.equal(starRes.data.ok, true);
+
+    // Verify star
+    const listRes3 = await fetch("/conversations");
+    assert(listRes3.data.conversations.conversation.length >= 1);
+    const starred = listRes3.data.conversations.conversation.find((t) => t.id === conversationId);
+    assert(starred);
+    assert.equal(starred.starred, true);
+
+    // PUT /conversations/:id/read
+    const readRes = await fetch(`/conversations/${conversationId}/read`, {
+      method: "PUT",
+      body: JSON.stringify({}),
+    });
+    assert.equal(readRes.status, 200);
+    assert.equal(readRes.data.ok, true);
+
+    // Note: unreadCount sarà 0 per outbound (non incrementato)
+    const listRes4 = await fetch("/conversations");
+    const thread4 = listRes4.data.conversations.conversation.find((t) => t.id === conversationId);
+    assert(thread4);
+    assert.equal(thread4.unreadCount, 0);
+  });
+
+  test("Email: POST /conversations/messages type=Email → lista filtra per type", async () => {
+    const createRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "Email",
+        email: contact.externalId, // Test pass UUID direttamente
+        body: "Email test message",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.data.message.type, "Email");
+
+    // List filter by type=Email
+    const listRes = await fetch("/conversations?type=Email");
+    assert.equal(listRes.status, 200);
+    // Potrebbe esserci il thread Email appena creato, verifica che almeno uno sia Email
+    const hasEmail = listRes.data.conversations.conversation.some((t) => t.type === "Email");
+    assert.ok(hasEmail);
+  });
+
+  test("WhatsApp: POST /conversations/messages type=WhatsApp", async () => {
+    const createRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "WhatsApp",
+        contactId: contact.externalId,
+        message: "WhatsApp test",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.data.message.type, "WhatsApp");
+  });
+
+  test("Errori: contactId mancante → 400, type invalido → 400", async () => {
+    // Missing contactId/email
+    const noContactRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "SMS",
+        body: "test",
+      }),
+    });
+    assert.equal(noContactRes.status, 400);
+
+    // Invalid type
+    const invalidTypeRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "InvalidType",
+        contactId: contact.externalId,
+        body: "test",
+      }),
+    });
+    assert.equal(invalidTypeRes.status, 400);
+
+    // Missing body
+    const noBodyRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "SMS",
+        contactId: contact.externalId,
+      }),
+    });
+    assert.equal(noBodyRes.status, 400);
+  });
+
+  test("Limit: GET /conversations?limit=2 ritorna max 2 thread", async () => {
+    // Create 2 SMS con email diverse
+    for (let i = 0; i < 2; i++) {
+      await fetch("/conversations/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "SMS",
+          email: `paginate-test-${i}@example.com`,
+          body: `Message ${i}`,
+        }),
+      });
+    }
+
+    // List con limit=2
+    const page1 = await fetch("/conversations?limit=2");
+    assert.equal(page1.status, 200);
+    assert(page1.data.conversations.conversation);
+    assert.ok(page1.data.conversations.conversation.length <= 2);
+    assert(page1.data.meta.total >= 0);
+  });
+
+  // Parity source_id: l'automazione esterna (n8n) deve poter usare l'id reale
+  // sorgente al posto dell'UUID interno, sia per il contatto che per il thread,
+  // esattamente come findByAnyId già fa per contatti/opportunità/calendari.
+  test("Parity source_id: contactId reale in creazione + lookup thread per source_id reale", async () => {
+    const fakeContactSourceId = "sourceCONTACTparityXYZ";
+    await query("UPDATE contacts SET source_id = $1 WHERE id = $2", [fakeContactSourceId, contact.id]);
+
+    const createRes = await fetch("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "SMS",
+        contactId: fakeContactSourceId,
+        body: "Hello via source_id contatto",
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const conversationExternalId = createRes.data.message.conversationId;
+
+    const convRow = await query(
+      "SELECT id FROM conversations WHERE site_id = $1 AND (external_id::text = $2 OR source_id = $2)",
+      [site.id, conversationExternalId]
+    );
+    assert.ok(convRow.rows[0], "thread appena creato deve essere risolvibile");
+    const fakeConvSourceId = "sourceCONVparityABC123";
+    await query("UPDATE conversations SET source_id = $1 WHERE id = $2", [fakeConvSourceId, convRow.rows[0].id]);
+
+    // GET messages per source_id reale del thread (non UUID)
+    const msgsRes = await fetch(`/conversations/${fakeConvSourceId}/messages`);
+    assert.equal(msgsRes.status, 200);
+    assert.ok(msgsRes.data.messages.length >= 1);
+
+    // PUT star per source_id reale
+    const starRes = await fetch(`/conversations/${fakeConvSourceId}/star`, {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(starRes.status, 200);
+
+    // Filtro lista per contactId = source_id reale
+    const listRes = await fetch(`/conversations?contactId=${fakeContactSourceId}`);
+    assert.equal(listRes.status, 200);
+    assert.ok(listRes.data.conversations.conversation.some((t) => t.contactId === fakeContactSourceId));
+
+    // id malformato (troppo lungo) → 400
+    const badRes = await fetch(`/conversations/${"x".repeat(300)}/star`, {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(badRes.status, 400);
+
+    // id valido come formato ma inesistente → 404
+    const notFoundRes = await fetch("/conversations/nonexistent-source-id/star", {
+      method: "PUT",
+      body: JSON.stringify({ starred: true }),
+    });
+    assert.equal(notFoundRes.status, 404);
+  });
+
+  // Parity source_id round 14: il cursore startAfterId dei messaggi risolve
+  // anche il source_message_id (l'id reale sorgente esposto da serializeMessage),
+  // con scope sul sito via JOIN a conversations. conversation_messages non
+  // ha né site_id né source_id → niente findByAnyId, query dedicata.
+  test("Parity source_id: cursore messaggi con source_message_id == cursore UUID", async () => {
+    // Contatto DEDICATO: i test precedenti condividono lo stesso thread,
+    // qui ci servono esattamente 3 messaggi in una conversazione pulita.
+    const cursorContactEmail = `cursor-${crypto.randomBytes(4).toString("hex")}@test.local`;
+    const cursorContact = (await query(
+      "INSERT INTO contacts (site_id, email, status) VALUES ($1, $2, 'active') RETURNING external_id",
+      [site.id, cursorContactEmail]
+    )).rows[0];
+
+    // 3 messaggi nello stesso thread (stesso contatto → stessa conversazione)
+    const bodies = ["cursor-msg-1", "cursor-msg-2", "cursor-msg-3"];
+    let convId = null;
+    for (const body of bodies) {
+      const r = await fetch("/conversations/messages", {
+        method: "POST",
+        body: JSON.stringify({ type: "SMS", contactId: cursorContact.external_id, body }),
+      });
+      assert.equal(r.status, 201);
+      convId = r.data.message.conversationId;
+    }
+
+    // source_message_id reale (stile sorgente) sui messaggi 1 e 2
+    const msgRows = (await query(
+      "SELECT id, external_id, body FROM conversation_messages WHERE conversation_id = (SELECT id FROM conversations WHERE site_id = $1 AND (external_id::text = $2 OR source_id = $2)) ORDER BY id ASC",
+      [site.id, convId]
+    )).rows;
+    assert.equal(msgRows.length, 3);
+    const srcId2 = "sourceMSGsource0002";
+    await query("UPDATE conversation_messages SET source_message_id = $1 WHERE id = $2", [srcId2, msgRows[1].id]);
+    const srcId3 = "sourceMSGsource0003";
+    await query("UPDATE conversation_messages SET source_message_id = $1 WHERE id = $2", [srcId3, msgRows[2].id]);
+
+    // GET con startAfterId = UUID del msg2 → insieme A (solo msg1: id < cursore)
+    const byUuid = await fetch(`/conversations/${convId}/messages?limit=5&startAfterId=${msgRows[1].external_id}`);
+    assert.equal(byUuid.status, 200);
+    const setA = byUuid.data.messages.map((m) => m.body).sort();
+
+    // GET con startAfterId = source_message_id del msg2 → insieme B identico
+    const bySrc = await fetch(`/conversations/${convId}/messages?limit=5&startAfterId=${srcId2}`);
+    assert.equal(bySrc.status, 200);
+    const setB = bySrc.data.messages.map((m) => m.body).sort();
+
+    assert.deepEqual(setB, setA, "il cursore source_message_id deve equivalere a quello UUID");
+    assert.deepEqual(setA, ["cursor-msg-1"], "con cursore sul msg2 deve restare solo msg1");
+
+    // nextStartAfterId esposto nello stesso formato id dei messaggi:
+    // con limit=1 su una lista più lunga, il cursore next deve essere il
+    // source_message_id del msg successivo (se presente) o l'UUID.
+    const paged = await fetch(`/conversations/${convId}/messages?limit=2`);
+    assert.equal(paged.status, 200);
+    assert.equal(paged.data.messages.length, 2);
+    assert.equal(paged.data.meta.nextPage, srcId3, "nextPage = source_message_id del 3° messaggio");
+  });
+});

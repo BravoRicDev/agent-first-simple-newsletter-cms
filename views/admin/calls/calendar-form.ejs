@@ -1,0 +1,83 @@
+<h1><%= calendar ? 'Modifica calendario' : 'Nuovo calendario' %><%= calendar && calendar.name ? ' — ' + calendar.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (error) { %>
+<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#991b1b;font-size:14px;">
+  ⚠️ <%= error %>
+</div>
+<% } %>
+
+<form method="POST" action="<%= calendar ? '/admin/calls/calendars/' + calendar.id : '/admin/calls/calendars' %>" style="max-width:560px;">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+
+  <div class="form-group">
+    <label>Nome del calendario</label>
+    <input type="text" name="name" required maxlength="255" value="<%= calendar ? calendar.name : '' %>" placeholder="Es. Consulenza, Demo, Assistenza">
+  </div>
+
+  <% if (calendar) { %>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" value="<%= calendar.slug %>" disabled style="background:#f3f4f6;">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Usato nel tag <code>{{calendar:<%= calendar.slug %>}}</code> già eventualmente inserito nelle pagine.</div>
+  </div>
+  <% } else { %>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" name="slug" required maxlength="100" pattern="[a-z0-9-]+" placeholder="es. consulenza">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Solo lettere minuscole, numeri e trattini. Usato nel tag <code>{{calendar:slug}}</code> per integrare il calendario in una pagina.</div>
+  </div>
+  <% } %>
+
+  <div class="form-group">
+    <label>Descrizione (opzionale)</label>
+    <textarea name="description" maxlength="2000" rows="3" style="width:100%;"><%= calendar ? calendar.description : '' %></textarea>
+    <div style="font-size:12px;color:#666;margin-top:3px;">Mostrata nella pagina pubblica di prenotazione e nel widget.</div>
+  </div>
+
+  <div class="form-group">
+    <label>Pagina di ringraziamento / redirect (opzionale)</label>
+    <input type="text" name="ty_page" maxlength="500" value="<%= calendar ? calendar.ty_page : '' %>" placeholder="es. /grazie">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Dopo una prenotazione riuscita il visitatore viene portato qui (path relativo, es. <code>/grazie</code>, o URL dello stesso dominio). Vuoto = messaggio di conferma standard. Il widget <code>{{calendar:slug}}</code> segue il redirect automaticamente.</div>
+  </div>
+
+  <div class="form-group">
+    <label>Utente associato (opzionale)</label>
+    <select name="user_id">
+      <option value="">— Nessuno —</option>
+      <% users.forEach(u => { %>
+        <option value="<%= u.id %>" <%= calendar && calendar.user_id == u.id ? 'selected' : '' %>><%= u.email %><%= u.role === 'superadmin' ? ' (superadmin)' : '' %></option>
+      <% }) %>
+    </select>
+    <div style="font-size:12px;color:#666;margin-top:3px;">Il proprietario/agente che gestisce questo calendario. Solo informativo per ora: le prenotazioni arrivano comunque alla casella configurata nelle impostazioni newsletter del sito.</div>
+  </div>
+
+  <div class="form-group">
+    <label style="font-size:13px;"><input type="checkbox" name="enabled" value="1" <%= !calendar || calendar.enabled ? 'checked' : '' %>> Calendario attivo</label>
+    <div style="font-size:12px;color:#666;margin-top:3px;">Se disattivato, la pagina pubblica e il widget mostrano "nessuno slot disponibile".</div>
+  </div>
+
+  <div class="actions" style="margin-top:24px;">
+    <button type="submit" class="btn"><%= calendar ? 'Salva modifiche' : 'Crea calendario' %></button>
+    <a href="/admin/calls?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Annulla</a>
+  </div>
+</form>
+
+<% if (calendar) { %>
+<div style="margin-top:28px;padding-top:16px;border-top:1px solid #e5e7eb;">
+  <a href="/admin/calls/availability?site_id=<%= siteId %>&calendar_id=<%= calendar.id %>" class="btn" style="background:#6b7280;">🗓 Disponibilità di questo calendario</a>
+  <a href="/book/<%= siteId %>/<%= calendar.slug %>" target="_blank" class="btn" style="background:#6b7280;">🔗 Pagina di prenotazione</a>
+</div>
+<% } %>

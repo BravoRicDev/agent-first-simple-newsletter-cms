@@ -1,0 +1,43 @@
+<h1>Iscritti newsletter<%= site ? ' — ' + site.name : '' %></h1>
+
+<div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+  <a href="/admin/newsletter?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Newsletter</a>
+  <a href="/admin/newsletter/subscribers/export?site_id=<%= siteId %>" class="btn" style="background:#059669;">⬇ Esporta CSV</a>
+</div>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin:20px 0;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (subscribers.length === 0) { %>
+  <p style="color:#999;font-size:14px;margin-top:15px;">Nessun iscritto.</p>
+<% } else { %>
+<table style="margin-top:15px;">
+  <thead>
+    <tr><th>Email</th><th>Stato</th><th>Iscritto il</th><th>Confermato il</th></tr>
+  </thead>
+  <tbody>
+    <% subscribers.forEach(s => { %>
+    <tr>
+      <td><a href="/admin/newsletter/subscribers/<%= s.id %>?site_id=<%= siteId %>"><%= s.email %></a></td>
+      <td>
+        <span class="badge <%= s.status === 'confirmed' ? 'badge-active' : (s.status === 'unsubscribed' ? 'badge-disabled' : 'badge-wrapped') %>">
+          <%= s.status %>
+        </span>
+      </td>
+      <td><%= new Date(s.subscribed_at).toLocaleString('it-IT') %></td>
+      <td><%= s.confirmed_at ? new Date(s.confirmed_at).toLocaleString('it-IT') : '—' %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

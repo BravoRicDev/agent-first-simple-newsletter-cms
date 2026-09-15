@@ -1,0 +1,262 @@
+<h1><%= quiz ? 'Modifica questionario' : 'Nuovo questionario' %><%= quiz ? ' — ' + quiz.name : '' %></h1>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (error) { %>
+<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#991b1b;font-size:14px;">
+  ⚠️ <%= error %>
+</div>
+<% } %>
+
+<form method="POST" action="<%= quiz ? '/admin/quizzes/' + quiz.slug : '/admin/quizzes' %>" id="quiz-builder">
+  <input type="hidden" name="site_id" value="<%= siteId %>">
+  <input type="hidden" name="questions_json" id="questions_json" value="">
+  <input type="hidden" name="thresholds_json" id="thresholds_json" value="">
+
+  <div class="form-group">
+    <label>Nome del questionario</label>
+    <input type="text" name="name" required maxlength="255" value="<%= quiz ? quiz.name : '' %>" placeholder="Es. Qualifica lead, Test di preparazione, Assessment">
+  </div>
+
+  <% if (quiz) { %>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" value="<%= quiz.slug %>" disabled style="background:#f3f4f6;">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Non modificabile: è usato nel tag <code>{{quiz:<%= quiz.slug %>}}</code> già inserito nelle pagine.</div>
+  </div>
+  <% } else { %>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" name="slug" required maxlength="255" pattern="[a-z0-9-]+" placeholder="es. qualifica-lead">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Solo lettere minuscole, numeri e trattini. Non modificabile dopo la creazione.</div>
+  </div>
+  <% } %>
+
+  <div class="form-group">
+    <label>Testo introduttivo (opzionale)</label>
+    <input type="text" name="intro" maxlength="2000" value="<%= quiz ? quiz.intro : '' %>" placeholder="Es. Rispondi alle domande e scopri se il tuo progetto è pronto.">
+  </div>
+
+  <div class="form-group">
+    <label>Testo del pulsante</label>
+    <input type="text" name="submit_label" maxlength="100" value="<%= quiz ? quiz.submit_label : 'Calcola il risultato' %>">
+  </div>
+
+  <div class="form-group">
+    <label>Messaggio di conferma (opzionale)</label>
+    <input type="text" name="success_message" maxlength="1000" value="<%= quiz ? quiz.success_message : '' %>" placeholder="Es. Risultato salvato, ti contattiamo noi.">
+  </div>
+
+  <div class="form-group">
+    <label>Pagina di ringraziamento / redirect (opzionale)</label>
+    <input type="text" name="redirect_url" maxlength="500" value="<%= quiz && quiz.redirect_url ? quiz.redirect_url : '' %>" placeholder="Es. /grazie">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Dopo il submit il visitatore viene portato qui. Accetta percorsi del sito (es. <code>/grazie</code>) o URL dello stesso dominio. I client AJAX ricevono la destinazione nel campo <code>redirect</code> del JSON.
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+      <input type="checkbox" name="ask_email" value="1" <%= quiz && quiz.ask_email ? 'checked' : '' %> style="width:auto;">
+      Chiedi l'email (facoltativa) per il risultato
+    </label>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Mostra un campo email nel widget. Se compilato, il lead entra nel CRM (contatti) e riceve il tag qui sotto.
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Tag contatto (opzionale)</label>
+    <input type="text" name="contact_tag" maxlength="100" value="<%= quiz && quiz.contact_tag ? quiz.contact_tag : '' %>" placeholder="es. qualifica-lead-caldo">
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Assegnato al contatto quando il questionario viene compilato con email — le sequenze/campagne newsletter con <code>target_tag</code> corrispondente partono da sole.
+    </div>
+  </div>
+
+  <h2 style="font-size:16px;margin-top:28px;">Domande</h2>
+  <p style="font-size:13px;color:#666;margin-bottom:12px;">Ogni domanda ha una sola risposta selezionabile. A ogni opzione puoi dare un punteggio (anche negativo). Al submit i punteggi si sommano.</p>
+  <div id="questions-list"></div>
+  <button type="button" id="add-question" class="btn" style="background:#6b7280;margin-top:8px;">+ Aggiungi domanda</button>
+
+  <h2 style="font-size:16px;margin-top:32px;">Verdetti (soglie di punteggio)</h2>
+  <p style="font-size:13px;color:#666;margin-bottom:12px;">In base al totale, il visitatore vede uno di questi verdetti. Lascia vuoto "max" per il totale massimo. L'ultima soglia che matcha vince (ordinale per min crescente).</p>
+  <div id="thresholds-list"></div>
+  <button type="button" id="add-threshold" class="btn" style="background:#6b7280;margin-top:8px;">+ Aggiungi verdetto</button>
+
+  <div class="actions" style="margin-top:28px;">
+    <button type="submit" class="btn"><%= quiz ? 'Salva modifiche' : 'Crea questionario' %></button>
+    <a href="/admin/quizzes?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">Annulla</a>
+  </div>
+</form>
+
+<template id="question-row-template">
+  <div class="question-row" style="border:1px solid #e5e7eb;border-radius:6px;padding:14px;margin-bottom:10px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="flex:2;min-width:200px;">
+        <label style="font-size:12px;color:#666;">Domanda</label>
+        <input type="text" class="question-label" placeholder="Es. Qual è il budget disponibile?" style="width:100%;">
+      </div>
+      <div style="flex:1;min-width:140px;">
+        <label style="font-size:12px;color:#666;">Chiave</label>
+        <input type="text" class="question-key" placeholder="auto" style="width:100%;">
+      </div>
+      <div style="flex:0 0 auto;padding-top:20px;">
+        <button type="button" class="btn btn-sm btn-danger question-remove">Rimuovi domanda</button>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <label style="font-size:12px;color:#666;">Opzioni (una per riga, formato: <code>Testo | punteggio</code>)</label>
+      <textarea class="question-options" style="width:100%;min-height:80px;font-family:monospace;font-size:13px;" placeholder="Sì, subito | 3&#10;Entro 6 mesi | 1&#10;Non lo so | 0"></textarea>
+      <div style="font-size:11px;color:#999;margin-top:3px;">Separa il testo dal punteggio con <code>|</code>. Senza <code>|</code> il punteggio è 0.</div>
+    </div>
+  </div>
+</template>
+
+<template id="threshold-row-template">
+  <div class="threshold-row" style="border:1px solid #e5e7eb;border-radius:6px;padding:12px 14px;margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="width:90px;">
+      <label style="font-size:12px;color:#666;">Da (min)</label>
+      <input type="number" class="threshold-min" style="width:100%;" placeholder="0">
+    </div>
+    <div style="width:90px;">
+      <label style="font-size:12px;color:#666;">A (max)</label>
+      <input type="number" class="threshold-max" style="width:100%;" placeholder="∞">
+    </div>
+    <div style="flex:1;min-width:140px;">
+      <label style="font-size:12px;color:#666;">Titolo verdetto</label>
+      <input type="text" class="threshold-title" placeholder="Es. Lead qualificato 🔥" style="width:100%;">
+    </div>
+    <div style="flex:1;min-width:160px;">
+      <label style="font-size:12px;color:#666;">Colore</label>
+      <select class="threshold-class" style="width:100%;">
+        <option value="ok">Verde (buono)</option>
+        <option value="warn">Giallo (attenzione)</option>
+        <option value="cold">Grigio (freddo)</option>
+        <option value="">Nessuno</option>
+      </select>
+    </div>
+    <div style="flex:0 0 auto;padding-top:20px;">
+      <button type="button" class="btn btn-sm btn-danger threshold-remove">Rimuovi</button>
+    </div>
+    <div style="flex-basis:100%;">
+      <label style="font-size:12px;color:#666;">Messaggio del verdetto (opzionale)</label>
+      <textarea class="threshold-message" style="width:100%;min-height:50px;" placeholder="Es. Complimenti: il tuo progetto ha i requisiti per partire. Ti contattiamo entro 24 ore."></textarea>
+    </div>
+  </div>
+</template>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  var questionsList = document.getElementById('questions-list');
+  var thresholdsList = document.getElementById('thresholds-list');
+  var qTemplate = document.getElementById('question-row-template');
+  var tTemplate = document.getElementById('threshold-row-template');
+
+  var existingQuestions = <%- JSON.stringify(quiz && Array.isArray(quiz.questions) ? quiz.questions : []).replace(/</g, '\\u003c') %>;
+  var existingThresholds = <%- JSON.stringify(quiz && Array.isArray(quiz.thresholds) ? quiz.thresholds : []).replace(/</g, '\\u003c') %>;
+
+  function parseOptions(text) {
+    return String(text || '').split('\n').map(function(line) {
+      var s = line.trim();
+      if (!s) return null;
+      var parts = s.split('|');
+      var label = (parts[0] || '').trim();
+      if (!label) return null;
+      var points = parseFloat((parts[1] || '').trim());
+      return { label: label, points: isNaN(points) ? 0 : points };
+    }).filter(Boolean);
+  }
+
+  function addQuestionRow(q) {
+    var row = qTemplate.content.cloneNode(true);
+    var div = row.querySelector('.question-row');
+    if (q) {
+      div.querySelector('.question-label').value = q.label || '';
+      div.querySelector('.question-key').value = q.key || '';
+      div.querySelector('.question-options').value = (q.options || []).map(function(o) {
+        return o.label + ' | ' + (Number(o.points) || 0);
+      }).join('\n');
+    }
+    div.querySelector('.question-remove').addEventListener('click', function() { div.remove(); });
+    questionsList.appendChild(div);
+  }
+
+  function addThresholdRow(t) {
+    var row = tTemplate.content.cloneNode(true);
+    var div = row.querySelector('.threshold-row');
+    if (t) {
+      div.querySelector('.threshold-min').value = t.min !== undefined && t.min !== null ? t.min : '';
+      div.querySelector('.threshold-max').value = t.max !== undefined && t.max !== null ? t.max : '';
+      div.querySelector('.threshold-title').value = t.title || '';
+      div.querySelector('.threshold-class').value = t.class || '';
+      div.querySelector('.threshold-message').value = t.message || '';
+    }
+    div.querySelector('.threshold-remove').addEventListener('click', function() { div.remove(); });
+    thresholdsList.appendChild(div);
+  }
+
+  function collectQuestions() {
+    var rows = questionsList.querySelectorAll('.question-row');
+    var usedKeys = {};
+    var questions = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var label = row.querySelector('.question-label').value.trim();
+      if (!label) continue;
+      var rawKey = row.querySelector('.question-key').value.trim();
+      var key = String(rawKey || label).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100) || ('domanda_' + (i + 1));
+      var suffix = 2;
+      var baseKey = key;
+      while (usedKeys[key]) { key = baseKey + '_' + (suffix++); }
+      usedKeys[key] = true;
+      questions.push({ key: key, label: label, options: parseOptions(row.querySelector('.question-options').value) });
+    }
+    return questions;
+  }
+
+  function collectThresholds() {
+    var rows = thresholdsList.querySelectorAll('.threshold-row');
+    var thresholds = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var title = row.querySelector('.threshold-title').value.trim();
+      if (!title) continue;
+      var min = parseInt(row.querySelector('.threshold-min').value, 10);
+      var maxVal = row.querySelector('.threshold-max').value;
+      var max = maxVal === '' ? null : parseInt(maxVal, 10);
+      thresholds.push({
+        min: isNaN(min) ? 0 : min,
+        max: (max === null || isNaN(max)) ? null : max,
+        title: title,
+        message: row.querySelector('.threshold-message').value.trim(),
+        class: row.querySelector('.threshold-class').value
+      });
+    }
+    thresholds.sort(function(a, b) { return a.min - b.min; });
+    return thresholds;
+  }
+
+  existingQuestions.forEach(addQuestionRow);
+  existingThresholds.forEach(addThresholdRow);
+
+  document.getElementById('add-question').addEventListener('click', function() { addQuestionRow(null); });
+  document.getElementById('add-threshold').addEventListener('click', function() { addThresholdRow(null); });
+
+  document.getElementById('quiz-builder').addEventListener('submit', function() {
+    document.getElementById('questions_json').value = JSON.stringify(collectQuestions());
+    document.getElementById('thresholds_json').value = JSON.stringify(collectThresholds());
+  });
+});
+</script>

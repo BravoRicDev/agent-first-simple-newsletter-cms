@@ -1,0 +1,11 @@
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "locationId": "550e8400-e29b-41d4-a716-446655440001",
+  "name": "Welcome Series",
+  "subject": "Welcome to our community",
+  "status": "draft",
+  "type": "Email",
+  "scheduledAt": null,
+  "dateAdded": "2026-08-25T10:30:00Z",
+  "dateUpdated": "2026-08-25T10:30:00Z"
+}

@@ -1,0 +1,41 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.etcd-witness.yml — TERZO membro etcd (quorum del DCS Patroni).
+#
+# Perché serve: con Patroni su 2 soli nodi, DCS a 2 membri non avrebbe quorum
+# (2/2: se un nodo cade, l'etcd superstite non può eleggere) → failover non
+# garantito. Serve un terzo membro etcd "witness" (senza dati CMS) su un host
+# leggero: piccola VM, mini VPS nello stesso DC, oppure proprio l'host del load
+# balancer/deploy.
+#
+# Uso sull'host witness:
+#   export NODE_IP=<ip-witness>  ETCD_WITNESS_IP=<ip-witness>
+#   docker compose -f docker-compose.etcd-witness.yml up -d
+#
+# N.B. L'host witness NON esegue CMS né replica dati: solo il quorum etcd.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  etcd-witness:
+    image: gcr.io/etcd-development/etcd:v3.5.16
+    container_name: etcd-witness
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd-witness
+      - --data-dir=/etcd-data
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://${ETCD_WITNESS_IP:-${NODE_IP}}:2379
+      - --initial-advertise-peer-urls=http://${ETCD_WITNESS_IP:-${NODE_IP}}:2380
+      - --initial-cluster=etcd-a=http://${NODE_A_IP}:2380,etcd-b=http://${NODE_B_IP}:2380,etcd-witness=http://${ETCD_WITNESS_IP:-${NODE_IP}}:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=cms-cluster-etcd
+      - --log-level=info
+    volumes:
+      - etcd-witness-data:/etcd-data
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+
+volumes:
+  etcd-witness-data:

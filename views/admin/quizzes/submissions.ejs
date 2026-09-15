@@ -1,0 +1,34 @@
+<h1>Risultati questionario — <code><%= quizSlug %></code></h1>
+
+<div class="actions">
+  <a href="/admin/quizzes?site_id=<%= siteId %>" class="btn" style="background:#6b7280;">← Questionari</a>
+  <a href="/admin/quizzes/<%= quizSlug %>/submissions/export?site_id=<%= siteId %>" class="btn">⬇️ Esporta CSV</a>
+</div>
+
+<% if (submissions.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun risultato ricevuto ancora. Il widget <code>{{quiz:<%= quizSlug %>}}</code> salva qui ogni compilazione.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Data</th><th>Punteggio</th><th>Risultato</th><th>Risposte</th><th>IP</th><th>Referrer</th></tr>
+  </thead>
+  <tbody>
+    <% submissions.forEach(s => { %>
+    <tr>
+      <td><%= new Date(s.created_at).toLocaleString('it-IT') %></td>
+      <td><strong><%= s.total_points %></strong></td>
+      <td><%= s.result_title || '—' %></td>
+      <td style="font-size:12px;max-width:320px;">
+        <% if (s.data && typeof s.data === 'object') { %>
+          <% Object.entries(s.data).forEach(([k, v]) => { %>
+            <div><em><%= k %></em>: <%= v %></div>
+          <% }) %>
+        <% } else { %>—<% } %>
+      </td>
+      <td><%= s.ip_address || '' %></td>
+      <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= s.referrer || '' %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

@@ -1,0 +1,93 @@
+import dotenv from "dotenv";
+dotenv.config();
+
+export default {
+  port: parseInt(process.env.PORT || "3000", 10),
+  nodeEnv: process.env.NODE_ENV || "development",
+
+  databaseUrl: process.env.DATABASE_URL,
+  jwtSecret: process.env.JWT_SECRET,
+  encryptionKey: process.env.ENCRYPTION_KEY || "",
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || "24h",
+
+  smtpHost: process.env.SMTP_HOST || "",
+  smtpPort: parseInt(process.env.SMTP_PORT || "465", 10),
+  smtpUser: process.env.SMTP_USER || "",
+  smtpPass: process.env.SMTP_PASS || "",
+  emailFrom: process.env.EMAIL_FROM || "",
+
+  magicLinkBaseUrl: process.env.MAGIC_LINK_BASE_URL || "http://localhost:3000",
+  magicLinkExpiryMs: 15 * 60 * 1000,
+
+  logLevel: process.env.LOG_LEVEL || "info",
+
+  appName: process.env.APP_NAME || "CMS Multi-sito",
+  appTagline: process.env.APP_TAGLINE || "",
+  footerTagline: process.env.FOOTER_TAGLINE || "",
+  appLogoText: process.env.APP_LOGO_TEXT || "CMS",
+  adminTitle: process.env.ADMIN_TITLE || "Pannello di amministrazione",
+  siteDefaultBrand: process.env.SITE_DEFAULT_BRAND || "Il mio sito",
+  defaultLang: process.env.DEFAULT_LANG || "it",
+
+  staticExportEnabled: process.env.STATIC_EXPORT_ENABLED !== "false",
+
+  backupEnabled: process.env.BACKUP_ENABLED !== "false",
+  // Retention validata: un valore non numerico diventava NaN → la pulizia dei
+  // vecchi auto-*.sql.gz non scattava MAI (confronto con NaN = false), senza
+  // alcun log. Con valore invalido si ripiega su 14.
+  backupRetentionDays: (() => {
+    const n = parseInt(process.env.BACKUP_RETENTION_DAYS || "14", 10);
+    return Number.isFinite(n) && n > 0 ? n : 14;
+  })(),
+
+  // Chiave OpenAI "letterale" — usata dove si chiama direttamente un endpoint
+  // OpenAI specifico non astraibile dietro LLM_BASE_URL (es. Whisper per la trascrizione).
+  openaiApiKey: process.env.OPENAI_API_KEY || "",
+
+  // Trascrizione audio chiamate (feature call-recordings): Groq Whisper come
+  // trascrittore primario (whisper-large-v3), fallback su OPENAI_API_KEY
+  // (whisper-1) se Groq non configurata o fallisce.
+  groqApiKey: process.env.GROQ_API_KEY || "",
+  groqBaseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
+  whisperModel: process.env.WHISPER_MODEL || "whisper-large-v3",
+  // Retention audio: giorni dopo i quali l'audio viene eliminato tenendo solo
+  // trascrizione+verdetto (minimizzazione dati personali). 0 = mai.
+  audioRetentionDays: parseInt(process.env.AUDIO_RETENTION_DAYS || "0", 10),
+
+  // Chiave segreta Stripe per i link di pagamento (feature 38): se valorizzata
+  // i payment link vengono creati su Stripe, altrimenti la pagina pubblica
+  // /pay/:token resta in modalità conferma simulata.
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
+
+  // Provider LLM astratto usato da services/llm.js (rewrite testo, alt-text immagini):
+  // LLM_API_KEY ha priorità, con fallback a OPENAI_API_KEY per non rompere le config esistenti.
+  llmBaseUrl: process.env.LLM_BASE_URL || "https://api.openai.com/v1",
+  llmModel: process.env.LLM_MODEL || "gpt-4o-mini",
+  llmApiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || "",
+
+  cloudflareZoneId: process.env.CLOUDFLARE_ZONE_ID || "",
+  cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN || "",
+  deployWebhookUrl: process.env.DEPLOY_WEBHOOK_URL || "",
+
+  // OpenAI / ChatGPT Ads — Conversions API lato server. Default: l'endpoint di
+  // ingestion eventi usato dall'SDK ufficiale (stesso host del pixel).
+  // Sovrascrivibile via env se la documentazione ufficiale indica un endpoint
+  // server-to-server dedicato con autenticazione a chiave.
+  openaiAdsEndpoint: process.env.OPENAI_ADS_ENDPOINT || "https://bzr.openai.com/v1/sdk/events",
+  // URL dell'SDK del pixel OpenAI (configurabile per-sito in admin, qui il default).
+  openaiAdsSdkUrl: process.env.OPENAI_ADS_SDK_URL || "https://bzrcdn.openai.com/sdk/oaiq.min.js",
+
+  twitterBearerToken: process.env.TWITTER_BEARER_TOKEN || "",
+  linkedinAccessToken: process.env.LINKEDIN_ACCESS_TOKEN || "",
+  facebookPageToken: process.env.FACEBOOK_PAGE_TOKEN || "",
+
+  // Versioni API supportate dal clone API (dialetto "moderno", vedi
+  // middleware/api-dialect.js) — stessa versione richiesta/inviata dal
+  // source-sync (src/services/source-sync/client.js VERSION_HEADER) e
+  // l'unica documentata in docs/API_COMPAT.md. Senza questa chiave,
+  // api-dialect.js legge `undefined` e va in crash con un TypeError non
+  // gestito su OGNI richiesta col dialetto moderno (config.
+  // supportedApiVersions[supported.length-1] su undefined) — bug trovato
+  // testando il clone API dal vivo per la prima volta (2026-09-08).
+  supportedApiVersions: (process.env.API_CLONE_SUPPORTED_VERSIONS || "2021-07-28").split(",").map((v) => v.trim()),
+};

@@ -1,0 +1,282 @@
+// ─────────────────────────────────────────────────────────────────────────
+// Mock del CRM sorgente per i test source-sync: implementa gli endpoint con
+// paginazione limit/startAfterId e shape {<key>:[...], meta:{nextPage}}.
+// Uso:
+//   const mock = await createMockSource(fixture);
+//   ... mock.url come base_url nella config ...
+//   await mock.close();
+// ─────────────────────────────────────────────────────────────────────────
+
+import http from "http";
+
+export function paginateItems(items, params) {
+  const limit = Math.min(100, parseInt(params.limit || "100", 10));
+  let list = items;
+  if (params.startAfterId) {
+    const idx = items.findIndex((x) => x.id === params.startAfterId);
+    if (idx >= 0) list = items.slice(idx + 1);
+  }
+  const page = list.slice(0, limit);
+  const nextItem = list[limit];
+  return { page, nextPage: nextItem ? nextItem.id : null };
+}
+
+export function listResponse(key, items, params) {
+  const { page, nextPage } = paginateItems(items, params);
+  return {
+    [key]: page,
+    meta: { total: items.length, nextPage },
+  };
+}
+
+export async function createMockSource(fixture, { onCall } = {}) {
+  const calls = [];
+
+  function send(res, key, items, q) {
+    const body = listResponse(key, items, q);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(body));
+  }
+
+  const server = http.createServer((req, res) => {
+    let rawBody = "";
+    req.on("data", (chunk) => { rawBody += chunk; });
+    req.on("end", () => onRequest(req, res, rawBody));
+  });
+
+  function onRequest(req, res, rawBody) {
+    const u = new URL(req.url, "http://mock");
+    const q = Object.fromEntries(u.searchParams.entries());
+    const path = u.pathname.replace(/\/+$/, "");
+    if (onCall) onCall(path, q);
+    calls.push({ path: u.pathname, q });
+
+    const ok = (obj) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(obj));
+    };
+
+    // ── liste globali ──
+    if (path === "/users") return send(res, "users", fixture.users || [], q);
+    // GET /users/search (doc CRM sorgente 2021-07-28): paginazione skip/limit,
+    // risposta { users, count } — niente meta/nextPage.
+    if (path === "/users/search") {
+      const all = fixture.users || [];
+      const skip = parseInt(q.skip || "0", 10);
+      const limit = parseInt(q.limit || "100", 10);
+      return ok({ users: all.slice(skip, skip + limit), count: all.length });
+    }
+    // GET /locations/{locationId}/customFields (verificato dal vivo,
+    // 2026-08-26): UNA chiamata restituisce contact+opportunity insieme,
+    // ciascuno con "model". L'endpoint legacy /custom-fields/object-key/*
+    // risponde 400 sull'API reale, non va più chiamato.
+    const lcf = path.match(/^\/locations\/([^/]+)\/customFields$/);
+    if (lcf) {
+      const contactFields = (fixture.customFieldsContact || []).map((f) => ({ ...f, model: "contact" }));
+      const oppFields = (fixture.customFieldsOpportunity || []).map((f) => ({ ...f, model: "opportunity" }));
+      return ok({ customFields: [...contactFields, ...oppFields] });
+    }
+    // GET /locations/{locationId}/tags (doc CRM sorgente 2021-07-28): la risposta è
+    // { tags: [...] } — NESSUN campo color/dateAdded/dateUpdated. locationId
+    // è nel path, non in query (il client aggiunge comunque il query param
+    // locationId su ogni chiamata, ma l'endpoint lo vuole nel path).
+    const ltags = path.match(/^\/locations\/([^/]+)\/tags$/);
+    if (ltags) return send(res, "tags", fixture.tags || [], q);
+    if (path === "/opportunities/pipelines")
+      return ok({ pipelines: fixture.pipelines || [] });
+    if (path === "/calendars") return send(res, "calendars", fixture.calendars || [], q);
+    if (path === "/contacts") return send(res, "contacts", fixture.contacts || [], q);
+    // POST /contacts/search — verificato dal vivo (2026-09-09): body
+    // {locationId, pageLimit, sort:[{field,direction}], searchAfter?},
+    // risposta {contacts, total}. Ordinamento reale per "field" della
+    // richiesta (solo "dateUpdated" verificato come valido sull'API reale,
+    // altri nomi rispondono 400 "Invalid field <nome>" — il mock imita solo
+    // il caso supportato, usato dal mapper contatti). Cursore searchAfter
+    // = [timestamp dateUpdated in ms, id], coerente col comportamento reale
+    // osservato (continuità tra pagine senza overlap/gap).
+    if (path === "/contacts/search" && req.method === "POST") {
+      let body = {};
+      try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
+      const sortSpec = Array.isArray(body.sort) ? body.sort[0] : null;
+      if (sortSpec && sortSpec.field !== "dateUpdated") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ message: `Invalid field ${sortSpec.field}`, statusCode: 400 }));
+      }
+      const direction = sortSpec?.direction === "asc" ? "asc" : "desc";
+      const all = [...(fixture.contacts || [])].sort((a, b) => {
+        const ta = new Date(a.dateUpdated || a.dateAdded || 0).getTime();
+        const tb = new Date(b.dateUpdated || b.dateAdded || 0).getTime();
+        return direction === "desc" ? tb - ta : ta - tb;
+      });
+      let startIdx = 0;
+      if (Array.isArray(body.searchAfter)) {
+        const [, afterId] = body.searchAfter;
+        const idx = all.findIndex((c) => c.id === afterId);
+        if (idx >= 0) startIdx = idx + 1;
+      }
+      const pageLimit = Math.min(100, parseInt(body.pageLimit || 100, 10));
+      const pageItems = all.slice(startIdx, startIdx + pageLimit).map((c) => ({
+        ...c,
+        searchAfter: [new Date(c.dateUpdated || c.dateAdded || 0).getTime(), c.id],
+      }));
+      return ok({ contacts: pageItems, total: all.length });
+    }
+    if (path === "/forms") return send(res, "forms", fixture.forms || [], q);
+    // GET /forms/submissions (doc CRM sorgente 2021-07-28): risposta
+    // { submissions: [...], meta: { total, currentPage, nextPage, prevPage } }.
+    // Paginazione per NUMERO DI PAGINA (param "page"), meta.nextPage è il
+    // numero della pagina successiva (o null). Il mock onora page/limit.
+    if (path === "/forms/submissions") {
+      const all = fixture.formSubmissions || [];
+      const page = parseInt(q.page || "1", 10);
+      const limit = Math.min(100, parseInt(q.limit || "100", 10));
+      const start = (page - 1) * limit;
+      const pageItems = all.slice(start, start + limit);
+      const nextPage = start + limit < all.length ? page + 1 : null;
+      return ok({
+        submissions: pageItems,
+        meta: {
+          total: all.length,
+          currentPage: page,
+          nextPage,
+          prevPage: page > 1 ? page - 1 : null,
+        },
+      });
+    }
+    // GET /surveys/ (doc CRM sorgente 2021-07-28): { surveys, total }, paginazione
+    // skip/limit (limit MAX 50). L'oggetto survey della lista ha id/name/
+    // locationId.
+    if (path === "/surveys") {
+      const all = fixture.surveys || [];
+      const skip = parseInt(q.skip || "0", 10);
+      const limit = Math.min(50, parseInt(q.limit || "50", 10));
+      return ok({ surveys: all.slice(skip, skip + limit), total: all.length });
+    }
+    // GET /surveys/submissions (doc CRM sorgente 2021-07-28): { submissions, meta },
+    // paginazione page/limit (limit MAX 100), meta.nextPage = numero pagina.
+    if (path === "/surveys/submissions") {
+      const all = fixture.surveySubmissions || [];
+      const page = parseInt(q.page || "1", 10);
+      const limit = Math.min(100, parseInt(q.limit || "20", 10));
+      const start = (page - 1) * limit;
+      const pageItems = all.slice(start, start + limit);
+      const nextPage = start + limit < all.length ? page + 1 : null;
+      return ok({
+        submissions: pageItems,
+        meta: {
+          total: all.length,
+          currentPage: page,
+          nextPage,
+          prevPage: page > 1 ? page - 1 : null,
+        },
+      });
+    }
+    if (path === "/campaigns") return send(res, "campaigns", fixture.campaigns || [], q);
+    // Email templates (doc CRM sorgente 2021-07-28): GET /emails/builder — il path
+    // "/templates" non esiste in questa versione API. La risposta reale non
+    // ha wrapper "templates" garantito; il mock lo mantiene così il mapper
+    // può esercitare il fallback ?.templates.
+    if (path === "/emails/builder") return send(res, "templates", fixture.emailTemplates || [], q);
+    if (path === "/invoices") return send(res, "invoices", fixture.invoices || [], q);
+    if (path === "/products") return send(res, "products", fixture.products || [], q);
+    if (path === "/payments") return send(res, "payments", fixture.payments || [], q);
+
+    // ── per-contatto ──
+    const cm = path.match(/^\/contacts\/([^/]+)$/);
+    if (cm) {
+      const c = (fixture.contacts || []).find((x) => x.id === cm[1]);
+      if (!c) {
+        res.writeHead(404);
+        return res.end("{}");
+      }
+      return ok({ contact: c });
+    }
+    const cn = path.match(/^\/contacts\/([^/]+)\/notes$/);
+    if (cn) {
+      const c = (fixture.contacts || []).find((x) => x.id === cn[1]);
+      return ok({ notes: c?.notes || [] });
+    }
+    const ct = path.match(/^\/contacts\/([^/]+)\/tasks$/);
+    if (ct) {
+      const c = (fixture.contacts || []).find((x) => x.id === ct[1]);
+      return ok({ tasks: c?.tasks || [] });
+    }
+    const ca = path.match(/^\/contacts\/([^/]+)\/appointments$/);
+    if (ca) {
+      const c = (fixture.contacts || []).find((x) => x.id === ca[1]);
+      return ok({ events: c?.appointments || [] });
+    }
+    // POST /opportunities/search GLOBALE (senza contact_id): usata da
+    // syncAll (sync globale opportunità). Body {locationId, limit, sort:[{field,direction}], searchAfter?},
+    // risposta {opportunities:[...], total}. Cursore per item = "sort" (verificato dal vivo su sorgente reale, 2026-09-11: il nome
+    // del CAMPO in risposta è "sort", diverso dal nome del PARAMETRO da rimandare nella richiesta successiva, che è "searchAfter" — pattern
+    // search_after stile Elasticsearch con nomi asimmetrici).
+    // Supporta ordinamento per "dateUpdated" discendente per early stop.
+    if (path === "/opportunities/search" && req.method === "POST") {
+      let body = {};
+      try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
+      const sortSpec = Array.isArray(body.sort) ? body.sort[0] : null;
+      if (sortSpec && sortSpec.field !== "dateUpdated") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ message: `Invalid field ${sortSpec.field}`, statusCode: 400 }));
+      }
+      const direction = sortSpec?.direction === "asc" ? "asc" : "desc";
+      const all = [...(fixture.opportunities || [])].sort((a, b) => {
+        const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return direction === "desc" ? tb - ta : ta - tb;
+      });
+      let startIdx = 0;
+      if (Array.isArray(body.searchAfter)) {
+        const [, afterId] = body.searchAfter;
+        const idx = all.findIndex((o) => o.id === afterId);
+        if (idx >= 0) startIdx = idx + 1;
+      }
+      const pageLimit = Math.min(100, parseInt(body.limit || body.pageLimit || 100, 10));
+      const pageItems = all.slice(startIdx, startIdx + pageLimit).map((o, i) => ({
+        ...o,
+        sort: [new Date(o.updatedAt || o.createdAt || 0).getTime() || startIdx + i, o.id],
+      }));
+      return ok({ opportunities: pageItems, total: all.length });
+    }
+    // opportunities search per contatto (GET, query string) — doc CRM
+    // location_id in snake_case (a differenza di /contacts, camelCase).
+    if (path === "/opportunities/search") {
+      const c = (fixture.contacts || []).find((x) => x.id === q.contact_id);
+      const opps = (c?.opportunities || []).map((o) => ({
+        ...o,
+        contactId: q.contact_id,
+      }));
+      return ok({ opportunities: opps, meta: { total: opps.length, nextPage: null } });
+    }
+    // conversazioni per contatto (+messaggi annidati nel fixture)
+    // Doc CRM sorgente 2021-07-28 (Search Conversations): GET /conversations/search,
+    // risposta { conversations: [...] } (array piatto, non {conversation}).
+    if (path === "/conversations/search" && q.contactId) {
+      const convs = (fixture.contacts || []).find((x) => x.id === q.contactId)?.conversations || [];
+      return ok({ conversations: convs.map(({ messages, ...rest }) => rest) });
+    }
+    // Doc CRM sorgente 2021-07-28 (Get Messages): risposta
+    // { messages: { lastMessageId, nextPage, messages: [...] } }.
+    const cvm = path.match(/^\/conversations\/([^/]+)\/messages$/);
+    if (cvm) {
+      for (const c of fixture.contacts || []) {
+        for (const conv of c.conversations || []) {
+          if (conv.id === cvm[1]) return ok({ messages: { messages: conv.messages || [] } });
+        }
+      }
+      return ok({ messages: { messages: [] } });
+    }
+
+    res.writeHead(404);
+    res.end("{}");
+  }
+
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    server,
+    url: `http://127.0.0.1:${server.address().port}`,
+    calls,
+    close: () => new Promise((r) => server.close(r)),
+  };
+}

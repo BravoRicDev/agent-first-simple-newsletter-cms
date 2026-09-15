@@ -1,0 +1,49 @@
+<h1>Post social<%= site ? ' — ' + site.name : '' %></h1>
+
+<% if (sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<div class="alert alert-info" style="margin-bottom:20px;">
+  La pubblicazione reale sui social non è ancora implementata: i post marcati
+  "Simulato" sono stati solo registrati come se fossero stati pubblicati,
+  nessuna chiamata è stata fatta alle API di Twitter/LinkedIn/Facebook.
+</div>
+
+<% if (posts.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun post social pianificato per questo sito.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Pagina</th><th>Piattaforma</th><th>Messaggio</th><th>Pianificato</th><th>Stato</th></tr>
+  </thead>
+  <tbody>
+    <% posts.forEach(p => { %>
+    <tr>
+      <td><a href="<%= site && site.domain ? 'https://' + site.domain : '' %><%= p.url_path %>" target="_blank" rel="noopener"><%= p.page_title || p.url_path %></a></td>
+      <td><%= p.platform %></td>
+      <td><%= (p.message || '').slice(0, 80) %><%= (p.message || '').length > 80 ? '…' : '' %></td>
+      <td><%= new Date(p.scheduled_at).toLocaleString('it-IT') %></td>
+      <td>
+        <% if (!p.posted_at) { %>
+          <span class="badge" style="background:#f3f4f6;color:#374151;">In attesa</span>
+        <% } else if (p.simulated) { %>
+          <span class="badge" style="background:#fef3c7;color:#92400e;">Simulato</span>
+        <% } else { %>
+          <span class="badge" style="background:#d1fae5;color:#065f46;">Pubblicato</span>
+        <% } %>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

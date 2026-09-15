@@ -1,0 +1,66 @@
+<h1>Token API</h1>
+
+<p style="font-size:13px;color:#666;max-width:650px;">
+  Token di lunga durata per integrazioni non interattive (n8n, altre automazioni)
+  — a differenza della sessione da browser, non scadono dopo poche ore e restano
+  validi finché non li revochi tu o non arrivano a scadenza. Usali nell'header
+  <code>Authorization: Bearer &lt;token&gt;</code> verso le stesse route dell'API agente
+  <% if (typeof user !== 'undefined' && user && user.role === 'superadmin') { %>documentate in <a href="/admin/agent">Agente AI</a><% } %>.
+</p>
+
+<% if (newToken) { %>
+<div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;padding:16px;margin:20px 0;max-width:650px;">
+  <strong>⚠️ Copia subito questo token — non verrà mostrato di nuovo:</strong>
+  <div style="background:#1f2937;color:#f3f4f6;font-family:monospace;font-size:13px;padding:10px 12px;border-radius:4px;margin-top:10px;word-break:break-all;user-select:all;"><%= newToken.token %></div>
+  <div style="font-size:12px;color:#92400e;margin-top:8px;">Scade il <%= new Date(newToken.expiresAt).toLocaleDateString('it-IT') %>.</div>
+</div>
+<% } %>
+
+<form method="POST" action="/admin/api-tokens" style="max-width:500px;border:1px solid #e5e7eb;border-radius:6px;padding:16px;margin-bottom:24px;">
+  <div class="form-group">
+    <label>Nome (per riconoscerlo in lista)</label>
+    <input type="text" name="name" required maxlength="255" placeholder="es. n8n produzione">
+  </div>
+  <div class="form-group">
+    <label>Durata</label>
+    <select name="expires_days">
+      <option value="30">30 giorni</option>
+      <option value="60">60 giorni</option>
+      <option value="90">90 giorni</option>
+      <option value="120" selected>120 giorni</option>
+      <option value="180">180 giorni</option>
+      <option value="365">1 anno</option>
+    </select>
+  </div>
+  <button type="submit" class="btn">Genera token</button>
+</form>
+
+<% if (tokens.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun token creato.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Token</th><th>Creato</th><th>Scade</th><th>Ultimo uso</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% tokens.forEach(t => { %>
+    <tr style="<%= t.revoked_at ? 'opacity:0.5;' : '' %>">
+      <td><%= t.name %></td>
+      <td><code><%= t.token_prefix %></code></td>
+      <td><%= new Date(t.created_at).toLocaleDateString('it-IT') %></td>
+      <td><%= new Date(t.expires_at).toLocaleDateString('it-IT') %></td>
+      <td><%= t.last_used_at ? new Date(t.last_used_at).toLocaleString('it-IT') : 'mai' %></td>
+      <td>
+        <% if (t.revoked_at) { %>
+          <span style="font-size:12px;color:#999;">revocato</span>
+        <% } else { %>
+          <form method="POST" action="/admin/api-tokens/<%= t.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revocare questo token? Chi lo usa smetterà immediatamente di avere accesso.')">
+            <button type="submit" class="btn btn-sm btn-danger">Revoca</button>
+          </form>
+        <% } %>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

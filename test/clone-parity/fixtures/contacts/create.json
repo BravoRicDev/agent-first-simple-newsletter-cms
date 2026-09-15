@@ -1,0 +1,28 @@
+{
+  "contact": {
+    "id": "<uuid>",
+    "locationId": "<uuid|null>",
+    "firstName": "John",
+    "lastName": "Doe",
+    "companyName": "ACME Corp",
+    "phone": "+1-555-1234",
+    "email": "john@example.com",
+    "address1": "123 Main St",
+    "city": "Springfield",
+    "state": "IL",
+    "postalCode": "62701",
+    "country": "USA",
+    "website": "https://example.com",
+    "timezone": "America/Chicago",
+    "tags": ["vip", "customer"],
+    "customFields": [
+      {
+        "id": "<uuid>",
+        "key": "source",
+        "field_value": "referral"
+      }
+    ],
+    "dateAdded": "2026-08-25T10:00:00.000Z",
+    "dateUpdated": "2026-08-25T10:00:00.000Z"
+  }
+}

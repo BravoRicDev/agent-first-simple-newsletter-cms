@@ -1,0 +1,332 @@
+<h1>Webhook — <%= site ? site.name : '' %></h1>
+<p style="color:#666;font-size:14px;margin-bottom:20px;">Collega il CMS a n8n e automazioni esterne. <strong>IN</strong>: n8n chiama il CMS. <strong>OUT</strong>: il CMS chiama n8n quando accade un evento.</p>
+
+<% if (isSuperadmin && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:20px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id" onchange="this.form.submit()">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= siteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+</form>
+<% } %>
+
+<% if (saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">✅ Webhook salvato.</div>
+<% } %>
+
+<div style="display:flex;gap:6px;margin-bottom:20px;">
+  <span class="badge badge-active"><%- deliveries.find(d => d.status === 'sent')?.n || 0 %> inviati</span>
+  <span style="background:#fef3c7;color:#92400e;border-radius:12px;padding:2px 10px;font-size:12px;"><%- deliveries.find(d => d.status === 'pending')?.n || 0 %> in coda</span>
+  <span style="background:#fee2e2;color:#991b1b;border-radius:12px;padding:2px 10px;font-size:12px;"><%- deliveries.find(d => d.status === 'failed')?.n || 0 %> falliti</span>
+</div>
+
+<table>
+  <thead><tr><th>Nome</th><th>Direzione</th><th>Eventi / Mapping</th><th>URL o Token</th><th>Filtro</th><th>Stato</th><th></th></tr></thead>
+  <tbody>
+    <% webhooks.forEach(w => { %>
+    <tr>
+      <td><strong><%= w.name %></strong></td>
+      <td><% if (w.direction === 'out') { %><span class="badge badge-active">OUT →</span><% } else { %><span class="badge" style="background:#e0e7ff;color:#3730a3;">← IN</span><% } %></td>
+      <td style="font-size:12px;">
+        <% if (w.direction === 'out') { %>
+          <%= (Array.isArray(w.events) ? w.events : []).join(', ') %>
+        <% } else { %>
+          <%= Object.keys(w.events || {}).join(', ') %>
+        <% } %>
+      </td>
+      <td style="font-size:12px;max-width:220px;word-break:break-all;">
+        <% if (w.direction === 'out') { %><code><%= w.url %></code><% } else { %>
+          <code>/webhooks/in/<%= siteId %>/<%= w.secret.charAt(0) + '…' %></code>
+        <% } %>
+      </td>
+      <td style="font-size:11px;color:#666;"><%= Object.keys(w.filter || {}).length ? JSON.stringify(w.filter) : '—' %></td>
+      <td><% if (w.active) { %><span class="badge badge-active">Attivo</span><% } else { %><span class="badge badge-disabled">Off</span><% } %></td>
+      <td style="white-space:nowrap;">
+        <details style="display:inline;">
+          <summary style="cursor:pointer;color:#4f46e5;font-size:12px;">Modifica</summary>
+          <form method="POST" action="/admin/webhooks/<%= w.id %>/update" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-top:6px;min-width:340px;">
+            <input type="hidden" name="site_id" value="<%= siteId %>">
+            <div class="form-group"><label>Nome</label><input type="text" name="name" value="<%= w.name %>" required></div>
+            <% if (w.direction === 'out') { %>
+            <div class="form-group"><label>URL (out)</label><input type="text" name="url" value="<%= w.url %>" placeholder="https://hook.n8n..."></div>
+            <% } %>
+            <div class="form-group"><label>Secret / Token (path)</label><input type="text" name="secret" value="<%= w.secret %>"></div>
+            <% if (w.direction === 'in') { %>
+            <details>
+              <summary style="cursor:pointer;color:#b45309;font-size:12px;">🛡️ Sicurezza in ingresso</summary>
+              <div class="form-group" style="margin-top:6px;">
+                <label>Allowlist IP sorgente (CIDR o IP, separati da virgola)</label>
+                <input type="text" name="allowed_ips" value="<%= (w.allowed_ips||[]).join(', ') %>" placeholder="1.2.3.4, 203.0.113.0/24">
+                <div style="font-size:11px;color:#999;">Vuoto = nessun filtro IP (accetta da qualsiasi IP). Usa l'IP di uscita di n8n.</div>
+              </div>
+              <div class="form-group">
+                <label>Chiave verifica HMAC (X-Webhook-Signature)</label>
+                <input type="text" name="verify_secret" value="<%= w.verify_secret || '' %>" placeholder="lascia vuoto per disabilitare">
+                <div style="font-size:11px;color:#999;">Se valorizzata, il CMS verifica la firma HMAC-SHA256 del body. n8n firma con la stessa chiave.</div>
+              </div>
+              <div class="form-group">
+                <label>Filtro payload (JSON, es. {"source":"n8n"})</label>
+                <input type="text" name="filter_text" id="filter_text_edit_<%= w.id %>" style="font-family:monospace;font-size:12px;" value='<%= Object.keys(w.filter||{}).length ? JSON.stringify(w.filter) : "" %>'>
+              </div>
+            </details>
+            <% } %>
+            <input type="hidden" name="events_json" id="events_json_<%= w.id %>" value='<%= JSON.stringify(w.events).replace(/'/g, "&#39;") %>'>
+            <input type="hidden" name="filter_json" id="filter_json_<%= w.id %>" value='<%= JSON.stringify(w.filter || {}).replace(/'/g, "&#39;") %>'>
+            <div class="form-group">
+              <label>Eventi (out, separati da virgola)</label>
+              <input type="text" id="events_text_<%= w.id %>" value="<%= (Array.isArray(w.events) ? w.events : Object.keys(w.events||{})).join(', ') %>">
+            </div>
+            <div class="form-group">
+              <label>Filtro payload OUT (JSON, es. {"form_slug":"x"})</label>
+              <input type="text" id="filter_text_<%= w.id %>" style="font-family:monospace;font-size:12px;" value='<%= Object.keys(w.filter||{}).length ? JSON.stringify(w.filter) : "" %>'>
+            </div>
+            <div class="form-group">
+              <label>Template payload OUT (JSON, es. {"name": "{{contact.name}}", "email": "{{payload.email}}"})</label>
+              <textarea name="payload_template_text" rows="3" style="width:100%;font-family:monospace;font-size:12px;" placeholder='{"name": "{{contact.name}}", "stage": "{{opportunity.stage}}"}'><%= w.payload_template && Object.keys(w.payload_template).length ? JSON.stringify(w.payload_template) : "" %></textarea>
+              <div style="font-size:11px;color:#999;margin-top:4px;">Usa {{field.path}} per riferimenti a contatto/opportunità nel payload. Es. {{contact.name}}, {{opportunity.stage}}, {{payload.email}}.</div>
+            </div>
+            <div class="form-group" style="margin-top:8px;">
+              <label>Editor filtro IN (JSON, es. {"source":"n8n"})</label>
+              <textarea name="filter_text" rows="3" style="width:100%;font-family:monospace;font-size:12px;" placeholder='{"source": "n8n"}'>
+                <%= Object.keys(w.filter||{}).length ? JSON.stringify(w.filter) : '{}' %>
+              </textarea>
+              <div style="font-size:11px;color:#999;margin-top:4px;">Campi disponibili: source, tag, form_slug, status, min_score, segment_id, quiz_slug, to_stage. Usa !prefisso per negazione (es. !tag "old").</div>
+            </div>
+            <div class="form-group"><label>Attivo</label><input type="checkbox" name="active" value="on" <%= w.active ? 'checked' : '' %> style="width:auto;"></div>
+            <button class="btn btn-sm">Salva</button>
+          </form>
+          <% if (w.direction === 'in') { %>
+          <form method="POST" action="/admin/webhooks/<%= w.id %>/rotate-token" style="display:inline;margin-left:4px;" onsubmit="return confirm('Ruotare il token? Il vecchio token smetterà di funzionare. n8n deve usare il nuovo.');">
+            <input type="hidden" name="site_id" value="<%= siteId %>">
+            <button class="btn btn-sm" style="background:#b45309;">🔄 Ruota token</button>
+          </form>
+          <% } %>
+        </details>
+        <form method="POST" action="/admin/webhooks/<%= w.id %>/delete" style="display:inline;" onsubmit="return confirm('Eliminare il webhook?');">
+          <input type="hidden" name="site_id" value="<%= siteId %>">
+          <button class="btn btn-sm" style="background:#dc2626;">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+    <% if (webhooks.length === 0) { %><tr><td colspan="7" style="text-align:center;color:#999;">Nessun webhook configurato</td></tr><% } %>
+  </tbody>
+</table>
+
+  <% if (showFailedDeliveries && failedDeliveries && failedDeliveries.length > 0) { %>
+  <div style="background:#fef3c7;border:1px solid #eab308;border-radius:6px;padding:12px 16px;margin:20px 0;color:#856404;">
+    <h3 style="margin:0 0 8px 0;">Delivery webhook OUT fallite</h3>
+    <p style="margin:4px 0 8px 0;">Totale delivery fallite: <%= failedDeliveries.length %></p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr><th>ID</th><th>Webhook</th><th>Evento</th><th>Tentativi</th><th>Ultimo errore</th><th>Creato</th></tr></thead>
+      <tbody>
+        <% failedDeliveries.forEach(d => { %>
+        <tr style="background:#fffbeb;">
+          <td style="padding:6px 8px;"><%= d.id %></td>
+          <td style="padding:6px 8px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><%= d.webhook_name %></td>
+          <td style="padding:6px 8px;"><%= d.event_type %></td>
+          <td style="padding:6px 8px;color:#b91c1c;"><%= d.attempts %></td>
+          <td style="padding:6px 8px;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;title="<%= d.last_error || '' %>"><%= d.last_error ? d.last_error.slice(0,50) : 'N/A' %></td>
+          <td style="padding:6px 8px;"><%= d.created_at.toLocaleString() %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <p style="font-size:11px;margin-top:6px;color:#666;">Il pulsante "Riprova" nelle righe sotto resetta la delivery a stato 'pending' (azzerando i tentativi) in modo che deliverPending possa riprovarla.</p>
+  </div>
+  <% } %>
+
+<details style="margin-top:24px;">
+  <summary style="cursor:pointer;font-size:15px;font-weight:600;">+ Nuovo webhook</summary>
+  <form method="POST" action="/admin/webhooks" style="margin-top:10px;max-width:560px;">
+    <input type="hidden" name="site_id" value="<%= siteId %>">
+    <input type="hidden" name="events_json" id="newevents_json" value="[]">
+    <input type="hidden" name="filter_json" id="newfilter_json" value="{}">
+    <div class="form-group"><label>Nome</label><input type="text" name="name" required placeholder="Es. Nuovo lead → n8n"></div>
+    <div class="form-group">
+      <label>Direzione</label>
+      <select name="direction" id="newdirection" onchange="toggleNewDirection()">
+        <option value="out">OUT — il CMS chiama n8n</option>
+        <option value="in">IN — n8n chiama il CMS</option>
+      </select>
+    </div>
+    <div class="form-group" id="newurl_group">
+      <label>URL di destinazione (OUT)</label>
+      <input type="text" name="url" placeholder="https://hook.n8n.cloud/...">
+    </div>
+    <div class="form-group" id="newsecret_group">
+      <label>Secret (OUT: firma HMAC) / Token (IN: minimo 24 caratteri)</label>
+      <input type="text" name="secret" placeholder="genera un token casuale per IN">
+    </div>
+    <div class="form-group" id="newsecurity_group" style="display:none;">
+      <details>
+        <summary style="cursor:pointer;color:#b45309;font-size:13px;">🛡️ Sicurezza in ingresso (opzionale)</summary>
+        <div class="form-group" style="margin-top:6px;">
+          <label>Allowlist IP sorgente (CIDR o IP, separati da virgola)</label>
+          <input type="text" name="allowed_ips" placeholder="1.2.3.4, 203.0.113.0/24">
+          <div style="font-size:11px;color:#999;">Vuoto = accetta da qualsiasi IP. Usa l'IP di uscita di n8n per restringere.</div>
+        </div>
+        <div class="form-group">
+          <label>Chiave verifica HMAC (X-Webhook-Signature)</label>
+          <input type="text" name="verify_secret" placeholder="lascia vuoto per disabilitare">
+          <div style="font-size:11px;color:#999;">Se valorizzata, il CMS verifica la firma HMAC-SHA256 del body inviata da n8n.</div>
+        </div>
+      </details>
+    </div>
+    <div class="form-group">
+      <label>Eventi (OUT, separati da virgola)</label>
+      <input type="text" id="newevents_text" placeholder="contact_created, form_submitted, stage_changed">
+      <div style="font-size:11px;color:#999;margin-top:4px;">Eventi disponibili: contact_created, contact_updated, tag_added, stage_changed, form_submitted, quiz_completed, quote_signed, call_booked, email_opened, email_clicked, score_threshold…</div>
+    </div>
+    <div class="form-group">
+      <label>Filtro payload (JSON, opzionale — es. {"form_slug":"qualifica-lead"})</label>
+      <input type="text" id="newfilter_text" style="font-family:monospace;font-size:12px;">
+    </div>
+    <div class="form-group"><label>Attivo</label><input type="checkbox" name="active" value="on" checked style="width:auto;"></div>
+    <button class="btn" style="background:#4f46e5;">Crea webhook</button>
+  </form>
+</details>
+
+<h2 style="font-size:16px;margin-top:30px;">🕓 Delivery recenti</h2>
+<table>
+  <thead><tr><th>Quando</th><th>Webhook</th><th>Evento</th><th>Stato</th><th>Tentativi</th><th>Ultimo errore</th></tr></thead>
+  <tbody>
+    <% if (!recentDeliveries || recentDeliveries.length === 0) { %>
+      <tr><td colspan="6" style="text-align:center;color:#999;">Nessuna delivery</td></tr>
+    <% } else { %>
+      <% recentDeliveries.forEach(d => { %>
+      <tr>
+        <td style="white-space:nowrap;font-size:12px;"><%= new Date(d.created_at).toLocaleString('it-IT') %></td>
+        <td><%= d.webhook_name || '—' %></td>
+        <td><code><%= d.event_type %></code></td>
+        <td>
+          <% if (d.status === 'sent') { %><span class="badge badge-active">inviato</span>
+          <% } else if (d.status === 'pending' || d.status === 'sending') { %><span style="background:#fef3c7;color:#92400e;border-radius:12px;padding:2px 10px;font-size:12px;"><%= d.status %></span>
+          <% } else { %><span style="background:#fee2e2;color:#991b1b;border-radius:12px;padding:2px 10px;font-size:12px;"><%= d.status %></span><% } %>
+        </td>
+        <td><%= d.attempts %></td>
+        <td style="font-size:12px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= d.last_error || '—' %></td>
+      </tr>
+      <% }) %>
+    <% } %>
+  </tbody>
+</table>
+
+<h2 style="font-size:16px;margin-top:30px;">🔬 Preview mapping webhook IN</h2>
+<p style="font-size:13px;color:#666;margin-bottom:10px;">Testa un payload JSON contro un webhook IN per vedere se passa i controlli (IP, HMAC, filtro) e quale azione verrebbe eseguita.</p>
+<details style="margin-bottom:20px;">
+  <summary style="cursor:pointer;font-size:14px;font-weight:600;color:#6b7280;">▶ Apri preview</summary>
+  <div style="margin-top:12px;max-width:700px;">
+    <div class="form-group">
+      <label>Webhook IN da testare</label>
+      <select id="preview_webhook_id">
+        <% webhooks.filter(w => w.direction === 'in').forEach(w => { %>
+          <option value="<%= w.id %>"><%= w.name %> (token: <%= w.secret.slice(0,8) %>...)</option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Payload JSON (es. {"event_type":"contact_created","email":"test@test.com","source":"n8n"})</label>
+      <textarea id="preview_payload" rows="8" style="width:100%;font-family:monospace;font-size:12px;" placeholder='{"event_type":"contact_created","email":"test@test.com"}'></textarea>
+    </div>
+    <div class="form-group">
+      <label>IP sorgente (opzionale, per testare allowlist)</label>
+      <input type="text" id="preview_ip" placeholder="1.2.3.4">
+    </div>
+    <div class="form-group">
+      <label>Firma HMAC (X-Webhook-Signature, opzionale)</label>
+      <input type="text" id="preview_signature" placeholder="sha256=..." style="font-family:monospace;font-size:12px;">
+    </div>
+    <button class="btn" onclick="runPreview()">Esegui preview</button>
+    <pre id="preview_result" style="margin-top:12px;background:#1f2937;color:#e5e7eb;padding:12px;border-radius:6px;font-size:12px;overflow:auto;display:none;"></pre>
+  </div>
+</details>
+
+<h2 style="font-size:16px;margin-top:30px;">🛡️ Tentativi in ingresso (log sicurezza)</h2>
+<p style="font-size:13px;color:#666;margin-bottom:10px;">Registro dei webhook IN: accettati, filtrati, bloccati per IP o firma HMAC non valida.</p>
+<table>
+  <thead><tr><th>Quando</th><th>Webhook</th><th>Evento</th><th>IP</th><th>Esito</th><th>Motivo</th></tr></thead>
+  <tbody>
+    <% if (!inboundLog || inboundLog.length === 0) { %>
+      <tr><td colspan="6" style="text-align:center;color:#999;">Nessun tentativo in ingresso registrato</td></tr>
+    <% } else { %>
+      <% inboundLog.forEach(l => { %>
+      <tr>
+        <td style="white-space:nowrap;font-size:12px;"><%= new Date(l.created_at).toLocaleString('it-IT') %></td>
+        <td><%= l.webhook_name || '—' %></td>
+        <td><code><%= l.event_type || '—' %></code></td>
+        <td style="font-size:12px;"><%= l.ip || '—' %></td>
+        <td>
+          <% if (l.status === 'accepted') { %><span class="badge badge-active">accettato</span>
+          <% } else if (l.status === 'filtered') { %><span style="background:#fef3c7;color:#92400e;border-radius:12px;padding:2px 10px;font-size:12px;">filtrato</span>
+          <% } else if (l.status === 'ip_blocked') { %><span style="background:#fee2e2;color:#991b1b;border-radius:12px;padding:2px 10px;font-size:12px;">IP bloccato</span>
+          <% } else if (l.status === 'signature_fail') { %><span style="background:#fee2e2;color:#991b1b;border-radius:12px;padding:2px 10px;font-size:12px;">firma non valida</span>
+          <% } else { %><span style="background:#f3f4f6;color:#4b5563;border-radius:12px;padding:2px 10px;font-size:12px;"><%= l.status %></span><% } %>
+        </td>
+        <td style="font-size:12px;"><%= l.reason || '—' %></td>
+      </tr>
+      <% }) %>
+    <% } %>
+  </tbody>
+</table>
+
+<script>
+function toggleNewDirection() {
+  const dir = document.getElementById('newdirection').value;
+  document.getElementById('newurl_group').style.display = dir === 'out' ? '' : 'none';
+  document.getElementById('newsecurity_group').style.display = dir === 'in' ? '' : 'none';
+  document.getElementById('newsecret_group').style.display = '';
+}
+document.addEventListener('DOMContentLoaded', () => {
+  toggleNewDirection();
+  // Serializza i form edit
+  document.querySelectorAll('form[method="POST"]').forEach(form => {});
+  document.querySelectorAll('details form[action*="/update"]').forEach(form => {
+    const id = form.getAttribute('action').match(/(\d+)\/update/)[1];
+    form.addEventListener('submit', () => {
+      const t = document.getElementById('events_text_' + id).value.split(',').map(s => s.trim()).filter(Boolean);
+      document.getElementById('events_json_' + id).value = JSON.stringify(t);
+      const ft = document.getElementById('filter_text_' + id).value.trim();
+      try { document.getElementById('filter_json_' + id).value = ft ? JSON.stringify(JSON.parse(ft)) : '{}'; }
+      catch { document.getElementById('filter_json_' + id).value = '{}'; }
+    });
+  });
+  // Form nuovo
+  const newform = document.querySelector('form[action="/admin/webhooks"]');
+  newform.addEventListener('submit', () => {
+    const t = document.getElementById('newevents_text').value.split(',').map(s => s.trim()).filter(Boolean);
+    document.getElementById('newevents_json').value = JSON.stringify(t);
+    const ft = document.getElementById('newfilter_text').value.trim();
+    try { document.getElementById('newfilter_json').value = ft ? JSON.stringify(JSON.parse(ft)) : '{}'; }
+    catch { document.getElementById('newfilter_json').value = '{}'; }
+  });
+});
+
+// Preview mapping webhook IN
+async function runPreview() {
+  const webhookId = document.getElementById('preview_webhook_id').value;
+  const payload = document.getElementById('preview_payload').value;
+  const ip = document.getElementById('preview_ip').value;
+  const signature = document.getElementById('preview_signature').value;
+  const resultEl = document.getElementById('preview_result');
+  resultEl.style.display = 'block';
+  resultEl.textContent = 'Esecuzione preview...';
+  try {
+    const res = await fetch('/api/admin/webhooks/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook_id: webhookId, payload, ip, signature })
+    });
+    const data = await res.json();
+    resultEl.textContent = JSON.stringify(data, null, 2);
+    resultEl.style.color = data.all_ok ? '#86efac' : '#fca5a5';
+  } catch (err) {
+    resultEl.textContent = 'Errore: ' + err.message;
+    resultEl.style.color = '#fca5a5';
+  }
+}
+</script>
