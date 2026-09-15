@@ -1,4 +1,4 @@
--- Migration: compatibilita con il modulo satellite collego-sales
+-- Migration: compatibilita con il modulo satellite vendite esterno
 -- 1) opportunities: owner (setter assegnato) e contatto denormalizzato
 -- 2) users: colonna surname + ruoli setter/closer per il modulo sales
 

@@ -34,7 +34,12 @@ const siteSchema = z.object({
   domain: z.string().min(1),
   layout_template: z.string().optional(),
   homepage_path: z.string().optional(),
+  api_domain: z.string().optional(),
 });
+
+// Stesso pattern hostname di /admin/sites/:id/domains (senza il prefisso
+// wildcard "*.": un vhost API è un host singolo, non un pattern di dominio).
+const HOSTNAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::\d{1,5})?$/;
 
 router.get("/admin/sites", requireAuth, authorize("sites", "read"), async (req, res, next) => {
   try {
@@ -145,15 +150,25 @@ router.post("/admin/sites/:id", requireAuth, authorize("sites", "update"), async
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     }
 
-    const current = (await query("SELECT name, domain, layout_template, homepage_path FROM sites WHERE id = $1", [siteId])).rows[0];
+    const current = (await query("SELECT name, domain, layout_template, homepage_path, api_domain FROM sites WHERE id = $1", [siteId])).rows[0];
     if (!current) return res.status(404).render("error", { message: res.locals.t("api.common.siteNotFound") });
 
     const oldDomain = current.domain;
     const newDomain = data.domain;
 
+    // api_domain: vhost API dedicato (db/139), facoltativo. Stringa vuota =
+    // rimuovi il vhost (torna a NULL); altrimenti deve essere un hostname
+    // valido — mai passare al DB un valore che poi finirebbe confrontato
+    // contro req.headers.host dal middleware apiHostMiddleware.
+    const apiDomainRaw = String(data.api_domain || "").trim().toLowerCase();
+    if (apiDomainRaw && !HOSTNAME_RE.test(apiDomainRaw)) {
+      return res.status(400).render("error", { message: res.locals.t("api.sites.domainRequired") });
+    }
+    const newApiDomain = apiDomainRaw || null;
+
     await query(
-      "UPDATE sites SET name = $1, domain = $2, layout_template = $3, homepage_path = $4, updated_at = NOW() WHERE id = $5",
-      [data.name, newDomain, data.layout_template || "site", data.homepage_path || null, siteId]
+      "UPDATE sites SET name = $1, domain = $2, layout_template = $3, homepage_path = $4, api_domain = $5, updated_at = NOW() WHERE id = $6",
+      [data.name, newDomain, data.layout_template || "site", data.homepage_path || null, newApiDomain, siteId]
     );
 
     if (oldDomain !== newDomain) {
@@ -177,6 +192,12 @@ router.post("/admin/sites/:id", requireAuth, authorize("sites", "update"), async
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.message === "URL non valido") return res.status(400).render("error", { message: res.locals.t("api.common.invalidUrl") });
+    // api_domain duplicato: 409 (conflitto tra siti), distinto dal domain
+    // pubblico duplicato (400, validazione input) — è l'unico caso di
+    // violazione unique su questa UPDATE oltre al domain stesso.
+    if (err.code === "23505" && err.constraint === "idx_sites_api_domain") {
+      return res.status(409).render("error", { message: res.locals.t("api.sites.apiDomainInUse") });
+    }
     if (err.code === "23505") return res.status(400).render("error", { message: res.locals.t("api.sites.domainInUse") });
     next(err);
   }

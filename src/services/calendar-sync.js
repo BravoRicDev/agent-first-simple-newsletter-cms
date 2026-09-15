@@ -1,5 +1,6 @@
 import { query } from "../db.js";
 import { logger } from "./logger.js";
+import { refreshToken } from "./oauth.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Feature 37 — Sync calendario bidirezionale (chiamate ↔ Google Calendar).
@@ -399,7 +400,7 @@ export async function syncNow(siteId, configId, { direction: directionOverride }
     : config.direction;
   const kindForError = direction === "in" ? "pull" : "push";
 
-  const conn = await loadOAuthConnection(config.oauth_connection_id);
+  let conn = await loadOAuthConnection(config.oauth_connection_id);
   if (!conn) {
     const msg = "OAuth non configurato: collega prima un account Google (feature 36)";
     await writeLog({
@@ -407,6 +408,28 @@ export async function syncNow(siteId, configId, { direction: directionOverride }
       count: 0, status: "error", error: msg,
     });
     return { error: msg };
+  }
+
+  // access_token scaduto (o senza scadenza nota, per prudenza): refresh
+  // automatico PRIMA di chiamare Google, mai un push/pull con un token che
+  // sappiamo già invalido. refreshToken() persiste il nuovo token su
+  // oauth_connections ma lo restituisce mascherato (uso admin/API) — va
+  // ricaricato da qui per avere il plaintext da usare subito.
+  if (!conn.token_expires_at || new Date(conn.token_expires_at).getTime() <= Date.now()) {
+    const refreshed = await refreshToken(siteId, config.oauth_connection_id);
+    if (refreshed.error) {
+      const msg = "OAuth non configurato: collega prima un account Google (feature 36)";
+      await writeLog({
+        siteId, configId: config.id, direction, kind: kindForError,
+        count: 0, status: "error", error: `${msg} (refresh: ${refreshed.error})`,
+      });
+      return { error: msg };
+    }
+    conn = await loadOAuthConnection(config.oauth_connection_id);
+    if (!conn) {
+      const msg = "OAuth non configurato: collega prima un account Google (feature 36)";
+      return { error: msg };
+    }
   }
 
   const results = {};

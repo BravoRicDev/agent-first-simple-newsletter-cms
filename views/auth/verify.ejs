@@ -25,6 +25,7 @@
     <p><%= t('auth.verify.subtitle') %></p>
     <form id="verifyForm">
       <input type="hidden" name="token" value="<%= typeof token !== 'undefined' ? token : '' %>">
+      <input type="hidden" name="redirect_uri" value="<%= typeof redirect_uri !== 'undefined' ? redirect_uri : '' %>">
       <div class="form-group">
         <label><%= t('auth.verify.otp_label') %></label>
         <input type="text" name="otp" required maxlength="6" placeholder="000000" inputmode="numeric" pattern="[0-9]{6}">
@@ -43,11 +44,12 @@
       e.preventDefault();
       const token = e.target.token.value;
       const otp = e.target.otp.value;
+      const redirect_uri = e.target.redirect_uri.value;
       const msg = document.getElementById('msg');
       try {
-        const r = await fetch('/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, otp }) });
+        const r = await fetch('/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, otp, redirect_uri }) });
         const d = await r.json();
-        if (d.user) { location.href = '/admin/dashboard'; }
+        if (d.user) { location.href = d.redirect_to || '/admin/dashboard'; }
         else {
           const errMsg = d.error || i18n.invalidCodeFallback;
           msg.innerHTML = '<span class="error">' + errMsg +

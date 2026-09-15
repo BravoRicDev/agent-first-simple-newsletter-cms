@@ -26,8 +26,11 @@ import serveRoutes, { publicCatchAllRouter } from "./routes/serve.js";
 import settingsRoutes from "./routes/settings.js";
 import agentRoutes from "./routes/agent.js";
 import adminImportRoutes from "./routes/admin-import.js";
+import satellitesRoutes from "./routes/satellites.js";
+import satelliteEventsRoutes from "./routes/satellite-events.js";
+import satelliteProxyRoutes from "./routes/satellite-proxy.js";
 import { checkEncryptionKey } from "./services/crypto.js";
-// API dati in sola lettura per i moduli satellite (collego-sales).
+// API dati in sola lettura per i moduli satellite (modulo vendite esterno).
 import salesApiRoutes from "./routes/sales-api.js";
 import mediaRoutes from "./routes/media.js";
 // Media PROTETTI: serviti SOLO via route Express con autorizzazione. NON
@@ -331,6 +334,10 @@ async function start() {
   app.use(publicSmsInboundRoutes);
   app.use(contactsRoutes);
   app.use(bugReportsRoutes);
+  // Registro moduli satellite (SSO/discovery/proxy/eventi) — vedi db/134-138.
+  app.use(satellitesRoutes);
+  app.use(satelliteEventsRoutes);
+  app.use(satelliteProxyRoutes);
   app.use(apiTokensRoutes);
   app.use(pipelineRoutes);
   app.use(bookingPublicRoutes);

@@ -17,8 +17,8 @@
     <% const roleHints = {
       admin: 'Può gestire pagine, snippet, utenti e impostazioni del sito. Non può creare o eliminare siti.',
       collaboratore: 'Può modificare pagine e snippet. Non può gestire utenti né impostazioni.',
-      setter: 'Account di servizio per il modulo vendite esterno (collego-sales): accesso SSO/API, nessun permesso admin.',
-      closer: 'Account di servizio per il modulo vendite esterno (collego-sales): accesso SSO/API, nessun permesso admin.',
+      setter: 'Account di servizio per il modulo satellite vendite: accesso SSO/API, nessun permesso admin.',
+      closer: 'Account di servizio per il modulo satellite vendite: accesso SSO/API, nessun permesso admin.',
       superadmin: 'Accesso completo a tutti i siti, utenti e impostazioni.'
     }; %>
     <select name="role" onchange="document.getElementById('role-hint').textContent = this.options[this.selectedIndex].dataset.hint">

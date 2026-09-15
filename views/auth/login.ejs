@@ -23,6 +23,7 @@
     <h1><%= t('auth.login.title') %></h1>
     <p><%= t('auth.login.subtitle') %></p>
     <form id="loginForm">
+      <input type="hidden" name="redirect_uri" value="<%= typeof redirect_uri !== 'undefined' ? redirect_uri : '' %>">
       <div class="form-group">
         <label><%= t('auth.login.email_label') %></label>
         <input type="email" name="email" required placeholder="tua@email.com">

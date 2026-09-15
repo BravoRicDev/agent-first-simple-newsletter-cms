@@ -5,6 +5,7 @@ import config from "../config.js";
 import { query } from "../db.js";
 import { generateAndSend, verify } from "../services/magic-link.js";
 import { requireAuth } from "../middleware/auth.js";
+import { validateRedirectUri } from "../services/satellites.js";
 
 const router = Router();
 
@@ -67,7 +68,12 @@ router.post("/api/auth/verify", async (req, res, next) => {
       // restava valido via header Authorization oltre la vita del cookie.
       maxAge: jwtExpiryToMs(config.jwtExpiresIn),
     });
-    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, site_id: user.site_id } });
+    // redirect_uri: solo verso un origin registrato in sso_satellites (SSO
+    // moduli satellite) — previene open-redirect. null se assente/non valido/
+    // non registrato: il chiamante (frontend) ricade sul comportamento
+    // esistente (redirect interno alla dashboard).
+    const redirect_to = await validateRedirectUri(req.body?.redirect_uri);
+    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, site_id: user.site_id }, redirect_to });
   } catch (err) {
     next(err);
   }
@@ -94,11 +100,14 @@ router.post("/api/auth/logout", async (req, res) => {
 });
 
 router.get("/login", (req, res) => {
-  res.render("auth/login", { layout: false });
+  // redirect_uri propagato in un campo nascosto: la validazione vera contro
+  // il registro sso_satellites avviene solo a /api/auth/verify (qui è solo
+  // trasporto, non un punto di fiducia — mai fidarsi lato client).
+  res.render("auth/login", { layout: false, redirect_uri: req.query.redirect_uri || "" });
 });
 
 router.get("/login/verify", (req, res) => {
-  res.render("auth/verify", { token: req.query.token || "", layout: false });
+  res.render("auth/verify", { token: req.query.token || "", redirect_uri: req.query.redirect_uri || "", layout: false });
 });
 
 // Verifica OTP da CLI: richiede sia il token della magic-link (48 byte random,
@@ -178,7 +187,7 @@ router.post("/api/agent/refresh-token", requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Verifica token JWT per i moduli satellite (collego-sales).
+// Verifica token JWT per i moduli satellite (modulo vendite esterno).
 // Contratto richiesto dal satellite: POST { token } ->
 // { success: true, user: { sub, id, email, name, surname, role, site_id } }
 // oppure errore { success: false, user: null }. Nessuna rotazione del token.

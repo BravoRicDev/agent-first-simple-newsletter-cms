@@ -10,9 +10,10 @@ import { requireAuth } from "../middleware/auth.js";
 import { expandSnippets } from "../services/page-renderer.js";
 import { auditLog } from "../services/audit.js";
 import { z } from "zod";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const archiver = require("archiver");
+// archiver@8 è ESM-only e non espone più una funzione factory di default
+// (era archiver("zip", opts) nelle versioni precedenti): ora si istanzia
+// direttamente la classe del formato voluto.
+import { ZipArchive } from "archiver";
 import { diffLines } from "diff";
 import { getSiteDir, ensureSiteDir, fetchUrlToMedia, saveBufferToMedia, compressVideo, verifyMagicBytes } from "./media.js";
 import { buildChangelogMessage } from "../services/changelog.js";
@@ -4243,7 +4244,11 @@ router.post("/api/agent/sites/:siteId/backup", requireAuth, requireAgent, async 
       query("SELECT * FROM site_domains WHERE site_id = $1", [siteId]),
       query("SELECT * FROM site_modules WHERE site_id = $1", [siteId]),
       query("SELECT * FROM forms WHERE site_id = $1", [siteId]),
-      query("SELECT fs.* FROM form_submissions fs JOIN forms f ON f.id = fs.form_id WHERE f.site_id = $1", [siteId]),
+      // form_submissions ha già site_id proprio (db/013_forms.sql): niente
+      // JOIN su forms necessario, ed evita di perdere silenziosamente dal
+      // backup le submission il cui form_id è NULL (slug senza forms row
+      // corrispondente, o form eliminato — form_id è ON DELETE SET NULL).
+      query("SELECT * FROM form_submissions WHERE site_id = $1", [siteId]),
       query("SELECT * FROM contacts WHERE site_id = $1", [siteId]),
       query("SELECT * FROM calls WHERE site_id = $1", [siteId]),
       query("SELECT * FROM call_availability WHERE site_id = $1", [siteId]),
@@ -4275,7 +4280,7 @@ router.post("/api/agent/sites/:siteId/backup", requireAuth, requireAgent, async 
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="site_${siteId}_backup.zip"`);
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     // Handler error obbligatorio: senza listener, un errore su uno stream (es.
     // client che si disconnette a metà download) fa crashare l'intero processo.
     archive.on("error", (err) => { next(err); });
@@ -5180,6 +5185,183 @@ router.put("/api/agent/sites/:siteId/opportunities/:id/owner", requireAuth, auth
     if (err.message === "vendor_ambiguous") return res.status(409).json({ error: "vendor_ambiguous", candidates: err.candidates });
     next(err);
   }
+});
+
+// ── Registro moduli satellite (SSO/discovery) — API agente/MCP ─────────────
+// Controparte JSON dell'admin UI in src/routes/satellites.js (form HTML):
+// stessa logica di servizio (src/services/satellites.js), qui esposta come
+// API per l'agente/MCP. CRUD riservato a superadmin (il registro decide dove
+// atterrano gli utenti dopo il login); la discovery capability
+// (/capabilities) è leggibile da qualsiasi token agente autenticato, anche
+// read-only, perché serve ai satelliti stessi per interrogarsi a vicenda.
+import {
+  listSatellites, createSatellite, updateSatellite, deleteSatellite,
+  setSatelliteAgentToken, listSatelliteCapabilities, getSatelliteCapabilities,
+} from "../services/satellites.js";
+
+function requireSuperadminAgent(req, res, next) {
+  if (req.user?.role !== "superadmin") {
+    return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
+  }
+  next();
+}
+
+const SATELLITE_VALIDATION_CODES = new Set([
+  "SATELLITE_INVALID_ORIGIN", "SATELLITE_INVALID_CAPABILITIES",
+  "SATELLITE_INVALID_WEBHOOKS", "SATELLITE_INVALID_BASE_INTERNAL",
+  "SATELLITE_INVALID_USER_ID", "SATELLITE_NO_FIELDS",
+]);
+
+function handleSatelliteError(res, err, next) {
+  if (SATELLITE_VALIDATION_CODES.has(err.code)) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+}
+
+router.get("/api/agent/satellites", requireAuth, requireAgent, requireSuperadminAgent, async (req, res, next) => {
+  try {
+    res.json({ satellites: await listSatellites() });
+  } catch (err) { next(err); }
+});
+
+router.post("/api/agent/satellites", requireAuth, requireAgent, requireSuperadminAgent, async (req, res, next) => {
+  try {
+    const { name, origin, enabled, capabilities, webhooks, base_internal, user_id, agent_token } = req.body || {};
+    if (!name || !origin) return res.status(400).json({ error: res.locals.t("api.common.invalidData") });
+    let satellite = await createSatellite({ name, origin, enabled, capabilities, webhooks, base_internal, user_id });
+    if (agent_token !== undefined) {
+      satellite = await setSatelliteAgentToken(satellite.id, String(agent_token).trim() || null);
+    }
+    await auditLog({
+      userId: req.user.sub, siteId: null,
+      entityType: "satellite", entityId: satellite.id, action: "create",
+      newData: { name: satellite.name, origin: satellite.origin, enabled: satellite.enabled },
+      ipAddress: req.ip,
+    });
+    res.status(201).json({ satellite });
+  } catch (err) { handleSatelliteError(res, err, next); }
+});
+
+router.put("/api/agent/satellites/:id", requireAuth, requireAgent, requireSuperadminAgent, async (req, res, next) => {
+  try {
+    const { name, origin, enabled, capabilities, webhooks, base_internal, user_id, agent_token } = req.body || {};
+    const payload = {};
+    if (name !== undefined) payload.name = name;
+    if (origin !== undefined) payload.origin = origin;
+    if (enabled !== undefined) payload.enabled = enabled;
+    if (capabilities !== undefined) payload.capabilities = capabilities;
+    if (webhooks !== undefined) payload.webhooks = webhooks;
+    if (base_internal !== undefined) payload.base_internal = base_internal;
+    if (user_id !== undefined) payload.user_id = user_id;
+
+    let satellite = Object.keys(payload).length > 0
+      ? await updateSatellite(req.params.id, payload)
+      : await listSatellites().then(rows => rows.find(s => s.id === parseInt(req.params.id, 10)));
+    if (!satellite) return res.status(404).json({ error: res.locals.t("api.common.pageNotFound") });
+
+    if (agent_token !== undefined) {
+      satellite = await setSatelliteAgentToken(satellite.id, String(agent_token).trim() || null);
+    }
+    await auditLog({
+      userId: req.user.sub, siteId: null,
+      entityType: "satellite", entityId: satellite.id, action: "update",
+      newData: { name: satellite.name, origin: satellite.origin, enabled: satellite.enabled },
+      ipAddress: req.ip,
+    });
+    res.json({ satellite });
+  } catch (err) { handleSatelliteError(res, err, next); }
+});
+
+router.delete("/api/agent/satellites/:id", requireAuth, requireAgent, requireSuperadminAgent, async (req, res, next) => {
+  try {
+    const deleted = await deleteSatellite(req.params.id);
+    if (!deleted) return res.status(404).json({ error: res.locals.t("api.common.pageNotFound") });
+    await auditLog({
+      userId: req.user.sub, siteId: null,
+      entityType: "satellite", entityId: deleted.id, action: "delete",
+      oldData: { name: deleted.name, origin: deleted.origin },
+      ipAddress: req.ip,
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Discovery capability: qualsiasi token agente autenticato (anche read-only)
+// può leggerla — è la rubrica che i satelliti usano per interrogarsi a
+// vicenda, non un endpoint amministrativo. DEVE precedere la route
+// GET/PUT/DELETE ":id" solo perché quelle sono altri verbi sullo stesso
+// prefisso: nessuna ambiguità di path reale, ma tenute vicine per chiarezza.
+router.get("/api/agent/satellites/capabilities", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    res.json({ satellites: await listSatelliteCapabilities() });
+  } catch (err) { next(err); }
+});
+
+router.get("/api/agent/satellites/:name/capabilities", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const found = await getSatelliteCapabilities(req.params.name);
+    if (!found) return res.status(404).json({ error: res.locals.t("api.common.pageNotFound") });
+    res.json(found);
+  } catch (err) { next(err); }
+});
+
+// ── Rilevamento snippet (blocchi HTML ripetuti fra pagine) ─────────────────
+import { findSnippetCandidates, findBlockByHash, replaceBlockAcrossPages } from "../services/snippet-detector.js";
+
+router.get("/api/agent/sites/:siteId/pages/:pageId/snippet-candidates", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) {
+      return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    }
+    const result = await findSnippetCandidates(siteId, req.params.pageId);
+    if (!result) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
+const snippetCandidateApplySchema = z.object({
+  hash: z.string().regex(/^[a-f0-9]{64}$/),
+  name: z.string().min(1).regex(/^[a-zA-Z0-9_-]+$/, "Solo lettere, numeri, underscore e trattini"),
+  description: z.string().optional().default(""),
+});
+
+router.post("/api/agent/sites/:siteId/pages/:pageId/snippet-candidates/apply", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) {
+      return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    }
+    const data = snippetCandidateApplySchema.parse(req.body);
+    // Ri-estrae il blocco dalla pagina di riferimento AL MOMENTO dell'apply
+    // (mai fidarsi dell'HTML lato client): 404 se nel frattempo è cambiato.
+    const block = await findBlockByHash(siteId, req.params.pageId, data.hash);
+    if (!block) return res.status(404).json({ error: res.locals.t("api.common.pageNotFound") });
+
+    const snippetResult = await query(
+      "INSERT INTO snippets (site_id, name, content, description) VALUES ($1, $2, $3, $4) RETURNING *",
+      [siteId, data.name, block.html, data.description]
+    );
+    const snippet = snippetResult.rows[0];
+
+    const { updated } = await replaceBlockAcrossPages(siteId, data.hash, data.name);
+    // Uno snapshot pre-modifica per pagina (stesso pattern di ogni altra
+    // route di update pagina in questo file): il contenuto ORIGINALE va in
+    // page_versions, quello con {{snippet:...}} sostituisce pages.content.
+    for (const page of updated) {
+      await query(
+        `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [page.id, req.user.sub, page.url_path, page.title, page.oldContent, page.layoutMode, page.published]
+      );
+    }
+    res.status(201).json({
+      snippet,
+      pages_updated: updated.map((p) => ({ id: p.id, url_path: p.url_path, title: p.title })),
+    });
+    exportPublishedPages({ siteId }).catch(() => {});
+  } catch (err) { return handleAgentError(err, req, res, next); }
 });
 
 export default router;

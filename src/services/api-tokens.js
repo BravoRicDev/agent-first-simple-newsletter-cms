@@ -7,20 +7,39 @@ function hashToken(rawToken) {
   return crypto.createHash("sha256").update(rawToken).digest("hex");
 }
 
+const VALID_SCOPES = new Set(["read", "write"]);
+
+// Normalizza l'array scopes richiesto: case-insensitive, dedup, scarta
+// valori sconosciuti; mai vuoto (fallback a sola lettura, mai a "nessuno
+// scope" che romperebbe qualunque endpoint in lettura).
+function normalizeScopes(raw) {
+  const out = new Set();
+  for (const s of (Array.isArray(raw) ? raw : [])) {
+    const v = String(s).toLowerCase();
+    if (VALID_SCOPES.has(v)) out.add(v);
+  }
+  if (out.size === 0) out.add("read");
+  return [...out];
+}
+
 // Il valore in chiaro esiste solo qui, al momento della creazione — mai
 // salvato, mai più recuperabile dopo (stesso modello dei PAT GitHub/Stripe).
-export async function createApiToken(userId, name, expiresInDays) {
+//
+// scopes: default sola lettura (vedi db/135_api_token_scopes.sql) — la
+// scrittura è un opt-in esplicito per i token creati da qui in avanti.
+export async function createApiToken(userId, name, expiresInDays, scopes = ["read"]) {
   const raw = TOKEN_PREFIX + crypto.randomBytes(32).toString("hex");
   const prefix = raw.slice(0, 14) + "…";
   const expiresAt = new Date(Date.now() + expiresInDays * 86400000);
+  const normalizedScopes = normalizeScopes(scopes);
 
   const result = await query(
-    `INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, expires_at)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-    [userId, name.slice(0, 255), hashToken(raw), prefix, expiresAt]
+    `INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, expires_at, scopes)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+    [userId, name.slice(0, 255), hashToken(raw), prefix, expiresAt, normalizedScopes]
   );
 
-  return { id: result.rows[0].id, token: raw, prefix, expiresAt, createdAt: result.rows[0].created_at };
+  return { id: result.rows[0].id, token: raw, prefix, expiresAt, createdAt: result.rows[0].created_at, scopes: normalizedScopes };
 }
 
 // Usata da requireAuth per i token che iniziano con TOKEN_PREFIX, al posto
@@ -31,7 +50,7 @@ export async function verifyApiToken(rawToken) {
   if (!rawToken.startsWith(TOKEN_PREFIX)) return null;
 
   const row = (await query(
-    `SELECT t.id AS token_id, u.id, u.email, u.name, u.role, u.site_id, u.token_version, u.status
+    `SELECT t.id AS token_id, t.scopes, u.id, u.email, u.name, u.role, u.site_id, u.token_version, u.status
      FROM api_tokens t JOIN users u ON u.id = t.user_id
      WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > NOW()`,
     [hashToken(rawToken)]
@@ -44,6 +63,7 @@ export async function verifyApiToken(rawToken) {
   return {
     sub: row.id, email: row.email, name: row.name, role: row.role,
     site_id: row.site_id, token_version: row.token_version, agent: true, api_token: true,
+    scopes: Array.isArray(row.scopes) && row.scopes.length > 0 ? row.scopes : ["read"],
   };
 }
 

@@ -21,6 +21,11 @@
     <label>Pagina homepage (es. /landing)</label>
     <input type="text" id="homepage_path" name="homepage_path" value="<%= site.homepage_path || '' %>" placeholder="/">
   </div>
+  <div class="form-group">
+    <label>Dominio API dedicato (opzionale)</label>
+    <input type="text" name="api_domain" value="<%= site.api_domain || '' %>" placeholder="es. apicrm.ilmiosito.it">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Se impostato, TUTTE le richieste su questo host vanno al router API clone invece che alle pagine pubbliche. Lascia vuoto per disattivare.</div>
+  </div>
   <button type="submit" class="btn">Salva</button>
   <a href="/admin/sites" class="btn" style="background:#6b7280;">Annulla</a>
 </form>

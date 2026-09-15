@@ -18,7 +18,7 @@ function sameSite(targetSiteId, actorSiteId, actorIsSuperadmin) {
   return targetSiteId === actorSiteId;
 }
 
-// setter/closer: account di servizio per il modulo satellite collego-sales
+// setter/closer: account di servizio per il modulo satellite vendite
 // (SSO + API dati). Nessun permesso admin (authorize e' deny-by-default).
 const userSchema = z.object({
   email: z.string().email(),

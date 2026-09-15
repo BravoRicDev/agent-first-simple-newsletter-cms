@@ -173,6 +173,7 @@
   "api.users.cannotLockSelfOut": "You can't disable your own account or downgrade your own role",
   "api.users.emailExists": "Email already exists",
   "api.sites.domainInUse": "Domain already in use",
+  "api.sites.apiDomainInUse": "API domain already in use by another site",
   "api.sites.fromToPathRequired": "from_path and to_path required",
   "api.sites.domainRequired": "Domain required",
   "api.sites.domainExists": "Domain already exists",

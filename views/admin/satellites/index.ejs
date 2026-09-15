@@ -1,0 +1,118 @@
+<h1>Moduli Satellite</h1>
+
+<p style="font-size:13px;color:#666;max-width:650px;">
+  Registro dei moduli satellite che usano il login del CMS (SSO sui
+  sottodomini). Solo gli origin registrati e attivi possono ricevere il
+  redirect dopo il login. Le <strong>capability</strong> dichiarate qui sono
+  la rubrica che gli altri satelliti consultano (discovery) e la whitelist
+  usata dal proxy <code>/invoke</code>.
+</p>
+
+<div style="border:1px solid #e5e7eb;border-radius:6px;padding:16px;margin-bottom:24px;max-width:560px;">
+  <strong style="font-size:14px;">Registra nuovo satellite</strong>
+  <form method="POST" action="/admin/satellites" style="margin-top:10px;">
+    <div class="form-group">
+      <label>Nome (identificativo del modulo)</label>
+      <input type="text" name="name" required maxlength="100" placeholder="es. modulo-delivery">
+    </div>
+    <div class="form-group">
+      <label>Origin (URL pubblico, per SSO)</label>
+      <input type="url" name="origin" required maxlength="2048" placeholder="https://delivery.esempio.com">
+    </div>
+    <div class="form-group">
+      <label>base_internal (URL rete Docker interna, per il proxy)</label>
+      <input type="url" name="base_internal" maxlength="2048" placeholder="es. http://modulo-delivery-app:3103">
+    </div>
+    <div class="form-group">
+      <label>User ID dell'utente di servizio (lega l'agtok_ al satellite per eventi e proxy)</label>
+      <input type="number" name="user_id" min="1" placeholder="es. 42">
+    </div>
+    <div class="form-group">
+      <label>Capabilities (JSON array, opzionale)</label>
+      <textarea name="capabilities" rows="4" style="width:100%;font-family:monospace;font-size:12px;" placeholder='[{"method":"POST","path":"/api/messages/send","desc":"Invia messaggio","scope":"write"}]'></textarea>
+    </div>
+    <div class="form-group">
+      <label>Token M2M del satellite (verrà cifrato a riposo; serve al proxy /invoke)</label>
+      <input type="password" name="agent_token" maxlength="4096" autocomplete="new-password" placeholder="agtok_… del satellite target">
+    </div>
+    <div class="form-group">
+      <label style="font-weight:normal;">
+        <input type="checkbox" name="enabled" checked> Attivo
+      </label>
+    </div>
+    <button type="submit" class="btn">Registra satellite</button>
+  </form>
+</div>
+
+<% if (satellites.length === 0) { %>
+  <p style="color:#999;font-size:14px;">Nessun satellite registrato.</p>
+<% } else { %>
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Origin</th><th>Stato</th><th>Capability</th><th>Proxy</th><th>Creato il</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% satellites.forEach(s => { %>
+    <tr style="<%= s.enabled ? '' : 'opacity:0.6;' %>">
+      <td><strong><%= s.name %></strong></td>
+      <td><code><%= s.origin %></code></td>
+      <td><%= s.enabled ? 'Attivo' : 'Disattivato' %></td>
+      <td><span style="background:#eef2ff;border-radius:10px;padding:2px 8px;font-size:12px;"><%= (s.capabilities || []).length %> endpoint</span></td>
+      <td style="font-size:12px;">
+        <% if (s.base_internal && s.has_agent_token) { %>
+          <span style="color:#047857;">pronto</span>
+        <% } else if (!s.base_internal) { %>
+          <span title="base_internal non configurata">— base interna assente</span>
+        <% } else { %>
+          <span title="Token M2M non registrato">— token M2M assente</span>
+        <% } %>
+      </td>
+      <td><%= new Date(s.created_at).toLocaleDateString('it-IT') %></td>
+      <td>
+        <details style="margin-bottom:4px;">
+          <summary class="btn btn-sm" style="display:inline-block;cursor:pointer;">Configura</summary>
+          <form method="POST" action="/admin/satellites/<%= s.id %>/update" style="margin-top:8px;padding:10px;border:1px solid #e5e7eb;border-radius:6px;max-width:480px;">
+            <div class="form-group">
+              <label>Nome</label>
+              <input type="text" name="name" maxlength="100" value="<%= s.name %>">
+            </div>
+            <div class="form-group">
+              <label>Origin</label>
+              <input type="url" name="origin" maxlength="2048" value="<%= s.origin %>">
+            </div>
+            <div class="form-group">
+              <label>base_internal</label>
+              <input type="url" name="base_internal" maxlength="2048" value="<%= s.base_internal || '' %>" placeholder="http://nome-container:3103">
+            </div>
+            <div class="form-group">
+              <label>User ID utente di servizio</label>
+              <input type="number" name="user_id" min="1" value="<%= s.user_id || '' %>" placeholder="vuoto = nessun binding">
+            </div>
+            <div class="form-group">
+              <label>Capabilities (JSON)</label>
+              <textarea name="capabilities" rows="4" style="width:100%;font-family:monospace;font-size:12px;"><%= JSON.stringify(s.capabilities || [], null, 2) %></textarea>
+            </div>
+            <div class="form-group">
+              <label>Nuovo token M2M (<%= s.has_agent_token ? 'presente' : 'assente' %>; vuoto = invariato)</label>
+              <input type="password" name="agent_token" maxlength="4096" autocomplete="new-password" placeholder="lascia vuoto per non cambiare">
+            </div>
+            <label style="font-weight:normal;">
+              <input type="checkbox" name="enabled" <%= s.enabled ? 'checked' : '' %>> Attivo
+            </label>
+            <br>
+            <button type="submit" class="btn btn-sm" style="margin-top:8px;">Salva</button>
+          </form>
+        </details>
+        <form method="POST" action="/admin/satellites/<%= s.id %>/toggle" style="display:inline;">
+          <button type="submit" class="btn btn-sm"><%= s.enabled ? 'Disattiva' : 'Attiva' %></button>
+        </form>
+        <form method="POST" action="/admin/satellites/<%= s.id %>/delete" style="display:inline;"
+              onsubmit="return confirm('Eliminare il satellite <%= s.name %>? Il redirect SSO verso <%= s.origin %> smetterà di funzionare.')">
+          <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+        </form>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } %>

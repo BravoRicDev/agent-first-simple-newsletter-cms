@@ -173,6 +173,7 @@
   "api.users.cannotLockSelfOut": "Non puoi disabilitarti o declassare il tuo stesso ruolo",
   "api.users.emailExists": "Email già esistente",
   "api.sites.domainInUse": "Dominio già in uso",
+  "api.sites.apiDomainInUse": "Dominio API già in uso da un altro sito",
   "api.sites.fromToPathRequired": "from_path e to_path richiesti",
   "api.sites.domainRequired": "Dominio richiesto",
   "api.sites.domainExists": "Dominio già esistente",
