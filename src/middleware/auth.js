@@ -29,6 +29,13 @@ import { isApiTokenFormat, verifyApiToken } from "../services/api-tokens.js";
 //                             dentro services/satelliteProxy.js (scope della
 //                             capability dichiarata), quindi qui passa anche
 //                             un token read-only per invocare endpoint read.
+//   /contacts/search, /contacts/search/duplicate, /opportunities/search,
+//   /users/search (surface clone, root-level, vhost sites.api_domain) e gli
+//   stessi tre sotto /v1/... (surface compatibile) → ricerca/lista (SELECT),
+//   MAI /contacts/upsert né /opportunities/upsert (quelle scrivono davvero).
+//   req.route non è ancora popolato quando questo gate gira (middleware
+//   router-level, prima del matching della route specifica): i pattern qui
+//   sono quindi path letterali, non parametrici.
 // Scartati dal censimento perché SEMBRANO letture ma mutano/eseguono:
 //   followup-check (esegue azioni), reply-suggestions/generate (INSERT+LLM),
 //   segments/recount (muta segment_members), */test-send (invia email),
@@ -45,6 +52,15 @@ const READ_ONLY_POST_ALLOWLIST = new Set([
   "/api/agent/sites/:siteId/workflows/:workflowId/test",
   "/api/call-verdict",
   "/api/agent/satellites/:name/invoke",
+  // Clone (root-level, vhost api_domain):
+  "/contacts/search",
+  "/contacts/search/duplicate",
+  "/opportunities/search",
+  "/users/search",
+  // Compat API (/v1), stessi endpoint di ricerca:
+  "/v1/contacts/search",
+  "/v1/contacts/search/duplicate",
+  "/v1/opportunities/search",
 ]);
 
 function fullPathOf(req) {
