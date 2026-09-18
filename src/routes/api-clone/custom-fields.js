@@ -8,6 +8,8 @@ import { serializeCustomField, serializeCustomFieldList, serializeCustomValue, s
 import { serializeFolder, serializeFolderList } from "../../serializers/custom-field-folder.js";
 import { publicId } from "../../services/external-ids.js";
 import { resolveSiteInternalId } from "../../services/agency-clone.js";
+import { recordComparison, isPassthroughActive } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // Onda A — Custom fields/values/folders clone.
 // Contratto: docs/API_CLONE_MASTER_PLAN.md §5 onda A.
@@ -34,6 +36,57 @@ const REVERSE_TYPE_MAP = {
 // GET /locations/:locationId (users.js, Onda G), nessun controllo aggiuntivo
 // contro il tenant autenticato: stesso comportamento agency-style già
 // stabilito per l'intera famiglia di risorse /locations/:locationId/*.
+const CUSTOM_FIELDS_PARITY_ENDPOINT = "GET /locations/:locationId/customFields";
+
+// Confronto specifico per la shape dei custom field (shadow-verifica, vedi
+// services/ghl-parity.js): id + fieldKey + dataType devono coincidere per
+// tutti i campi (stesso conteggio, stesso contenuto sostanziale).
+function compareCustomFieldsLists(clonePayload, ghlPayload) {
+  const ghlFields = ghlPayload?.customFields || ghlPayload || [];
+  if (clonePayload.length === 0 && ghlFields.length === 0) {
+    return { equivalent: false, skipReason: "both_empty" };
+  }
+  if (clonePayload.length !== ghlFields.length) {
+    return { equivalent: false, skipReason: null };
+  }
+  const key = (f) => String(f.id || "");
+  const sortedClone = [...clonePayload].sort((a, b) => key(a).localeCompare(key(b)));
+  const sortedGhl = [...ghlFields].sort((a, b) => key(a).localeCompare(key(b)));
+  for (let i = 0; i < sortedClone.length; i++) {
+    const c = sortedClone[i];
+    const g = sortedGhl[i];
+    if (key(c) !== key(g)) return { equivalent: false, skipReason: null };
+    if ((c.fieldKey || "") !== (g.fieldKey || "")) return { equivalent: false, skipReason: null };
+    if ((c.dataType || "") !== (g.dataType || "")) return { equivalent: false, skipReason: null };
+  }
+  return { equivalent: true, skipReason: null };
+}
+
+// Shadow-verifica fire-and-forget: MAI await-ata dal chiamante. Usa
+// cfg.location_id (l'id REALE di GHL da source_sync_config), non il
+// :locationId ricevuto in richiesta — potrebbe essere l'UUID interno.
+function scheduleCustomFieldsParityCheck(siteId, locationIdForLog, serializedFields) {
+  isPassthroughActive(siteId, CUSTOM_FIELDS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: CUSTOM_FIELDS_PARITY_ENDPOINT,
+        requestKey: String(locationIdForLog),
+        clonePayload: serializedFields,
+        isEquivalent: compareCustomFieldsLists,
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get(`/locations/${cfg.location_id}/customFields`, {}, { sendLocationId: false });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleCustomFieldsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
+
 router.get("/locations/:locationId/customFields", async (req, res, next) => {
   try {
     const siteId = await resolveSiteInternalId(req.params.locationId);
@@ -49,7 +102,14 @@ router.get("/locations/:locationId/customFields", async (req, res, next) => {
     const objectKey = model === "contact" || model === "opportunity" ? model : null;
 
     const rows = await customFieldsService.listCustomFields(siteId, { objectKey });
-    res.json({ customFields: serializeCustomFieldGhlList(rows, req.params.locationId) });
+    const serialized = serializeCustomFieldGhlList(rows, req.params.locationId);
+    if (!objectKey) {
+      // Shadow-verifica solo sulla chiamata NON filtrata: è l'unica verificata
+      // 1:1 contro il comportamento reale di GHL (DIVERGENZA-CUSTOM-FIELDS.md) —
+      // il filtro model=contact/opportunity è un filtro NOSTRO, non del sorgente.
+      scheduleCustomFieldsParityCheck(siteId, req.params.locationId, serialized);
+    }
+    res.json({ customFields: serialized });
   } catch (err) {
     next(err);
   }

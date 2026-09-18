@@ -2,6 +2,8 @@ import { query } from "../db.js";
 import { emitContactEvent } from "./events.js";
 import { getExternalId, findByAnyId, publicId } from "./external-ids.js";
 import { getCustomValues, setCustomValues, mergeCustomValues } from "./custom-values.js";
+import { logger } from "./logger.js";
+import { recordComparison, isPassthroughActive } from "./ghl-parity.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -667,6 +669,125 @@ export async function serializeNote(row) {
   };
 }
 
+// Throttle del sync on-demand: ripetere il tentativo ad ogni richiesta della
+// scheda contatto (anche quando GHL è irraggiungibile o il budget è esaurito)
+// vanificherebbe il senso del budget giornaliero — 20 minuti bastano perché
+// l'operatore che ricarica la scheda subito dopo non generi una nuova
+// chiamata, ma il dato resta comunque "fresco entro riserva".
+const NOTES_ONDEMAND_THROTTLE_MS = 20 * 60 * 1000;
+
+// Sync on-demand delle note di UN contatto da GHL (SINTOMO-NOTE-CLONE.md:
+// un contatto può risultare sincronizzato e recente, ma con 0 note locali
+// perché il fix delle note può essere arrivato dopo l'ultimo sync di quel
+// contatto specifico — un gap che il sync periodico non ripara da solo).
+// Chiamato SOLO quando
+// la lettura locale è "sospetta" (0 note), non ad ogni richiesta.
+// Fail-safe per costruzione: qualunque errore (rete, 429/budget esaurito,
+// sito senza source-sync configurato) fa fallire silenziosamente il
+// refresh — non deve MAI rompere la lettura della scheda, che al peggio
+// resta quella (eventualmente vuota) già in locale.
+async function refreshContactNotesOnDemand(siteId, contact) {
+  if (!contact.source_id) return false; // contatto locale, non collegato a GHL
+  if (
+    contact.notes_synced_at &&
+    Date.now() - new Date(contact.notes_synced_at).getTime() < NOTES_ONDEMAND_THROTTLE_MS
+  ) {
+    return false; // già tentato di recente, rispetta il throttle
+  }
+
+  try {
+    const { loadConfig, createSourceClient } = await import("./source-sync/client.js");
+    const cfg = await loadConfig(siteId);
+    if (!cfg || !cfg.enabled) return false; // sito senza source-sync attivo
+
+    const client = createSourceClient(cfg);
+    // sendLocationId:false — stesso motivo verificato dal vivo già documentato
+    // in mappers/contacts.js: GET /contacts/{id}/notes rifiuta locationId in
+    // query (il contatto è già scoped dall'id nel path).
+    const notesRes = await client.get(`/contacts/${contact.source_id}/notes`, {}, { sendLocationId: false });
+    const notes = notesRes?.notes || notesRes || [];
+
+    const { upsertByExternalId } = await import("./source-sync/upsert.js");
+    for (const n of notes) {
+      await upsertByExternalId({
+        table: "contact_notes",
+        siteId,
+        externalId: n.id,
+        cols: {
+          contact_email: contact.email,
+          contact_id: contact.id,
+          author_type: n.authorType || "human",
+          author_name: n.authorName || "",
+          body: n.body || "",
+        },
+        timestamps: { createdAt: n.dateAdded || new Date(), updatedAt: new Date() },
+      });
+    }
+    await query("UPDATE contacts SET notes_synced_at = NOW() WHERE id = $1", [contact.id]);
+    return notes.length > 0;
+  } catch (err) {
+    logger.error(`getContactNotes: sync on-demand fallito per contatto ${contact.id}: ${err.message}`);
+    // Aggiorna comunque il timestamp per rispettare il throttle anche sugli
+    // errori — altrimenti un sorgente irraggiungibile o senza budget farebbe
+    // ritentare la chiamata ad OGNI richiesta della scheda, vanificando il
+    // throttle e continuando a consumare budget/tempo di risposta per niente.
+    await query("UPDATE contacts SET notes_synced_at = NOW() WHERE id = $1", [contact.id]).catch(() => {});
+    return false;
+  }
+}
+
+const NOTES_PARITY_ENDPOINT = "GET /contacts/:id/notes";
+
+// Confronto specifico per la shape delle note (shadow-verifica, vedi
+// services/ghl-parity.js): id + body devono coincidere per tutte le note
+// (stesso conteggio, stesso contenuto). Non pretendiamo l'uguaglianza
+// byte-per-byte su OGNI metadato GHL (es. userId può non essere ancora
+// risolto localmente): solo sul contenuto sostanziale che serviamo.
+function compareNotesLists(clonePayload, ghlPayload) {
+  const ghlNotes = ghlPayload?.notes || ghlPayload || [];
+  if (clonePayload.length === 0 && ghlNotes.length === 0) {
+    return { equivalent: false, skipReason: "both_empty" };
+  }
+  if (clonePayload.length !== ghlNotes.length) {
+    return { equivalent: false, skipReason: null };
+  }
+  const key = (n) => String(n.id || "");
+  const sortedClone = [...clonePayload].sort((a, b) => key(a).localeCompare(key(b)));
+  const sortedGhl = [...ghlNotes].sort((a, b) => key(a).localeCompare(key(b)));
+  for (let i = 0; i < sortedClone.length; i++) {
+    if (key(sortedClone[i]) !== key(sortedGhl[i])) return { equivalent: false, skipReason: null };
+    if ((sortedClone[i].body || "") !== (sortedGhl[i].body || "")) return { equivalent: false, skipReason: null };
+  }
+  return { equivalent: true, skipReason: null };
+}
+
+// Shadow-verifica fire-and-forget: MAI await-ata dal chiamante, non deve
+// MAI rallentare la risposta della scheda contatto. Si ferma da sola una
+// volta raggiunto il passthrough (100 confronti consecutivi identici per
+// questo sito+endpoint, vedi ghl-parity.js).
+function scheduleNotesParityCheck(siteId, contact, serializedNotes) {
+  if (!contact.source_id) return; // contatto locale, non collegato a GHL: niente da confrontare
+  isPassthroughActive(siteId, NOTES_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: NOTES_PARITY_ENDPOINT,
+        requestKey: contact.source_id,
+        clonePayload: serializedNotes,
+        isEquivalent: compareNotesLists,
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("./source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get(`/contacts/${contact.source_id}/notes`, {}, { sendLocationId: false });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleNotesParityCheck fallita per contatto ${contact.id}: ${err.message}`));
+}
+
 export async function getContactNotes(siteId, contactExternalId) {
   const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
@@ -675,12 +796,24 @@ export async function getContactNotes(siteId, contactExternalId) {
     throw err;
   }
 
-  const rows = (await query(
+  let rows = (await query(
     "SELECT * FROM contact_notes WHERE site_id = $1 AND contact_id = $2 ORDER BY created_at DESC",
     [siteId, contact.id]
   )).rows;
 
-  return Promise.all(rows.map(r => serializeNote(r)));
+  if (rows.length === 0) {
+    const refreshed = await refreshContactNotesOnDemand(siteId, contact);
+    if (refreshed) {
+      rows = (await query(
+        "SELECT * FROM contact_notes WHERE site_id = $1 AND contact_id = $2 ORDER BY created_at DESC",
+        [siteId, contact.id]
+      )).rows;
+    }
+  }
+
+  const serialized = await Promise.all(rows.map(r => serializeNote(r)));
+  scheduleNotesParityCheck(siteId, contact, serialized);
+  return serialized;
 }
 
 export async function createContactNote(siteId, contactExternalId, data = {}) {
