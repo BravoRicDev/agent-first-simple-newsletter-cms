@@ -623,6 +623,25 @@ export async function findDuplicates(siteId) {
 
 // ── Note subresource ──────────────────────────────────────────────────────
 
+// GHL reale restituisce anche bodyText (testo semplice) oltre a body: la
+// nostra colonna `body` non distingue HTML da testo semplice, quindi
+// bodyText è ricavato togliendo eventuali tag — senza questo, un consumatore
+// che si aspetta testo pulito (es. scheda operatore) mostra i tag grezzi.
+// Verificato dal vivo su GHL reale (SINTOMO-NOTE-CLONE.md).
+function stripHtml(html) {
+  return String(html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+}
+
 export async function serializeNote(row) {
   if (!row) return null;
   const generatedId = await getExternalId("contact_notes", row.id);
@@ -640,6 +659,7 @@ export async function serializeNote(row) {
   return {
     id,
     body: row.body || "",
+    bodyText: stripHtml(row.body),
     userId,
     contactId,
     dateAdded: row.created_at?.toISOString() || null,

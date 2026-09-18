@@ -388,4 +388,101 @@ describe("Clone API — Custom Fields (Onda A)", () => {
       "valore di altro sito NON visibile"
     );
   });
+
+  // ── GET /locations/:locationId/customFields — GHL-true (DIVERGENZA-CUSTOM-FIELDS.md) ──
+
+  test("GHL-true: GET /locations/:locationId/customFields risponde 200 con { customFields }, nessun meta.nextPage", async () => {
+    await fetch(url("/custom-fields"), {
+      method: "POST",
+      headers: auth(),
+      body: JSON.stringify({ name: "Citta", dataType: "TEXT", objectKey: "contact" }),
+    });
+
+    const res = await fetch(`${baseUrl}/locations/${siteA.locationExternalId}/customFields`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.customFields));
+    assert.equal(body.meta, undefined, "nessuna paginazione inventata su questo endpoint");
+  });
+
+  test("GHL-true: UNA sola chiamata restituisce TUTTI i campi (nessuna paginazione, anche con molti field)", async () => {
+    for (let i = 0; i < 25; i++) {
+      await fetch(url("/custom-fields"), {
+        method: "POST",
+        headers: auth(),
+        body: JSON.stringify({ name: `BulkField${i}`, dataType: "TEXT", objectKey: "contact" }),
+      });
+    }
+    const res = await fetch(`${baseUrl}/locations/${siteA.locationExternalId}/customFields`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    const body = await res.json();
+    const bulkFields = body.customFields.filter((f) => f.name.startsWith("BulkField"));
+    assert.equal(bulkFields.length, 25, "tutti i 25 campi devono tornare in una sola risposta");
+  });
+
+  test("GHL-true: fieldKey prefissato col model, picklistOptions invece di options, dateAdded senza dateUpdated", async () => {
+    const createRes = await fetch(url("/custom-fields"), {
+      method: "POST",
+      headers: auth(),
+      body: JSON.stringify({
+        name: "Servizio",
+        dataType: "DROPDOWN",
+        objectKey: "contact",
+        options: ["Premium", "Standard"],
+      }),
+    });
+    const created = (await createRes.json()).customField;
+
+    const res = await fetch(`${baseUrl}/locations/${siteA.locationExternalId}/customFields`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    const body = await res.json();
+    const field = body.customFields.find((f) => f.id === created.id);
+    assert.ok(field, "campo presente nella risposta GHL-true");
+    assert.equal(field.fieldKey, "contact.servizio", "fieldKey prefissato col model");
+    assert.equal(field.model, "contact");
+    assert.ok(Array.isArray(field.picklistOptions), "picklistOptions presente");
+    assert.equal(field.picklistOptions.length, 2);
+    assert.equal(field.options, undefined, "options (nome legacy) non deve comparire su questa shape");
+    assert.ok(field.dateAdded, "dateAdded presente");
+    assert.equal(field.dateUpdated, undefined, "dateUpdated mai osservato su GHL reale, non lo includiamo");
+    assert.equal(field.locationId, siteA.locationExternalId);
+  });
+
+  test("GHL-true: ?model=contact e ?model=opportunity filtrano, valore assente/sconosciuto non filtra", async () => {
+    await fetch(url("/custom-fields"), {
+      method: "POST",
+      headers: auth(),
+      body: JSON.stringify({ name: "SoloOpportunity", dataType: "TEXT", objectKey: "opportunity" }),
+    });
+
+    const resContact = await fetch(`${baseUrl}/locations/${siteA.locationExternalId}/customFields?model=contact`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    const contactFields = (await resContact.json()).customFields;
+    assert.ok(!contactFields.some((f) => f.name === "SoloOpportunity"));
+
+    const resOpp = await fetch(`${baseUrl}/locations/${siteA.locationExternalId}/customFields?model=opportunity`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    const oppFields = (await resOpp.json()).customFields;
+    assert.ok(oppFields.some((f) => f.name === "SoloOpportunity"));
+    assert.ok(oppFields.every((f) => f.model === "opportunity"));
+
+    const resAll = await fetch(`${baseUrl}/locations/${siteA.locationExternalId}/customFields?model=all`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    const allFields = (await resAll.json()).customFields;
+    assert.ok(allFields.some((f) => f.name === "SoloOpportunity"), "model=all non filtra");
+  });
+
+  test("GHL-true: locationId sconosciuto → 404", async () => {
+    const res = await fetch(`${baseUrl}/locations/does-not-exist-location/customFields`, {
+      headers: { ...auth(), "Location-Id": String(siteA.id) },
+    });
+    assert.equal(res.status, 404);
+  });
 });

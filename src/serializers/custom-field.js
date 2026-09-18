@@ -49,6 +49,50 @@ export function serializeCustomFieldList(rows, locationId) {
   return rows.map(row => serializeCustomField(row, locationId));
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Shape GHL-true per GET /locations/{locationId}/customFields — DIVERSA
+// da serializeCustomField sopra (usata da /custom-fields, alias legacy
+// mantenuto per il consumatore esistente crm-v2, mai toccato qui).
+// Verificato dal vivo su GHL reale (src/services/source-sync/mappers/
+// custom-fields.js:57-90, doc/DIVERGENZA-CUSTOM-FIELDS.md):
+//   - fieldKey prefissato col model, es. "contact.citta"
+//   - il campo opzioni si chiama picklistOptions, non options
+//   - dateAdded presente, dateUpdated MAI osservato → non lo includiamo
+//   - dataType nel vocabolario reale (TEXT, LARGE_TEXT, NUMERICAL, ecc.),
+//     non nel dialetto interno storico (TEXT, NUMERIC, DROPDOWN, ecc.)
+// Il nostro schema interno non distingue tutti i sottotipi reali (PHONE/
+// MONETORY/EMAIL restano TEXT, MULTIPLE_OPTIONS/TEXTBOX_LIST/FILE_UPLOAD
+// non rappresentabili): mappatura best-effort sul tipo più vicino già
+// esistente nella colonna `type`.
+const GHL_TYPE_MAP = {
+  text: "TEXT",
+  textarea: "LARGE_TEXT",
+  number: "NUMERICAL",
+  date: "DATE",
+  checkbox: "CHECKBOX",
+  select: "SINGLE_OPTIONS",
+  radio: "RADIO",
+};
+
+export function serializeCustomFieldGhl(row, locationId) {
+  if (!row) return null;
+  const model = row.object_key === "opportunity" ? "opportunity" : "contact";
+  return {
+    id: publicId(row),
+    locationId,
+    name: row.name,
+    fieldKey: `${model}.${row.field_key}`,
+    dataType: GHL_TYPE_MAP[row.type] || "TEXT",
+    model,
+    picklistOptions: serializeOptions(row.options),
+    dateAdded: row.created_at ? new Date(row.created_at).toISOString() : null,
+  };
+}
+
+export function serializeCustomFieldGhlList(rows, locationId) {
+  return rows.map(row => serializeCustomFieldGhl(row, locationId));
+}
+
 // Round 18: Custom VALUES sorgente (tabella source_custom_values, mirror del
 // sorgente GET /locations/{id}/customValues). Verificato su schema reale:
 // nessun external_id proprio → id pubblico = source_id REALE di sorgente, niente

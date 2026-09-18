@@ -84,20 +84,51 @@ export async function cloneContactsFromSibling(ctx, siblingSiteId) {
   const { siteId, addStat, log } = ctx;
 
   try {
-    const contactsRes = await query(
-      `INSERT INTO contacts (site_id, source_id, email, tags, status, notes, source_contact_raw, created_at, updated_at)
-       SELECT $1, source_id, email, tags, status, notes, source_contact_raw, created_at, updated_at
-       FROM contacts WHERE site_id = $2 AND source_id <> ''
-       ON CONFLICT (site_id, source_id) WHERE source_id <> '' DO UPDATE SET
-         email = EXCLUDED.email, tags = EXCLUDED.tags, status = EXCLUDED.status,
-         notes = EXCLUDED.notes, source_contact_raw = EXCLUDED.source_contact_raw, updated_at = EXCLUDED.updated_at
-       RETURNING source_id`,
-      [siteId, siblingSiteId]
-    );
-    addStat("contacts", "upserted", contactsRes.rowCount);
-    // knownContacts va aggiornato: la ricorsione discovery (submission
-    // orfane) e l'hunt subresource per pagina si basano su questo set.
-    for (const row of contactsRes.rows) ctx.knownContacts.add(row.source_id);
+    // Riga per riga, NON un unico INSERT...SELECT bulk (bug reale trovato dal
+    // vivo, SINTOMO-NOTE-CLONE.md): oltre a ON CONFLICT (site_id, source_id),
+    // `contacts` ha anche UNIQUE(site_id, email) — quando il sito target ha
+    // già un proprio contatto con la STESSA email ma un source_id DIVERSO da
+    // quello del sibling (dati residui pre-slave, o due contatti sorgente
+    // realmente distinti che condividono email), l'unico bulk statement
+    // falliva su QUELLA riga con "duplicate key value violates unique
+    // constraint contacts_site_id_email_key" e mandava in eccezione la
+    // funzione — bloccando ANCHE la clonazione di note/task/opportunità/
+    // conversazioni/appuntamenti/custom-values per TUTTI i contatti, non solo
+    // quello in conflitto (341 contatti coinvolti in produzione, verificato).
+    // Riga per riga: un conflitto blocca solo quella riga (loggato, saltato),
+    // il resto del giro completa comunque.
+    const siblingContacts = (
+      await query(
+        `SELECT source_id, email, tags, status, notes, source_contact_raw, created_at, updated_at
+         FROM contacts WHERE site_id = $1 AND source_id <> ''`,
+        [siblingSiteId]
+      )
+    ).rows;
+    let contactsUpserted = 0;
+    for (const c of siblingContacts) {
+      try {
+        await query(
+          `INSERT INTO contacts (site_id, source_id, email, tags, status, notes, source_contact_raw, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (site_id, source_id) WHERE source_id <> '' DO UPDATE SET
+             email = EXCLUDED.email, tags = EXCLUDED.tags, status = EXCLUDED.status,
+             notes = EXCLUDED.notes, source_contact_raw = EXCLUDED.source_contact_raw, updated_at = EXCLUDED.updated_at`,
+          [siteId, c.source_id, c.email, c.tags, c.status, c.notes, c.source_contact_raw, c.created_at, c.updated_at]
+        );
+        contactsUpserted++;
+        // knownContacts va aggiornato: la ricorsione discovery (submission
+        // orfane) e l'hunt subresource per pagina si basano su questo set.
+        ctx.knownContacts.add(c.source_id);
+      } catch (err) {
+        if (err.code === "23505") {
+          log(`cloneContactsFromSibling: contatto ${c.source_id} (${c.email}) saltato — email già in uso da un contatto diverso sul sito target: ${err.message}`);
+          addStat("contacts", "errors", 1);
+          continue;
+        }
+        throw err;
+      }
+    }
+    addStat("contacts", "upserted", contactsUpserted);
 
     const notesRes = await query(
       `INSERT INTO contact_notes (site_id, source_id, contact_email, author_type, author_name, body, created_at, updated_at, contact_id)
@@ -224,7 +255,7 @@ export async function cloneContactsFromSibling(ctx, siblingSiteId) {
     );
     addStat("contacts", "upserted", customValuesRes.rowCount);
 
-    log(`cloneContactsFromSibling: ${contactsRes.rowCount} contatti, ${notesRes.rowCount} note, ${tasksRes.rowCount} task, ${oppsRes.rowCount} opportunità, ${convRes.rowCount} conversazioni, ${msgCount} messaggi, ${apptRes.rowCount} appuntamenti, ${customValuesRes.rowCount} valori custom copiati da site ${siblingSiteId} (zero chiamate sorgente)`);
+    log(`cloneContactsFromSibling: ${contactsUpserted} contatti, ${notesRes.rowCount} note, ${tasksRes.rowCount} task, ${oppsRes.rowCount} opportunità, ${convRes.rowCount} conversazioni, ${msgCount} messaggi, ${apptRes.rowCount} appuntamenti, ${customValuesRes.rowCount} valori custom copiati da site ${siblingSiteId} (zero chiamate sorgente)`);
   } catch (err) {
     logger.error(`cloneContactsFromSibling (site ${siteId} da ${siblingSiteId}): ${err.message}`);
     addStat("contacts", "errors", 1);

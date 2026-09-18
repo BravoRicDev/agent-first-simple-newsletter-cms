@@ -964,7 +964,30 @@ describe("ONDA A — Contacts clone API", () => {
     const { note } = await noteRes.json();
     assert.ok(note.id);
     assert.equal(note.body, "Testo nota");
+    assert.equal(note.bodyText, "Testo nota", "bodyText presente come GHL reale (SINTOMO-NOTE-CLONE.md)");
     assert.ok(note.dateAdded);
     assert.equal(note.contactId, contact.id);
+  });
+
+  test("GET /contacts/:contactId/notes — bodyText spoglia l'HTML, body resta grezzo (SINTOMO-NOTE-CLONE.md)", async () => {
+    const email = uniqueEmail("note-bodytext");
+    const createRes = await fetch(`${baseUrl}/contacts`, {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ locationId: String(locationId), email }),
+    });
+    const { contact } = await createRes.json();
+
+    const htmlBody = '<p style="padding-left: 0px!important;">Chiamata - Esito NR<br>Ho richiamato</p>';
+    await fetch(buildUrl(`/contacts/${contact.id}/notes`), {
+      method: "POST",
+      headers: h(apiKey.raw),
+      body: JSON.stringify({ body: htmlBody }),
+    });
+
+    const listRes = await fetch(buildUrl(`/contacts/${contact.id}/notes`), { headers: h(apiKey.raw) });
+    const { notes } = await listRes.json();
+    assert.equal(notes[0].body, htmlBody, "body resta l'HTML grezzo, invariato");
+    assert.equal(notes[0].bodyText, "Chiamata - Esito NR\nHo richiamato", "bodyText senza tag");
   });
 });

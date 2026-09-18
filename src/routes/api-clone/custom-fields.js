@@ -4,9 +4,10 @@ import { sendError, sendList, requireUuid, getPaging, getLocationId, requireAnyI
 import * as customFieldsService from "../../services/custom-fields.js";
 import * as customFieldFoldersService from "../../services/custom-field-folders.js";
 import { findByExternalId, findByAnyId } from "../../services/external-ids.js";
-import { serializeCustomField, serializeCustomFieldList, serializeCustomValue } from "../../serializers/custom-field.js";
+import { serializeCustomField, serializeCustomFieldList, serializeCustomValue, serializeCustomFieldGhlList } from "../../serializers/custom-field.js";
 import { serializeFolder, serializeFolderList } from "../../serializers/custom-field-folder.js";
 import { publicId } from "../../services/external-ids.js";
+import { resolveSiteInternalId } from "../../services/agency-clone.js";
 
 // Onda A — Custom fields/values/folders clone.
 // Contratto: docs/API_CLONE_MASTER_PLAN.md §5 onda A.
@@ -23,7 +24,41 @@ const REVERSE_TYPE_MAP = {
   RADIO: "radio",
 };
 
-// ─── Custom Fields ───────────────────────────────────────────────────────
+// ─── Custom Fields — GHL-true ───────────────────────────────────────────
+
+// GET /locations/:locationId/customFields — endpoint REALE di GHL (verificato
+// dal vivo, vedi DIVERGENZA-CUSTOM-FIELDS.md e services/source-sync/mappers/
+// custom-fields.js:57-67): UNA chiamata sola, nessuna paginazione, locationId
+// SOLO nel path. Il :locationId può essere l'UUID interno del site o il
+// location_external_id reale — stessa risoluzione già in uso da
+// GET /locations/:locationId (users.js, Onda G), nessun controllo aggiuntivo
+// contro il tenant autenticato: stesso comportamento agency-style già
+// stabilito per l'intera famiglia di risorse /locations/:locationId/*.
+router.get("/locations/:locationId/customFields", async (req, res, next) => {
+  try {
+    const siteId = await resolveSiteInternalId(req.params.locationId);
+    if (!siteId) {
+      return sendError(res, 404, "Location non trovata");
+    }
+
+    // model=all|contact|opportunity: GHL reale rifiuta il parametro su altri
+    // endpoint (vedi doc), ma qui è il NOSTRO filtro locale — liberale,
+    // "all"/assente/valore sconosciuto = nessun filtro (contact+opportunity
+    // insieme, come la risposta reale).
+    const model = String(req.query.model || "").toLowerCase();
+    const objectKey = model === "contact" || model === "opportunity" ? model : null;
+
+    const rows = await customFieldsService.listCustomFields(siteId, { objectKey });
+    res.json({ customFields: serializeCustomFieldGhlList(rows, req.params.locationId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Custom Fields — alias legacy ────────────────────────────────────────
+// NON GHL-true (path/paginazione/shape inventati): mantenuto solo perché
+// crm-v2/src/services/cms.js:223-236 lo consuma già così. La rotta GHL-true
+// da usare per la parità con GHL reale è quella sopra.
 
 // GET /custom-fields - Lista custom field con filtro objectKey opzionale
 router.get("/custom-fields", async (req, res, next) => {
