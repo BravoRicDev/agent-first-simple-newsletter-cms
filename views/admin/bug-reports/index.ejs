@@ -1,0 +1,120 @@
+<h1>Segnalazioni bug</h1>
+
+<% if (error) { %>
+<div class="alert" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;padding:12px 16px;border-radius:6px;margin-bottom:15px;">
+  <strong>Attenzione:</strong> Errore durante l'operazione. Per favore riprova.
+</div>
+<% } %>
+
+<form method="POST" action="/admin/bug-reports" style="max-width:600px;border:1px solid #e5e7eb;border-radius:6px;padding:20px;margin-bottom:24px;">
+  <div class="form-group">
+    <label>Categoria (opzionale)</label>
+    <input type="text" name="categoria" placeholder="es. UI, performance, integrazione" style="width:100%;max-width:600px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+  </div>
+  <div class="form-group">
+    <label>Descrizione <span style="font-weight:normal;color:#999;">(obbligatorio)</span></label>
+    <textarea name="description" rows="3" required placeholder="Descrivi il bug riscontrato..." style="width:100%;max-width:600px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:80px;"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Passi per riprodurre (opzionale)</label>
+    <textarea name="steps_to_reproduce" rows="3" placeholder="Come si riproduce il problema?" style="width:100%;max-width:600px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:80px;"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Expected behavior (opzionale)</label>
+    <textarea name="expected_behavior" rows="3" placeholder="Ci si aspettava che..." style="width:100%;max-width:600px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:80px;"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Actual behavior (opzionale)</label>
+    <textarea name="actual_behavior" rows="3" placeholder="Invece succede..." style="width:100%;max-width:600px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:80px;"></textarea>
+  </div>
+  <button type="submit" class="btn" style="background:#4f46e5;">Segnala bug</button>
+</form>
+
+<% if (isAdmin) { %>
+<% if (reports && reports.length > 0) { %>
+<h2 style="margin-top:32px;font-size:16px;color:#333;margin-bottom:12px;">Tutte le segnalazioni</h2>
+<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <thead>
+    <tr style="background:#f9f9f9;border-bottom:1px solid #eee;">
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">ID</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Categoria</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Descrizione</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Status</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Priority</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Nota Sviluppatore</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Creato</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Azione</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% reports.forEach(report => { %>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:12px 15px;font-size:13px;"><%= report.id %></td>
+      <td style="padding:12px 15px;font-size:13px;"><%= report.categoria || '' %></td>
+      <td style="padding:12px 15px;font-size:13px;" title="<%= report.description %>">
+        <%= report.description ? report.description.substring(0, 80) + (report.description.length > 80 ? '...' : '') : '' %>
+      </td>
+      <td style="padding:12px 15px;font-size:13px;">
+        <form id="form-<%= report.id %>" method="POST" action="/admin/bug-reports/<%= report.id %>/update" style="display:none;"></form>
+        <select form="form-<%= report.id %>" name="status" style="padding:4px 8px;font-size:13px;border:1px solid #ddd;border-radius:6px;background:#fff;">
+          <option value="aperto" <%= report.status === 'aperto' ? 'selected' : '' %>>aperto</option>
+          <option value="in_lavorazione" <%= report.status === 'in_lavorazione' ? 'selected' : '' %>>in_lavorazione</option>
+          <option value="risolto" <%= report.status === 'risolto' ? 'selected' : '' %>>risolto</option>
+          <option value="chiuso" <%= report.status === 'chiuso' ? 'selected' : '' %>>chiuso</option>
+        </select>
+      </td>
+      <td style="padding:12px 15px;font-size:13px;">
+        <select form="form-<%= report.id %>" name="priority" style="padding:4px 8px;font-size:13px;border:1px solid #ddd;border-radius:6px;background:#fff;">
+          <option value="bassa" <%= report.priority === 'bassa' ? 'selected' : '' %>>bassa</option>
+          <option value="normale" <%= report.priority === 'normale' ? 'selected' : '' %>>normale</option>
+          <option value="alta" <%= report.priority === 'alta' ? 'selected' : '' %>>alta</option>
+          <option value="critica" <%= report.priority === 'critica' ? 'selected' : '' %>>critica</option>
+        </select>
+      </td>
+      <td style="padding:12px 15px;font-size:13px;">
+        <input form="form-<%= report.id %>" type="text" name="note_sviluppatore" value="<%= report.note_sviluppatore || '' %>" placeholder="Aggiungi nota..." style="padding:4px 8px;font-size:13px;border:1px solid #ddd;border-radius:6px;width:100%;max-width:180px;">
+      </td>
+      <td style="padding:12px 15px;font-size:13px;white-space:nowrap;"><%= new Date(report.created_at).toLocaleDateString('it-IT') %></td>
+      <td style="padding:12px 15px;font-size:13px;">
+        <button form="form-<%= report.id %>" type="submit" class="btn btn-sm" style="background:#4f46e5;">Aggiorna</button>
+      </td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } else { %>
+<p style="color:#999;font-size:14px;">Nessuna segnalazione trovata.</p>
+<% } %>
+<% } else { %>
+<% if (reports && reports.length > 0) { %>
+<h2 style="margin-top:32px;font-size:16px;color:#333;margin-bottom:12px;">Le tue segnalazioni</h2>
+<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <thead>
+    <tr style="background:#f9f9f9;border-bottom:1px solid #eee;">
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">ID</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Categoria</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Descrizione</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Status</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Priority</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Nota Sviluppatore</th>
+      <th style="padding:12px 15px;font-size:13px;text-align:left;">Creato</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% reports.forEach(report => { %>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:12px 15px;font-size:13px;"><%= report.id %></td>
+      <td style="padding:12px 15px;font-size:13px;"><%= report.categoria || '' %></td>
+      <td style="padding:12px 15px;font-size:13px;"><%= report.description %></td>
+      <td style="padding:12px 15px;font-size:13px;"><%= report.status %></td>
+      <td style="padding:12px 15px;font-size:13px;"><%= report.priority %></td>
+      <td style="padding:12px 15px;font-size:13px;"><%= report.note_sviluppatore || '' %></td>
+      <td style="padding:12px 15px;font-size:13px;white-space:nowrap;"><%= new Date(report.created_at).toLocaleDateString('it-IT') %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } else { %>
+<p style="color:#999;font-size:14px;">Nessuna segnalazione trovata.</p>
+<% } %>
+<% } %>

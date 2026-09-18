@@ -31,6 +31,7 @@
   "nav.settings": "Settings",
   "nav.agent": "AI Agent",
   "nav.api_tokens": "API Tokens",
+  "nav.bug_reports": "Bug reports",
   "topbar.view_site": "View site",
   "topbar.logout": "Logout",
   "lang.select_label": "Language",

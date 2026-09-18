@@ -72,4 +72,54 @@ router.put("/api/bug-reports/:id", requireAuth, authorize("bugReports", "update"
   }
 });
 
+// ── Admin UI routes ──────────────────────────────────────────────────
+
+router.get("/admin/bug-reports", requireAuth, async (req, res, next) => {
+  try {
+    const error = req.query.error === "1";
+    if (req.user.role === "superadmin" || req.user.role === "admin") {
+      const { status, priority } = req.query;
+      const result = await listBugReports({ status, priority, limit: 100, offset: 0 });
+      res.render("admin/bug-reports/index", {
+        isAdmin: true,
+        reports: result.data,
+        total: result.total,
+        status: status || "",
+        priority: priority || "",
+        error,
+      });
+    } else {
+      const result = await listMyBugReports(req.user.sub, { limit: 100, offset: 0 });
+      res.render("admin/bug-reports/index", {
+        isAdmin: false,
+        reports: result.data,
+        total: result.total,
+        error,
+      });
+    }
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/bug-reports", requireAuth, async (req, res, next) => {
+  try {
+    const data = createSchema.parse(req.body);
+    await createBugReport(req.user, data);
+    res.redirect("/admin/bug-reports");
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.redirect("/admin/bug-reports?error=1");
+    next(err);
+  }
+});
+
+router.post("/admin/bug-reports/:id/update", requireAuth, authorize("bugReports", "update"), async (req, res, next) => {
+  try {
+    const data = updateSchema.parse(req.body);
+    await updateBugReport(req.params.id, data);
+    res.redirect("/admin/bug-reports");
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.redirect("/admin/bug-reports");
+    next(err);
+  }
+});
+
 export default router;
