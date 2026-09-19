@@ -180,6 +180,10 @@ export async function createMockSource(fixture, { onCall } = {}) {
     if (path === "/invoices") return send(res, "invoices", fixture.invoices || [], q);
     if (path === "/products") return send(res, "products", fixture.products || [], q);
     if (path === "/payments") return send(res, "payments", fixture.payments || [], q);
+    // GET /workflows/ (doc CRM sorgente): { workflows: [...] }, non paginato.
+    if (path === "/workflows") return ok({ workflows: fixture.workflows || [] });
+    // GET /funnels/funnel/list (doc CRM sorgente): { funnels: [...] }, id = _id.
+    if (path === "/funnels/funnel/list") return ok({ funnels: fixture.funnels || [] });
 
     // ── per-contatto ──
     const cm = path.match(/^\/contacts\/([^/]+)$/);

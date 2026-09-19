@@ -120,6 +120,29 @@ async function updateState(siteId, endpoint, matched) {
   }
 }
 
+// Comparatore condiviso per le liste "risorsa root" (tags, campaigns,
+// calendars, funnels, workflows, products, invoices, pipelines, ...): molte
+// di queste tabelle sono un'UNIONE tra record sincronizzati da GHL E record
+// creati localmente via le rotte POST dello stesso file (es. POST /campaigns
+// crea una newsletter_campaigns locale mai esistita su GHL) — un confronto
+// per SET-UGUALE fallirebbe sempre in presenza di uno solo di questi record
+// locali, anche quando la parte sincronizzata è perfettamente fedele. Verifica
+// quindi che GHL sia un SOTTOINSIEME del clone (ogni id reale di GHL esiste
+// anche in locale), ignorando eventuali id locali extra non sincronizzati.
+export function compareGhlSubset(clonePayload, ghlPayload, { extractGhlList = (p) => (Array.isArray(p) ? p : []), ghlIdField = "id", cloneIdField = "id" } = {}) {
+  const ghlList = extractGhlList(ghlPayload) || [];
+  const cloneList = Array.isArray(clonePayload) ? clonePayload : [];
+  if (ghlList.length === 0 && cloneList.length === 0) {
+    return { equivalent: false, skipReason: "both_empty" };
+  }
+  const cloneIds = new Set(cloneList.map((c) => String(c?.[cloneIdField] ?? "")));
+  for (const g of ghlList) {
+    const gid = String(g?.[ghlIdField] ?? g?._id ?? "");
+    if (!gid || !cloneIds.has(gid)) return { equivalent: false, skipReason: null };
+  }
+  return { equivalent: true, skipReason: null };
+}
+
 /**
  * Confronta in background il payload servito con una chiamata live a GHL.
  * Pensata per essere chiamata fire-and-forget (mai await-ata dal percorso

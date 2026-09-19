@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { query } from "../../db.js";
 import { sendError, requireAnyId, getPaging, sendList } from "./_helpers.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Round 17: Funnels sorgente — clone API in SOLA LETTURA.
@@ -22,6 +24,32 @@ import { sendError, requireAnyId, getPaging, sendList } from "./_helpers.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+const FUNNELS_PARITY_ENDPOINT = "GET /funnels";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js). Attenzione:
+// GHL espone l'id dei funnel come `_id`, non `id` (vedi mappers/funnels.js) —
+// compareGhlSubset lo gestisce già col fallback su ghlIdField.
+function scheduleFunnelsParityCheck(siteId, serializedFunnels) {
+  isPassthroughActive(siteId, FUNNELS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: FUNNELS_PARITY_ENDPOINT,
+        clonePayload: serializedFunnels,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.funnels || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/funnels/funnel/list", { locationId: cfg.location_id });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleFunnelsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
 
 function serializeFunnel(row) {
   return {
@@ -74,7 +102,11 @@ router.get("/funnels", async (req, res, next) => {
       nextStartAfterId = rows[rows.length - 1].source_id || null;
     }
 
-    sendList(res, "funnels", rows.map(serializeFunnel), total, nextStartAfterId);
+    const serialized = rows.map(serializeFunnel);
+    if (!startAfterId && !nextStartAfterId) {
+      scheduleFunnelsParityCheck(siteId, serialized);
+    }
+    sendList(res, "funnels", serialized, total, nextStartAfterId);
   } catch (err) {
     next(err);
   }

@@ -5,6 +5,8 @@ import {
 import * as campaignsClone from "../../services/campaigns-clone.js";
 import { query } from "../../db.js";
 import { findByAnyId } from "../../services/external-ids.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda E: Campagne broadcast, templates, subscriptions — clone API.
@@ -13,6 +15,53 @@ import { findByAnyId } from "../../services/external-ids.js";
 
 const router = Router();
 
+const CAMPAIGNS_PARITY_ENDPOINT = "GET /campaigns";
+const TEMPLATES_PARITY_ENDPOINT = "GET /templates";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js): solo sulla
+// pagina completa (nessun cursore), stesso motivo di tags.js.
+function scheduleCampaignsParityCheck(siteId, serializedCampaigns) {
+  isPassthroughActive(siteId, CAMPAIGNS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: CAMPAIGNS_PARITY_ENDPOINT,
+        clonePayload: serializedCampaigns,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.campaigns || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/campaigns/", { locationId: cfg.location_id });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleCampaignsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
+
+function scheduleTemplatesParityCheck(siteId, serializedTemplates) {
+  isPassthroughActive(siteId, TEMPLATES_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: TEMPLATES_PARITY_ENDPOINT,
+        clonePayload: serializedTemplates,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => (Array.isArray(p) ? p : p?.templates || p?.emails || []) }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/emails/builder", { locationId: cfg.location_id });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleTemplatesParityCheck fallita (site ${siteId}): ${err.message}`));
+}
+
 // ── Campagne ─────────────────────────────────────────────────────────────
 
 router.get("/campaigns", async (req, res, next) => {
@@ -20,6 +69,9 @@ router.get("/campaigns", async (req, res, next) => {
     const locationId = await getLocationId(req.tenant);
     const { limit, startAfterId } = getPaging(req.query);
     const result = await campaignsClone.listCampaigns(req.tenant.siteId, { limit, startAfterId }, locationId);
+    if (!startAfterId && !result.nextStartAfterId) {
+      scheduleCampaignsParityCheck(req.tenant.siteId, result.campaigns);
+    }
     sendList(res, "campaigns", result.campaigns, result.total, result.nextStartAfterId);
   } catch (err) {
     next(err);
@@ -180,6 +232,12 @@ router.get("/templates", async (req, res, next) => {
       { type: req.query.type, limit, startAfterId },
       locationId
     );
+    // Shadow-verifica solo sulla lista COMPLETA e non filtrata: /emails/builder
+    // (GHL reale) non supporta un filtro type, un confronto contro una pagina
+    // filtrata o parziale fallirebbe sempre per motivi non di fedeltà dati.
+    if (!req.query.type && !startAfterId && !result.nextStartAfterId) {
+      scheduleTemplatesParityCheck(req.tenant.siteId, result.templates);
+    }
     sendList(res, "templates", result.templates, result.total, result.nextStartAfterId);
   } catch (err) {
     next(err);

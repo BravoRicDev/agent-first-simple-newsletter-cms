@@ -4,6 +4,8 @@ import {
   sendError, httpError, requireAnyId, getPaging, buildMeta, sendList, getLocationId,
 } from "./_helpers.js";
 import * as opportunitiesClone from "../../services/opportunities-clone.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda A: Router opportunities — contratto camelCase, UUID esterni,
@@ -11,6 +13,31 @@ import * as opportunitiesClone from "../../services/opportunities-clone.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+const PIPELINES_PARITY_ENDPOINT = "GET /pipelines";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js). GET /pipelines
+// non è mai paginato (lista sempre intera), nessun guard di completezza serve.
+function schedulePipelinesParityCheck(siteId, serializedPipelines) {
+  isPassthroughActive(siteId, PIPELINES_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: PIPELINES_PARITY_ENDPOINT,
+        clonePayload: serializedPipelines,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.pipelines || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/opportunities/pipelines");
+        },
+      });
+    })
+    .catch((err) => logger.error(`schedulePipelinesParityCheck fallita (site ${siteId}): ${err.message}`));
+}
 
 // ── Opportunità ──────────────────────────────────────────────────────────
 
@@ -294,6 +321,7 @@ router.get("/pipelines", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
     const pipelines = await opportunitiesClone.listPipelines(req.tenant.siteId, locationId);
+    schedulePipelinesParityCheck(req.tenant.siteId, pipelines);
     res.json({ pipelines, meta: buildMeta(pipelines.length) });
   } catch (err) {
     next(err);

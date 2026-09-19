@@ -3,6 +3,8 @@ import {
   sendError, httpError, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as calendarsClone from "../../services/calendars-clone.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda B: Calendari e appuntamenti — clone API.
@@ -11,6 +13,31 @@ import * as calendarsClone from "../../services/calendars-clone.js";
 
 const router = Router();
 
+const CALENDARS_PARITY_ENDPOINT = "GET /calendars";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js): solo sulla
+// pagina completa (nessun cursore), stesso motivo di tags.js.
+function scheduleCalendarsParityCheck(siteId, serializedCalendars) {
+  isPassthroughActive(siteId, CALENDARS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: CALENDARS_PARITY_ENDPOINT,
+        clonePayload: serializedCalendars,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.calendars || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/calendars/", { locationId: cfg.location_id });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleCalendarsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
+
 // ── Calendari ────────────────────────────────────────────────────────────
 
 router.get("/calendars", async (req, res, next) => {
@@ -18,6 +45,9 @@ router.get("/calendars", async (req, res, next) => {
     const locationId = await getLocationId(req.tenant);
     const { limit, startAfterId } = getPaging(req.query);
     const result = await calendarsClone.listCalendars(req.tenant.siteId, { limit, startAfterId }, locationId);
+    if (!startAfterId && !result.nextStartAfterId) {
+      scheduleCalendarsParityCheck(req.tenant.siteId, result.calendars);
+    }
     sendList(res, "calendars", result.calendars, result.total, result.nextStartAfterId);
   } catch (err) {
     next(err);

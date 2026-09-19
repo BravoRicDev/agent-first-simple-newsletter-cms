@@ -3,6 +3,8 @@ import {
   sendError, httpError, isValidUuid, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as invoicesClone from "../../services/invoices-clone.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda H: Invoices — clone API, items inline, coupon come riga negativa.
@@ -10,6 +12,34 @@ import * as invoicesClone from "../../services/invoices-clone.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+const INVOICES_PARITY_ENDPOINT = "GET /invoices";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js). GET /invoices/
+// reale legge SEMPRE solo la prima pagina (limit=100/offset=0, vedi
+// mappers/commerce.js — nessuna paginazione reale, stesso limite accettato
+// dal sync stesso): stesso identico limite qui, nessuna estensione oltre
+// quanto già fa il sync periodico.
+function scheduleInvoicesParityCheck(siteId, serializedInvoices) {
+  isPassthroughActive(siteId, INVOICES_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: INVOICES_PARITY_ENDPOINT,
+        clonePayload: serializedInvoices,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => (Array.isArray(p) ? p : p?.invoices || []) }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/invoices/", { altId: cfg.location_id, altType: "location", limit: "100", offset: "0" });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleInvoicesParityCheck fallita (site ${siteId}): ${err.message}`));
+}
 
 router.get("/invoices", async (req, res, next) => {
   try {
@@ -22,6 +52,12 @@ router.get("/invoices", async (req, res, next) => {
       startAfterId,
     };
     const result = await invoicesClone.listInvoices(req.tenant.siteId, filters, locationId);
+    // Shadow-verifica solo sulla lista COMPLETA e non filtrata (nessun
+    // status/contactId, nessun cursore): i filtri sono NOSTRI, non del
+    // sorgente, un confronto su una lista filtrata fallirebbe sempre.
+    if (!req.query.status && !req.query.contactId && !startAfterId && !result.nextStartAfterId) {
+      scheduleInvoicesParityCheck(req.tenant.siteId, result.invoices);
+    }
     sendList(res, "invoices", result.invoices, result.total, result.nextStartAfterId);
   } catch (err) {
     next(err);

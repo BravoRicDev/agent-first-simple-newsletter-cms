@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { query } from "../../db.js";
 import { sendError, requireAnyId, getPaging, sendList } from "./_helpers.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Round 16: Workflows sorgente — clone API in SOLA LETTURA.
@@ -27,6 +29,31 @@ import { sendError, requireAnyId, getPaging, sendList } from "./_helpers.js";
 // ─────────────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+const WORKFLOWS_PARITY_ENDPOINT = "GET /workflows";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js): solo sulla
+// pagina completa (nessun cursore), stesso motivo di tags.js.
+function scheduleWorkflowsParityCheck(siteId, serializedWorkflows) {
+  isPassthroughActive(siteId, WORKFLOWS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: WORKFLOWS_PARITY_ENDPOINT,
+        clonePayload: serializedWorkflows,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.workflows || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/workflows/", { locationId: cfg.location_id });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleWorkflowsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
 
 // GET /workflows — lista workflow sincronizzati (payload sorgente integrali)
 router.get("/workflows", async (req, res, next) => {
@@ -66,7 +93,11 @@ router.get("/workflows", async (req, res, next) => {
     }
 
     // I payload sono le risposte sorgente originali: nessuna trasformazione.
-    sendList(res, "workflows", rows.map(r => r.payload), total, nextStartAfterId);
+    const serialized = rows.map(r => r.payload);
+    if (!startAfterId && !nextStartAfterId) {
+      scheduleWorkflowsParityCheck(siteId, serialized);
+    }
+    sendList(res, "workflows", serialized, total, nextStartAfterId);
   } catch (err) {
     next(err);
   }

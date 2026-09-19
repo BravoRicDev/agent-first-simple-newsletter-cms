@@ -3,6 +3,8 @@ import {
   sendError, httpError, isValidUuid, requireAnyId, getPaging, sendList, getLocationId,
 } from "./_helpers.js";
 import * as productsClone from "../../services/products-clone.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Onda H: Products — clone API, prezzi inline, paginazione cursore.
@@ -11,11 +13,42 @@ import * as productsClone from "../../services/products-clone.js";
 
 const router = Router();
 
+const PRODUCTS_PARITY_ENDPOINT = "GET /products";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js): solo sulla
+// pagina completa (nessun cursore), stesso motivo di tags.js.
+function scheduleProductsParityCheck(siteId, serializedProducts) {
+  isPassthroughActive(siteId, PRODUCTS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: PRODUCTS_PARITY_ENDPOINT,
+        clonePayload: serializedProducts,
+        // CRM sorgente espone l'id prodotto come _id O id a seconda della
+        // versione (vedi mappers/commerce.js: product._id || product.id) —
+        // compareGhlSubset prova già id poi _id di default, nessun override.
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => (Array.isArray(p) ? p : p?.products || []) }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get("/products/", { locationId: cfg.location_id });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleProductsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
+
 router.get("/products", async (req, res, next) => {
   try {
     const locationId = await getLocationId(req.tenant);
     const { limit, startAfterId } = getPaging(req.query);
     const result = await productsClone.listProducts(req.tenant.siteId, { limit, startAfterId }, locationId);
+    if (!startAfterId && !result.nextStartAfterId) {
+      scheduleProductsParityCheck(req.tenant.siteId, result.products);
+    }
     sendList(res, "products", result.products, result.total, result.nextStartAfterId);
   } catch (err) {
     next(err);

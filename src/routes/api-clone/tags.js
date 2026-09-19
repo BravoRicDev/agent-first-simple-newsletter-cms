@@ -3,11 +3,40 @@ import { sendError, sendList, requireAnyId, getPaging, getLocationId } from "./_
 import * as tagsService from "../../services/tags.js";
 import { findByAnyId } from "../../services/external-ids.js";
 import { serializeTag, serializeTagList } from "../../serializers/tag.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 // Onda A — Tag per-tenant: CRUD root-level /tags.
 // Contratto: docs/API_CLONE_MASTER_PLAN.md §5 onda A.
 
 const router = Router();
+
+const TAGS_PARITY_ENDPOINT = "GET /tags";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js): solo quando
+// la pagina servita è l'intero elenco (nessun cursore in ingresso/uscita),
+// altrimenti un confronto contro l'intera lista GHL fallirebbe sempre per
+// semplice differenza di dimensione pagina, non per una vera divergenza.
+function scheduleTagsParityCheck(siteId, serializedTags) {
+  isPassthroughActive(siteId, TAGS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: TAGS_PARITY_ENDPOINT,
+        clonePayload: serializedTags,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.tags || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get(`/locations/${cfg.location_id}/tags`, {}, { sendLocationId: false });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleTagsParityCheck fallita (site ${siteId}): ${err.message}`));
+}
 
 // GET /tags - Lista tag con paginazione
 router.get("/tags", async (req, res, next) => {
@@ -21,6 +50,9 @@ router.get("/tags", async (req, res, next) => {
 
     const locationId = await getLocationId(req.tenant);
     const serialized = serializeTagList(rows, locationId);
+    if (!startAfterId && !nextStartAfterId) {
+      scheduleTagsParityCheck(req.tenant.siteId, serialized);
+    }
     sendList(res, "tags", serialized, total, nextStartAfterId);
   } catch (err) {
     next(err);

@@ -3,7 +3,7 @@ import { emitContactEvent } from "./events.js";
 import { getExternalId, findByAnyId, publicId } from "./external-ids.js";
 import { getCustomValues, setCustomValues, mergeCustomValues } from "./custom-values.js";
 import { logger } from "./logger.js";
-import { recordComparison, isPassthroughActive } from "./ghl-parity.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "./ghl-parity.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -353,6 +353,46 @@ export async function createContact(siteId, data = {}) {
   return serializeContact(row, customValues, fieldDefs);
 }
 
+const CONTACT_PARITY_ENDPOINT = "GET /contacts/:id";
+
+// Confronto specifico per il singolo contatto (shadow-verifica, vedi
+// services/ghl-parity.js): solo email (case-insensitive) e set di tag, non
+// deep-equal completo — campi come customFields/profilo derivano da fonti
+// locali (custom values) con una forma diversa da quella grezza di GHL, un
+// confronto byte-per-byte darebbe sempre falso mismatch anche a dato corretto.
+function compareContactSingle(clonePayload, ghlPayload) {
+  const ghl = ghlPayload?.contact || ghlPayload;
+  if (!ghl) return { equivalent: false, skipReason: null };
+  const emailMatch = String(clonePayload.email || "").toLowerCase() === String(ghl.email || "").toLowerCase();
+  const cloneTags = new Set((clonePayload.tags || []).map((t) => String(t).toLowerCase()));
+  const ghlTags = new Set((ghl.tags || []).map((t) => String(t).toLowerCase()));
+  const tagsMatch = cloneTags.size === ghlTags.size && [...cloneTags].every((t) => ghlTags.has(t));
+  return { equivalent: emailMatch && tagsMatch, skipReason: null };
+}
+
+function scheduleContactParityCheck(siteId, contact, serializedContact) {
+  if (!contact.source_id) return; // contatto locale, non collegato a GHL: niente da confrontare
+  isPassthroughActive(siteId, CONTACT_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: CONTACT_PARITY_ENDPOINT,
+        requestKey: contact.source_id,
+        clonePayload: serializedContact,
+        isEquivalent: compareContactSingle,
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("./source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get(`/contacts/${contact.source_id}`);
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleContactParityCheck fallita per contatto ${contact.id}: ${err.message}`));
+}
+
 export async function getContact(siteId, contactExternalId) {
   const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
@@ -367,7 +407,9 @@ export async function getContact(siteId, contactExternalId) {
 
   const customValues = await getCustomValues(siteId, contact.id, "contact");
   const fieldDefs = await getContactCustomFields(siteId);
-  return serializeContact(contact, customValues, fieldDefs);
+  const serialized = await serializeContact(contact, customValues, fieldDefs);
+  scheduleContactParityCheck(siteId, contact, serialized);
+  return serialized;
 }
 
 export async function updateContact(siteId, contactExternalId, data = {}) {
@@ -929,6 +971,35 @@ export async function serializeTask(row) {
   };
 }
 
+const TASKS_PARITY_ENDPOINT = "GET /contacts/:id/tasks";
+
+// I task locali sono per EMAIL (non per contact_id), quindi possono includere
+// task creati a mano dal CMS oltre a quelli sincronizzati da GHL: verifica
+// che ogni task reale di GHL abbia un corrispettivo locale (sottoinsieme,
+// vedi compareGhlSubset), non uguaglianza esatta come per le note.
+function scheduleTasksParityCheck(siteId, contact, serializedTasks) {
+  if (!contact.source_id) return;
+  isPassthroughActive(siteId, TASKS_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: TASKS_PARITY_ENDPOINT,
+        requestKey: contact.source_id,
+        clonePayload: serializedTasks,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.tasks || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("./source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.get(`/contacts/${contact.source_id}/tasks`, {}, { sendLocationId: false });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleTasksParityCheck fallita per contatto ${contact.id}: ${err.message}`));
+}
+
 export async function getContactTasks(siteId, contactExternalId) {
   const contact = await findByAnyId("contacts", siteId, contactExternalId);
   if (!contact || contact.site_id !== siteId) {
@@ -942,7 +1013,9 @@ export async function getContactTasks(siteId, contactExternalId) {
     [siteId, contact.email]
   )).rows;
 
-  return Promise.all(rows.map(r => serializeTask(r)));
+  const serialized = await Promise.all(rows.map(r => serializeTask(r)));
+  scheduleTasksParityCheck(siteId, contact, serialized);
+  return serialized;
 }
 
 export async function createContactTask(siteId, contactExternalId, data = {}) {
