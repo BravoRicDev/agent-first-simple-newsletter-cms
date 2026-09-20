@@ -41,7 +41,23 @@ const CUSTOM_FIELDS_PARITY_ENDPOINT = "GET /locations/:locationId/customFields";
 // Confronto specifico per la shape dei custom field (shadow-verifica, vedi
 // services/ghl-parity.js): id + fieldKey + dataType devono coincidere per
 // tutti i campi (stesso conteggio, stesso contenuto sostanziale).
-function compareCustomFieldsLists(clonePayload, ghlPayload) {
+// dataType GHL intenzionalmente NON rappresentabili 1:1 nel nostro schema
+// locale (vedi serializers/custom-field.js e mappers/custom-fields.js):
+// PHONE/MONETORY/EMAIL restano "text" per approssimazione voluta,
+// MULTIPLE_OPTIONS/TEXTBOX_LIST/FILE_UPLOAD non hanno un tipo locale
+// equivalente. Per questi il confronto dataType va SEMPRE saltato — non è
+// una vera divergenza, è un limite noto e accettato del clone: altrimenti
+// l'endpoint non potrebbe MAI raggiungere il passthrough su nessun account
+// che usa questi tipi, pur essendo fedele su tutto ciò che rappresentiamo
+// davvero.
+const APPROXIMATED_GHL_DATATYPES = new Set([
+  "PHONE", "MONETORY", "EMAIL", "MULTIPLE_OPTIONS", "TEXTBOX_LIST", "FILE_UPLOAD",
+]);
+
+// Esportata solo per test unitari mirati (test/source-sync/
+// custom-fields-datatype-fix.test.js) — il resto del modulo la usa in
+// locale via scheduleCustomFieldsParityCheck.
+export function compareCustomFieldsLists(clonePayload, ghlPayload) {
   const ghlFields = ghlPayload?.customFields || ghlPayload || [];
   if (clonePayload.length === 0 && ghlFields.length === 0) {
     return { equivalent: false, skipReason: "both_empty" };
@@ -57,7 +73,9 @@ function compareCustomFieldsLists(clonePayload, ghlPayload) {
     const g = sortedGhl[i];
     if (key(c) !== key(g)) return { equivalent: false, skipReason: null };
     if ((c.fieldKey || "") !== (g.fieldKey || "")) return { equivalent: false, skipReason: null };
-    if ((c.dataType || "") !== (g.dataType || "")) return { equivalent: false, skipReason: null };
+    if (!APPROXIMATED_GHL_DATATYPES.has(String(g.dataType || "").toUpperCase())) {
+      if ((c.dataType || "") !== (g.dataType || "")) return { equivalent: false, skipReason: null };
+    }
   }
   return { equivalent: true, skipReason: null };
 }

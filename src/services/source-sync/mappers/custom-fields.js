@@ -10,9 +10,17 @@ function slugify(label) {
 
 function mapFieldType(sourceType) {
   // Mappa dataType sorgente sui SOLI tipi ammessi dal nostro schema
-  // (custom-fields service: text|number|date|checkbox|select|textarea).
+  // (custom-fields service: text|number|date|checkbox|select|textarea|radio).
+  // ATTENZIONE: il vocabolario REALE di GHL (verificato dal vivo, vedi
+  // serializers/custom-field.js) usa NUMERICAL/SINGLE_OPTIONS/RADIO, non i
+  // nomi "NUMBER"/"DROPDOWN"/"MULTISELECT" sotto — quelli erano un dialetto
+  // storico mai riscontrato realmente, tenuto solo come rete di sicurezza.
+  // Bug corretto in questo round: NUMERICAL, SINGLE_OPTIONS e RADIO
+  // mancavano del tutto e cadevano tutti sul default "text" (rilevato dal
+  // motore di shadow-comparison, vedi services/ghl-parity.js).
   if (!sourceType) return "text";
   switch (String(sourceType).toUpperCase()) {
+    case "NUMERICAL":
     case "NUMERIC":
     case "DECIMAL":
     case "INTEGER":
@@ -26,13 +34,21 @@ function mapFieldType(sourceType) {
     case "BOOL":
     case "CHECKBOX":
       return "checkbox";
+    case "SINGLE_OPTIONS":
     case "SELECT":
     case "DROPDOWN":
     case "MULTISELECT":
       return "select";
+    case "RADIO":
+      return "radio";
     case "TEXTAREA":
     case "LARGE_TEXT":
       return "textarea";
+    // Intenzionalmente NON mappati (restano "text", best-effort — vedi
+    // serializers/custom-field.js): PHONE, MONETORY, EMAIL (nessun tipo
+    // locale equivalente), MULTIPLE_OPTIONS/TEXTBOX_LIST/FILE_UPLOAD (non
+    // rappresentabili con una singola select locale senza perdita di
+    // semantica multi-valore).
     default:
       return "text";
   }

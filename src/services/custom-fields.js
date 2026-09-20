@@ -12,7 +12,7 @@ import { logger } from "./logger.js";
 // delete, per alimentare webhook OUT / workflow.
 // ─────────────────────────────────────────────────────────────────────────
 
-const ALLOWED_TYPES = new Set(["text", "number", "date", "checkbox", "select", "textarea"]);
+const ALLOWED_TYPES = new Set(["text", "number", "date", "checkbox", "select", "textarea", "radio"]);
 const ALLOWED_OBJECTS = new Set(["contact", "opportunity"]);
 
 function emitCustomFieldEvent(siteId, eventType, payload) {
