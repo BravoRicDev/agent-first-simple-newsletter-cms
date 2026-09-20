@@ -10,8 +10,54 @@ import {
   getContactAppointments, getContactEmailVerification,
   addContactTags, removeContactTags,
 } from "../../services/contacts-clone.js";
+import { recordComparison, isPassthroughActive, compareGhlSubset } from "../../services/ghl-parity.js";
+import { logger } from "../../services/logger.js";
 
 const router = Router();
+
+const CONTACTS_SEARCH_PARITY_ENDPOINT = "POST /contacts/search";
+
+// Shadow-verifica fire-and-forget (vedi services/ghl-parity.js), SOLO per la
+// forma di richiesta che sappiamo replicare 1:1 contro sorgente: nessun
+// filtro (query/tag/email/filters/page/startAfterId), ordinamento esplicito
+// dateUpdated desc — la STESSA identica chiamata già usata dal sync
+// periodico (mappers/contacts.js: client.paginateSearchSorted). Con
+// filtri/ordinamenti diversi non c'è un confronto 1:1 affidabile (pagina
+// diversa da quella che GHL ci darebbe), quindi si salta.
+// Esportata solo per test unitari mirati.
+export function isSyncEquivalentSearch(body) {
+  if (body.query || body.tag || body.email || body.startAfterId) return false;
+  if (Array.isArray(body.filters) && body.filters.length > 0) return false;
+  if (Number.isFinite(body.page)) return false;
+  const sort = body.sort;
+  if (!Array.isArray(sort) || sort.length !== 1) return false;
+  return sort[0]?.field === "dateUpdated" && sort[0]?.direction === "desc";
+}
+
+function scheduleContactsSearchParityCheck(siteId, pageLimit, serializedContacts) {
+  isPassthroughActive(siteId, CONTACTS_SEARCH_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: CONTACTS_SEARCH_PARITY_ENDPOINT,
+        clonePayload: serializedContacts,
+        isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.contacts || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          return client.raw("/contacts/search", {
+            method: "POST",
+            body: { locationId: cfg.location_id, pageLimit, sort: [{ field: "dateUpdated", direction: "desc" }] },
+            sendLocationId: false,
+          });
+        },
+      });
+    })
+    .catch((err) => logger.error(`scheduleContactsSearchParityCheck fallita (site ${siteId}): ${err.message}`));
+}
 
 // GET /contacts — Lista con filtri + paginazione.
 router.get("/contacts", async (req, res, next) => {
@@ -71,6 +117,9 @@ const filters = {
        filters: Array.isArray(req.body.filters) ? req.body.filters : null,
      };
     const { contacts, total } = await searchContacts(req.tenant.siteId, filters);
+    if (isSyncEquivalentSearch(req.body)) {
+      scheduleContactsSearchParityCheck(req.tenant.siteId, filters.limit, contacts);
+    }
     // Shape TOP DEDICATO per QUESTO endpoint (verificato sul payload reale):
     // { contacts, total, traceId } — NON wrappato in "meta" come gli altri
     // endpoint. sendList() è corretto per GET /contacts ma NON qui, quindi

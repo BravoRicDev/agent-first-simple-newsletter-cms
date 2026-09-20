@@ -6,7 +6,7 @@ import { createTestSite, closeDb } from "../helpers.js";
 import { encryptSecret } from "../../src/services/crypto.js";
 import { createMockSource } from "./helpers/mock-source.mjs";
 import { recordComparison, compareGhlSubset } from "../../src/services/ghl-parity.js";
-import { getContact, getContactTasks } from "../../src/services/contacts-clone.js";
+import { getContact, getContactTasks, searchContacts } from "../../src/services/contacts-clone.js";
 import * as tagsService from "../../src/services/tags.js";
 import * as opportunitiesClone from "../../src/services/opportunities-clone.js";
 import * as calendarsClone from "../../src/services/calendars-clone.js";
@@ -263,6 +263,37 @@ describe("ghl-parity — collegamento esteso a tutti gli endpoint GHL-backed", (
       },
     });
     const log = await lastLog(site.id, "GET /invoices");
+    assert.ok(log);
+    assert.equal(log.match, true);
+  });
+
+  // POST /contacts/search — endpoint segnalato dall'utente come già in
+  // produzione (apicrm.lumonboy.com/contacts/search), sfuggito alla prima
+  // scansione perché la ricerca sui path GET-only aveva saltato le rotte
+  // POST. È la STESSA identica chiamata (path, body, sort) già usata dal
+  // sync periodico (mappers/contacts.js: paginateSearchSorted), quindi
+  // confrontabile 1:1 — a differenza di GET /contacts (paginazione/filtri
+  // locali arbitrari, per questo lasciato fuori).
+  test("POST /contacts/search — replica wiring rotta (forma sync-equivalente: nessun filtro, sort dateUpdated desc), match=true", async () => {
+    const { contacts } = await searchContacts(site.id, {
+      limit: 20,
+      sort: [{ field: "dateUpdated", direction: "desc" }],
+    });
+    await recordComparison({
+      siteId: site.id, endpoint: "POST /contacts/search", clonePayload: contacts,
+      isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.contacts || p || [] }),
+      fetchReal: async () => {
+        const { loadConfig, createSourceClient } = await import("../../src/services/source-sync/client.js");
+        const cfg = await loadConfig(site.id);
+        const client = createSourceClient(cfg);
+        return client.raw("/contacts/search", {
+          method: "POST",
+          body: { locationId: cfg.location_id, pageLimit: 20, sort: [{ field: "dateUpdated", direction: "desc" }] },
+          sendLocationId: false,
+        });
+      },
+    });
+    const log = await lastLog(site.id, "POST /contacts/search");
     assert.ok(log);
     assert.equal(log.match, true);
   });
