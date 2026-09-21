@@ -267,10 +267,10 @@ describe("ghl-parity — collegamento esteso a tutti gli endpoint GHL-backed", (
     assert.equal(log.match, true);
   });
 
-  // POST /contacts/search — endpoint segnalato dall'utente come già in
-  // produzione (apicrm.lumonboy.com/contacts/search), sfuggito alla prima
-  // scansione perché la ricerca sui path GET-only aveva saltato le rotte
-  // POST. È la STESSA identica chiamata (path, body, sort) già usata dal
+  // POST /contacts/search — endpoint segnalato come già in uso reale in
+  // produzione, sfuggito alla prima scansione perché la ricerca sui path
+  // GET-only aveva saltato le rotte POST. È la STESSA identica chiamata
+  // (path, body, sort) già usata dal
   // sync periodico (mappers/contacts.js: paginateSearchSorted), quindi
   // confrontabile 1:1 — a differenza di GET /contacts (paginazione/filtri
   // locali arbitrari, per questo lasciato fuori).
@@ -296,5 +296,53 @@ describe("ghl-parity — collegamento esteso a tutti gli endpoint GHL-backed", (
     const log = await lastLog(site.id, "POST /contacts/search");
     assert.ok(log);
     assert.equal(log.match, true);
+  });
+
+  // POST /contacts/search — traffico reale di n8n (sniffer 2026-09): n8n
+  // chiama ripetutamente POST /contacts/search con body:
+  //   {locationId, page:N, pageLimit:100, sort:[{field:"dateAdded",direction:"desc"}]}
+  // con N che cresce (scansione paginata OFFSET-style). Verifica che la
+  // shadow-verifica sia effettivamente collegata e produca match=true con
+  // questa forma esatta.  Usiamo page=1 (anziché 83) perché il fixture ha
+  // pochi contatti — il codice è identico: isSyncEquivalentSearch ammette
+  // page>=1 con sort dateAdded, e fetchReal replica esattamente il body.
+  test("POST /contacts/search — wiring n8n-style (sort dateAdded desc, page=1, pageLimit=100), match=true", async () => {
+    // isSyncEquivalentSearch deve ammettere la forma esatta sniffata da n8n.
+    // Qui testiamo la guardia con il body reale (locationId fittizio).
+    const { isSyncEquivalentSearch } = await import("../../src/routes/api-clone/contacts.js");
+    const n8nBody = {
+      locationId: "loc-contacts-search-test",
+      page: 1,
+      pageLimit: 100,
+      sort: [{ field: "dateAdded", direction: "desc" }],
+    };
+    assert.equal(isSyncEquivalentSearch(n8nBody), true, "il body n8n-style deve passare la guardia");
+
+    const { contacts } = await searchContacts(site.id, {
+      limit: 100,
+      page: 1,
+      sort: [{ field: "dateAdded", direction: "desc" }],
+    });
+    assert.ok(contacts.length > 0, "almeno un contatto deve essere restituito a page=1");
+
+    await recordComparison({
+      siteId: site.id, endpoint: "POST /contacts/search", clonePayload: contacts,
+      isEquivalent: (clone, ghl) => compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.contacts || p || [] }),
+      fetchReal: async () => {
+        const { loadConfig, createSourceClient } = await import("../../src/services/source-sync/client.js");
+        const cfg = await loadConfig(site.id);
+        const client = createSourceClient(cfg);
+        // Replica esattamente il body n8n: sort dateAdded desc, page=1,
+        // pageLimit=100.
+        return client.raw("/contacts/search", {
+          method: "POST",
+          body: { locationId: cfg.location_id, page: 1, pageLimit: 100, sort: [{ field: "dateAdded", direction: "desc" }] },
+          sendLocationId: false,
+        });
+      },
+    });
+    const log = await lastLog(site.id, "POST /contacts/search");
+    assert.ok(log);
+    assert.equal(log.match, true, "il mock GHL deve restituire lo stesso insieme di contatti");
   });
 });

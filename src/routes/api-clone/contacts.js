@@ -18,23 +18,36 @@ const router = Router();
 const CONTACTS_SEARCH_PARITY_ENDPOINT = "POST /contacts/search";
 
 // Shadow-verifica fire-and-forget (vedi services/ghl-parity.js), SOLO per la
-// forma di richiesta che sappiamo replicare 1:1 contro sorgente: nessun
-// filtro (query/tag/email/filters/page/startAfterId), ordinamento esplicito
-// dateUpdated desc — la STESSA identica chiamata già usata dal sync
-// periodico (mappers/contacts.js: client.paginateSearchSorted). Con
-// filtri/ordinamenti diversi non c'è un confronto 1:1 affidabile (pagina
-// diversa da quella che GHL ci darebbe), quindi si salta.
+// forma di richiesta che sappiamo replicare 1:1 contro sorgente.
+//
+// Ammessi (replicabili 1:1):
+//   - sort: array esattamente 1 elemento {field: "dateAdded"|"dateUpdated",
+//     direction: "asc"|"desc"} — entrambi i field/direction sono verificati
+//     nel traffico reale di n8n e nel sync periodico.
+//   - page (se presente): intero >= 1 (offset-style, supportato da GHL
+//     sorgente — verificato dal vivo, n8n lo usa per scansioni paginate).
+//
+// Esclusi (filtri locali senza mapping GHL pulito, o non ancora verificati):
+//   - query, tag, email, filters (array non vuoto), startAfterId.
+//   - page < 1 o non intero.
+//
 // Esportata solo per test unitari mirati.
 export function isSyncEquivalentSearch(body) {
+  // Filtri locali: sempre motivo di esclusione.
   if (body.query || body.tag || body.email || body.startAfterId) return false;
   if (Array.isArray(body.filters) && body.filters.length > 0) return false;
-  if (Number.isFinite(body.page)) return false;
+  // page: ammesso solo se intero >= 1 (assente o non-finito → OK, escluso altrimenti).
+  if (body.page != null && (!Number.isInteger(body.page) || body.page < 1)) return false;
+  // sort: esattamente 1 elemento, field e direction in allowlist.
   const sort = body.sort;
   if (!Array.isArray(sort) || sort.length !== 1) return false;
-  return sort[0]?.field === "dateUpdated" && sort[0]?.direction === "desc";
+  const { field, direction } = sort[0] || {};
+  if (field !== "dateAdded" && field !== "dateUpdated") return false;
+  if (direction !== "asc" && direction !== "desc") return false;
+  return true;
 }
 
-function scheduleContactsSearchParityCheck(siteId, pageLimit, serializedContacts) {
+function scheduleContactsSearchParityCheck(siteId, serializedContacts, searchBody) {
   isPassthroughActive(siteId, CONTACTS_SEARCH_PARITY_ENDPOINT)
     .then((active) => {
       if (active) return;
@@ -48,9 +61,24 @@ function scheduleContactsSearchParityCheck(siteId, pageLimit, serializedContacts
           const cfg = await loadConfig(siteId);
           if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
           const client = createSourceClient(cfg);
+          // Replica esattamente il body della richiesta reale: stesso
+          // pageLimit, stesso sort (field+direction), stesso page (se
+          // presente).  locationId viene dal config locale (la rotta lo
+          // ignora, GHL lo usa internamente per il filtering location).
+          // pageLimit CLAMPATO 1-100 come fa la rotta stessa (filters.limit):
+          // il clone non restituisce mai più di 100 contatti per pagina, un
+          // pageLimit più alto verso GHL produrrebbe un conteggio diverso e
+          // un mismatch non dovuto a una vera divergenza.
+          const rawLimit = parseInt(searchBody.pageLimit, 10) || 100;
+          const body = {
+            locationId: cfg.location_id,
+            pageLimit: Math.min(Math.max(rawLimit, 1), 100),
+          };
+          if (Array.isArray(searchBody.sort)) body.sort = searchBody.sort;
+          if (Number.isInteger(searchBody.page) && searchBody.page >= 1) body.page = searchBody.page;
           return client.raw("/contacts/search", {
             method: "POST",
-            body: { locationId: cfg.location_id, pageLimit, sort: [{ field: "dateUpdated", direction: "desc" }] },
+            body,
             sendLocationId: false,
           });
         },
@@ -58,6 +86,83 @@ function scheduleContactsSearchParityCheck(siteId, pageLimit, serializedContacts
     })
     .catch((err) => logger.error(`scheduleContactsSearchParityCheck fallita (site ${siteId}): ${err.message}`));
 }
+
+// ── GET /contacts shadow-verifica (NON WIREATA nel router) ──────────
+//
+// MOTIVO PER CUI NON È WIREEATA:
+//
+// 1. GHL GET /contacts NON supporta ordinamento (verificato dal vivo,
+//    mappers/contacts.js: "GET /contacts/ NON supporta alcun ordinamento,
+//    solo paginazione per id di inserimento"). Il clone ordina per
+//    c.id DESC → pagine completamente diverse per ogni "pagina" con
+//    lo stesso limit → compareGhlSubset confronta sottoinsiemi
+//    disgiunti → mismatch garantito → confronto inaffidabile.
+//
+// 2. Nessuna richiesta reale su GET /contacts osservata dallo sniffer
+//    di traffico (prime ~15 min): solo POST /contacts/search.
+//    Wireare un endpoint fantasma sprecherebbe budget shadow per nulla.
+//
+// 3. Se il traffico reale dovesse confermare l'uso di GET /contacts,
+//    il confronto diventerebbe affidabile SOLO se il clone passasse
+//    a un ordine compatibile con GHL (inserimento), oppure se GHL
+//    introducesse sort su /contacts — entrambi modifiche esterne.
+//
+// Le funzioni sotto sono scritte per completezza e pronte all'uso
+// qualora le condizioni cambino. Sono esportate solo per test.
+
+const CONTACTS_LIST_PARITY_ENDPOINT = "GET /contacts";
+
+// Guardia: SOLO la forma "senza filtri locali" è potenzialmente
+// comparabile con GHL reale. Restituisce true solo quando la
+// richiesta GET /contacts è "pura" (limit/startAfterId soli).
+// Esportata solo per test unitari mirati.
+export function isSyncEquivalentContactsList(query) {
+  // Filtri testuali locali → risultati diversi da GHL → non confrontabili 1:1.
+  if (query.query) return false;
+  if (query.tag) return false;
+  if (query.email) return false;
+  // filters array stile sorgente [{field,operator,value}] → territorio POST /contacts/search.
+  if (Array.isArray(query.filters) && query.filters.length > 0) return false;
+  // Page offset (POST /contacts/search territory).
+  if (query.page) return false;
+  // sort esplicito → GHL GET /contacts NON supporta ordinamento
+  // ("GET /contacts/ NON supporta alcun ordinamento, solo paginazione
+  // per id di inserimento" — mappers/contacts.js).
+  if (query.sort) return false;
+  // Altrimenti: solo limit (default 20) + startAfterId (cursore opzionale).
+  return true;
+}
+
+// Funzione di wiring shadow-verifica per GET /contacts.
+// NON è chiamata dal router — vedi commento in testa alla sezione.
+function scheduleContactsListParityCheck(siteId, filters, serializedContacts) {
+  isPassthroughActive(siteId, CONTACTS_LIST_PARITY_ENDPOINT)
+    .then((active) => {
+      if (active) return;
+      return recordComparison({
+        siteId,
+        endpoint: CONTACTS_LIST_PARITY_ENDPOINT,
+        clonePayload: serializedContacts,
+        isEquivalent: (clone, ghl) =>
+          compareGhlSubset(clone, ghl, { extractGhlList: (p) => p?.contacts || p || [] }),
+        fetchReal: async () => {
+          const { loadConfig, createSourceClient } = await import("../../services/source-sync/client.js");
+          const cfg = await loadConfig(siteId);
+          if (!cfg || !cfg.enabled) throw new Error("source-sync non configurato");
+          const client = createSourceClient(cfg);
+          // GHL GET /contacts: solo limit + startAfterId, NESSUN sort
+          // (verificato: supporta solo paginazione per id di inserimento).
+          const params = { limit: filters.limit || 20 };
+          if (filters.startAfterId) params.startAfterId = filters.startAfterId;
+          return client.get("/contacts", params);
+        },
+      });
+    })
+    .catch((err) =>
+      logger.error(`scheduleContactsListParityCheck fallita (site ${siteId}): ${err.message}`)
+    );
+}
+// ── Fine GET /contacts shadow-verifica ──────────────────────────────
 
 // GET /contacts — Lista con filtri + paginazione.
 router.get("/contacts", async (req, res, next) => {
@@ -118,7 +223,7 @@ const filters = {
      };
     const { contacts, total } = await searchContacts(req.tenant.siteId, filters);
     if (isSyncEquivalentSearch(req.body)) {
-      scheduleContactsSearchParityCheck(req.tenant.siteId, filters.limit, contacts);
+      scheduleContactsSearchParityCheck(req.tenant.siteId, contacts, req.body);
     }
     // Shape TOP DEDICATO per QUESTO endpoint (verificato sul payload reale):
     // { contacts, total, traceId } — NON wrappato in "meta" come gli altri

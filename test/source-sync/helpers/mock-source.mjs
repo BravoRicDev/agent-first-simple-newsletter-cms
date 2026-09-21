@@ -94,22 +94,32 @@ export async function createMockSource(fixture, { onCall } = {}) {
     // il caso supportato, usato dal mapper contatti). Cursore searchAfter
     // = [timestamp dateUpdated in ms, id], coerente col comportamento reale
     // osservato (continuità tra pagine senza overlap/gap).
+    // Esteso (2026-09): supporta anche sort per "dateAdded" (usato da n8n)
+    // e paginazione OFFSET-style via body.page (1-based), osservata nel
+    // traffico reale di n8n.
     if (path === "/contacts/search" && req.method === "POST") {
       let body = {};
       try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
       const sortSpec = Array.isArray(body.sort) ? body.sort[0] : null;
-      if (sortSpec && sortSpec.field !== "dateUpdated") {
+      if (sortSpec && sortSpec.field !== "dateUpdated" && sortSpec.field !== "dateAdded") {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ message: `Invalid field ${sortSpec.field}`, statusCode: 400 }));
       }
+      const sortField = sortSpec?.field || "dateUpdated";
       const direction = sortSpec?.direction === "asc" ? "asc" : "desc";
       const all = [...(fixture.contacts || [])].sort((a, b) => {
-        const ta = new Date(a.dateUpdated || a.dateAdded || 0).getTime();
-        const tb = new Date(b.dateUpdated || b.dateAdded || 0).getTime();
+        const ta = new Date(a[sortField] || 0).getTime();
+        const tb = new Date(b[sortField] || 0).getTime();
         return direction === "desc" ? tb - ta : ta - tb;
       });
       let startIdx = 0;
-      if (Array.isArray(body.searchAfter)) {
+      // Paginazione OFFSET-style (page 1-based): usata da n8n per
+      // scansioni paginate. Se page è presente, ha precedenza su searchAfter.
+      const pageNum = Number.isFinite(body.page) ? Math.trunc(body.page) : null;
+      if (pageNum && pageNum >= 1) {
+        const pageLimit = Math.min(100, parseInt(body.pageLimit || 100, 10));
+        startIdx = (pageNum - 1) * pageLimit;
+      } else if (Array.isArray(body.searchAfter)) {
         const [, afterId] = body.searchAfter;
         const idx = all.findIndex((c) => c.id === afterId);
         if (idx >= 0) startIdx = idx + 1;
@@ -117,7 +127,7 @@ export async function createMockSource(fixture, { onCall } = {}) {
       const pageLimit = Math.min(100, parseInt(body.pageLimit || 100, 10));
       const pageItems = all.slice(startIdx, startIdx + pageLimit).map((c) => ({
         ...c,
-        searchAfter: [new Date(c.dateUpdated || c.dateAdded || 0).getTime(), c.id],
+        searchAfter: [new Date(c[sortField] || 0).getTime(), c.id],
       }));
       return ok({ contacts: pageItems, total: all.length });
     }
