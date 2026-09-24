@@ -31,9 +31,6 @@ const DIRECTIONS = new Set(["in", "out"]);
 const MAX_EVENTS = 100;
 const MAX_ATTEMPTS = 5;
 const DELIVERY_TIMEOUT_MS = 10000;
-// Chiave del lock globale "un solo nodo svuota l'outbox alla volta".
-const WEBHOOK_DELIVER_LOCK_KEY = 74812001;
-
 const VALID_ORIGINS = new Set(["cms", "agent", "source_in", "import"]);
 
 function httpError(status, message) {
@@ -691,32 +688,17 @@ function shouldEnrich(eventType) {
 // fetch passa da safeFetch (ssrf.js) che blocca IP privati/loopback/link-local
 // (difesa in profondità per i webhook out, fix CORREZIONI-TRACCIATE).
 //
-// CLUSTER single-fire: advisory lock globale (un solo nodo draina alla
-// volta) + claim atomico con FOR UPDATE SKIP LOCKED (status 'sending'):
-// anche due chiamate concorrenti (due nodi Active/Active) non selezionano
-// mai la stessa riga → una sola delivery per evento.
+// CLUSTER single-fire: claim atomico con FOR UPDATE SKIP LOCKED (status
+// 'sending') su webhook_deliveries: anche due chiamate concorrenti (due nodi
+// Active/Active) non selezionano mai la stessa riga → una sola delivery per
+// evento. Il claim da solo è già sufficiente a garantirlo: fino a questo
+// punto un lock advisory globale (74812001) faceva vincere UN SOLO nodo per
+// l'intero drain, lasciando gli altri fermi senza motivo — rimosso (v2,
+// migrazione FOR UPDATE SKIP LOCKED), ogni nodo ora contribuisce prendendo
+// righe disgiunte invece di aspettare il proprio turno. Vedi docs/CLUSTER.it.md.
 export async function deliverPending(limit = 50, { siteId = null, allowPrivate = false } = {}) {
   const lockClient = await getClient();
-  let locked = false;
   try {
-    const lockRes = await lockClient.query(
-      "SELECT pg_try_advisory_lock($1) AS locked",
-      [WEBHOOK_DELIVER_LOCK_KEY]
-    );
-    locked = lockRes.rows[0].locked;
-    if (!locked) {
-      // Un altro nodo/istanza sta già svuotando la coda: salta senza sprecare
-      // chiamate. Le righe restano pending e verranno prese al giro successivo.
-      const remainingParams = siteId ? [siteId] : [];
-      const remainingWhere = siteId ? " AND site_id = $1" : "";
-      const remaining = (await query(
-        `SELECT COUNT(*)::int AS n FROM webhook_deliveries
-         WHERE status = 'pending' AND next_attempt_at <= NOW()${remainingWhere}`,
-        remainingParams
-      )).rows[0].n;
-      return { delivered: 0, failed: 0, remaining, skipped: true };
-    }
-
     // Reaper: righe rimaste in 'sending' oltre 10min (processo morto durante
     // la consegna) vengono riportate a 'pending' per un nuovo tentativo.
     // Il timeout di consegna è 10s, quindi 10min non può intaccare una
@@ -835,13 +817,6 @@ if (ids.length > 0) {
 
     return { delivered, failed, remaining };
   } finally {
-    if (locked) {
-      try {
-        await lockClient.query("SELECT pg_advisory_unlock($1)", [WEBHOOK_DELIVER_LOCK_KEY]);
-      } catch (err) {
-        logger.error(`webhook deliver: unlock fallito (la connessione verrà chiusa dal pool): ${err.message}`);
-      }
-    }
     lockClient.release();
   }
 }

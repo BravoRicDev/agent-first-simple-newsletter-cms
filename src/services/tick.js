@@ -1,8 +1,9 @@
-import { query, getClient } from "../db.js";
+import { query } from "../db.js";
 import { logger } from "./logger.js";
 import { processDelayedActions } from "./workflows.js";
 import { applyScoreDecay } from "./scoring.js";
 import { refreshSegments } from "./segments.js";
+import { enqueueTask, retireExhausted, claimTasks, completeTask } from "./agent-task-queue.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // ONDA2 Phase 6 — tick "on demand" esposto via POST /api/agent/tick, per
@@ -15,19 +16,22 @@ import { refreshSegments } from "./segments.js";
 //   3. refresh segmenti dinamici — ogni M tick (pesante: O(email × regole)).
 // N/M configurabili via settings globali (site_id IS NULL):
 // tick_scoring_decay_every / tick_segment_refresh_every.
+//
+// MIGRAZIONE FOR UPDATE SKIP LOCKED (v2): in precedenza un unico lock
+// advisory globale (pg_try_advisory_lock, chiave 72800123) decideva quale
+// nodo, in un cluster Active/Active, eseguisse TUTTO il lavoro di questa
+// finestra di tick — gli altri nodi saltavano l'intero giro. Ora il lavoro
+// viene accodato riga per riga in `agent_tasks` (db/154_agent_tasks_queue.sql)
+// e ogni nodo fa un claim atomico con FOR UPDATE SKIP LOCKED (tasks.js):
+// nessun nodo resta bloccato fuori dal lavoro, e due nodi non prendono mai
+// la stessa riga. Stesso pattern già in produzione in webhooks.js su
+// webhook_deliveries. Vedi docs/CLUSTER.it.md.
 // ─────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_DECAY_EVERY = 10;
 const DEFAULT_SEGMENT_REFRESH_EVERY = 5;
 const DELAYED_ACTIONS_LIMIT = 50;
-
-// Multi-nodo: in un cluster Active/Active un cron esterno (scripts/run-tick.sh)
-// può girare su ogni nodo. Senza lock le azioni differite/decay/segmenti
-// girerebbero una volta per nodo. pg_try_advisory_lock su chiave dedicata
-// garantisce che in ogni finestra di tick UN SOLO nodo esegua il lavoro
-// (stesso pattern di scheduler.js). Se il lock non è disponibile, il tick
-// viene saltato (altra istanza in corso) e viene risposto senza lavoro.
-const TICK_LOCK_KEY = 72800123;
+const CLAIM_LIMIT = 10;
 
 // Contatore in-process: azzerato ad ogni riavvio del processo (comportamento
 // accettabile per un throttling best-effort, non serve persistenza).
@@ -42,74 +46,76 @@ async function getGlobalTickInterval(key, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+async function runClaimedTasks(kind, siteId, run, onResult) {
+  // Claim scoped al siteId di questa chiamata: per (kind, site_id) esiste al
+  // più una riga pending grazie all'indice unico, quindi CLAIM_LIMIT qui
+  // serve solo a coprire l'eventuale riga singola, mai task di altri siti.
+  const claims = await claimTasks(kind, siteId, CLAIM_LIMIT);
+  for (const task of claims) {
+    try {
+      const result = await run(task.site_id ?? siteId);
+      onResult(result);
+      await completeTask(task.id);
+    } catch (err) {
+      logger.error(`Tick: task '${kind}' fallito: ${err.message}`);
+      await completeTask(task.id, { error: err.message });
+    }
+  }
+}
+
 // runDecay/runSegments: true/false forzano l'esecuzione (o lo skip) del
 // relativo step indipendentemente dal contatore — usato dall'endpoint per
 // permettere un run mirato (es. test, o riallineamento manuale).
 export async function runTick(siteId = null, { runDecay = null, runSegments = null } = {}) {
-  // Lock multi-nodo: se un'altra istanza sta già eseguendo il tick in questa
-  // finestra, saltiamo (evita doppie esecuzioni in cluster Active/Active).
-  // NOTA: tickCounter viene incrementato SOLO dopo il lock: in cluster un
-  // tick saltato dal lock non deve avanzare il contatore locale, altrimenti
-  // decay/segmenti partirebbero in momenti incoerenti tra i nodi.
-  let lockClient = null;
-  try {
-    lockClient = await getClient();
-    const lockRes = await lockClient.query("SELECT pg_try_advisory_lock($1) AS locked", [TICK_LOCK_KEY]);
-    if (!lockRes.rows[0].locked) {
-      lockClient.release();
-      lockClient = null;
-      logger.warn("Tick: lock non acquisito (altra istanza in corso), salto questo giro");
-      return { tick: tickCounter, skipped: true, reason: "another-instance-locked" };
-    }
-    tickCounter++;
+  // Recupero worker morto: eventuali task rimasti 'claimed' da un nodo
+  // crashato prima del completamento tornano disponibili.
+  await retireExhausted();
 
-    const decayEvery = await getGlobalTickInterval("tick_scoring_decay_every", DEFAULT_DECAY_EVERY);
-    const segmentEvery = await getGlobalTickInterval("tick_segment_refresh_every", DEFAULT_SEGMENT_REFRESH_EVERY);
+  tickCounter++;
 
-    const shouldDecay = runDecay !== null ? runDecay : tickCounter % decayEvery === 0;
-    const shouldRefreshSegments = runSegments !== null ? runSegments : tickCounter % segmentEvery === 0;
+  const decayEvery = await getGlobalTickInterval("tick_scoring_decay_every", DEFAULT_DECAY_EVERY);
+  const segmentEvery = await getGlobalTickInterval("tick_segment_refresh_every", DEFAULT_SEGMENT_REFRESH_EVERY);
 
-    const result = {
-      tick: tickCounter,
-      skipped: false,
-      delayed_actions: { executed: 0 },
-      scoring_decay: null,
-      segment_refresh: null,
-    };
+  const shouldDecay = runDecay !== null ? runDecay : tickCounter % decayEvery === 0;
+  const shouldRefreshSegments = runSegments !== null ? runSegments : tickCounter % segmentEvery === 0;
 
-    try {
-      result.delayed_actions = await processDelayedActions(siteId, { limit: DELAYED_ACTIONS_LIMIT });
-    } catch (err) {
-      logger.error(`Tick: azioni differite fallite: ${err.message}`);
-    }
+  // Accoda il lavoro dovuto in questa finestra. L'indice unico su
+  // (kind, site_id) per le righe pending/claimed evita duplicati se più
+  // invocazioni (o più nodi) arrivano nella stessa finestra.
+  await enqueueTask("workflow_delayed", siteId);
+  if (shouldDecay) await enqueueTask("decay", siteId);
+  if (shouldRefreshSegments) await enqueueTask("segment_refresh", siteId);
 
-    if (shouldDecay) {
-      try {
-        result.scoring_decay = await applyScoreDecay(siteId);
-      } catch (err) {
-        logger.error(`Tick: scoring decay fallito: ${err.message}`);
-      }
-    }
+  const result = {
+    tick: tickCounter,
+    skipped: false,
+    delayed_actions: { executed: 0 },
+    scoring_decay: null,
+    segment_refresh: null,
+  };
 
-    if (shouldRefreshSegments) {
-      try {
-        result.segment_refresh = await refreshSegments(siteId);
-      } catch (err) {
-        logger.error(`Tick: refresh segmenti fallito: ${err.message}`);
-      }
-    }
+  await runClaimedTasks(
+    "workflow_delayed",
+    siteId,
+    (sid) => processDelayedActions(sid, { limit: DELAYED_ACTIONS_LIMIT }),
+    (r) => { result.delayed_actions = r; }
+  );
 
-    return result;
-  } finally {
-    if (lockClient) {
-      try {
-        await lockClient.query("SELECT pg_advisory_unlock($1)", [TICK_LOCK_KEY]);
-      } catch (err) {
-        logger.error(`Tick: unlock fallito (la connessione verrà chiusa dal pool): ${err.message}`);
-      }
-      lockClient.release();
-    }
-  }
+  await runClaimedTasks(
+    "decay",
+    siteId,
+    (sid) => applyScoreDecay(sid),
+    (r) => { result.scoring_decay = r; }
+  );
+
+  await runClaimedTasks(
+    "segment_refresh",
+    siteId,
+    (sid) => refreshSegments(sid),
+    (r) => { result.segment_refresh = r; }
+  );
+
+  return result;
 }
 
 // Uso solo nei test, per un contatore deterministico tra i vari "it".

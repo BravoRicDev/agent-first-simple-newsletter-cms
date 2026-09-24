@@ -153,4 +153,44 @@ describe("crm: scoring decay configurabile + soglie below", () => {
     const contact = (await query("SELECT score FROM contacts WHERE site_id = $1 AND email = $2", [site.id, email])).rows[0];
     assert.ok(contact.score < 60);
   });
+
+  test("(g) due tick di decay per SITI DIVERSI in parallelo non si scambiano il risultato (regressione coda agent_tasks)", async () => {
+    // Trovata in verifica isolata (suite completa, non nella singola): un
+    // claim non scoped per sito poteva prendere il task 'decay' di un altro
+    // sito, sovrascrivendo tick.scoring_decay con il risultato sbagliato.
+    // Coperta a livello unitario in test/agent-task-queue.test.js; qui la
+    // stessa cosa end-to-end passando dall'endpoint reale.
+    const otherSite = await createTestSite("CRM Decay Test — sito 2");
+    const otherUser = await createTestUser(otherSite.id, "admin");
+    const otherCreated = await createApiToken(otherUser.id, "decay2", 30, ["read", "write"]);
+    const otherToken = otherCreated.token;
+    const apiOther = (path, opts = {}) => fetch(`${baseUrl}${path}`, {
+      ...opts,
+      headers: { Authorization: `Bearer ${otherToken}`, ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) },
+      ...(opts.body ? { body: JSON.stringify(opts.body) } : {}),
+    });
+
+    const emailA = uniqueEmail("decay-parallel-a");
+    const emailB = uniqueEmail("decay-parallel-b");
+    await query(
+      `INSERT INTO contacts (site_id, email, score, score_updated_at) VALUES ($1, $2, 60, NOW() - INTERVAL '4 days')`,
+      [site.id, emailA]
+    );
+    await query(
+      `INSERT INTO contacts (site_id, email, score, score_updated_at) VALUES ($1, $2, 60, NOW() - INTERVAL '4 days')`,
+      [otherSite.id, emailB]
+    );
+
+    const [resA, resB] = await Promise.all([
+      api("/api/agent/tick", { method: "POST", body: { site_id: site.id, run_decay: true, run_segments: false } }),
+      apiOther("/api/agent/tick", { method: "POST", body: { site_id: otherSite.id, run_decay: true, run_segments: false } }),
+    ]);
+    const { tick: tickA } = await resA.json();
+    const { tick: tickB } = await resB.json();
+
+    assert.ok(tickA.scoring_decay, "sito A: step scoring_decay eseguito");
+    assert.ok(tickA.scoring_decay.decayed >= 1, "sito A: il proprio decay non deve arrivare vuoto per un task preso dal sito B");
+    assert.ok(tickB.scoring_decay, "sito B: step scoring_decay eseguito");
+    assert.ok(tickB.scoring_decay.decayed >= 1, "sito B: il proprio decay non deve arrivare vuoto per un task preso dal sito A");
+  });
 });
