@@ -151,7 +151,12 @@ router.post("/admin/agent/token", requireAuth, async (req, res, next) => {
   try {
     const name = String(req.body.name || "").trim().slice(0, 255) || "Agente AI";
     const days = AGENT_TOKEN_DAYS.has(parseInt(req.body.expires_days, 10)) ? parseInt(req.body.expires_days, 10) : 120;
-    const created = await createApiToken(req.user.sub, name, days);
+    // Permessi: checkbox "scopes" (read/write, normalizzate/validate dentro
+    // createApiToken) + tetto ruolo opzionale "role_cap" (può solo abbassare,
+    // mai elevare — vedi db/136_api_token_role_cap.sql).
+    const scopes = Array.isArray(req.body.scopes) ? req.body.scopes : (req.body.scopes ? [req.body.scopes] : ["read"]);
+    const roleCap = req.body.role_cap || null;
+    const created = await createApiToken(req.user.sub, name, days, scopes, roleCap);
     const tokens = await listApiTokens(req.user.sub);
     const ingestLog = (await query(
       `SELECT il.source_url, il.result_type, il.title, il.word_count, il.created_at,

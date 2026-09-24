@@ -90,7 +90,7 @@ export function isApiTokenFormat(rawToken) {
 
 export async function listApiTokens(userId) {
   return (await query(
-    `SELECT id, name, token_prefix, expires_at, last_used_at, revoked_at, created_at
+    `SELECT id, name, token_prefix, expires_at, last_used_at, revoked_at, created_at, scopes, role_cap
      FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId]
   )).rows;

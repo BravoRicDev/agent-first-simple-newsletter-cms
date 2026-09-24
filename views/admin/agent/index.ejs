@@ -23,7 +23,8 @@
   <h3 style="font-size:15px;margin-bottom:10px;color:#065f46;">🔑 Token agente — il modo più semplice (consigliato)</h3>
   <% if (agentToken) { %>
     <p style="font-size:13px;color:#666;margin-bottom:10px;">
-      Token generato per <strong><%= tokenName %></strong> (scade il <%= tokenExpires %>).
+      Token generato per <strong><%= tokenName %></strong> (scade il <%= tokenExpires %>),
+      permessi: <strong><%= (newToken.scopes || ['read']).join(', ') %></strong><% if (newToken.roleCap) { %> · tetto ruolo: <strong><%= newToken.roleCap %></strong><% } %>.
       <strong style="color:#b91c1c;">Viene mostrato UNA SOLA VOLTA: copialo ora</strong>, poi dallo all'agente.
       Con questo token <strong>non serve alcun OTP</strong>.
     </p>
@@ -41,7 +42,7 @@
       Il token vale come <strong>permessi dell'utente che lo crea</strong> (superadmin = accesso completo).
     </p>
     <form method="POST" action="/admin/agent/token" style="margin-bottom:6px;">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
         <input type="text" name="name" placeholder="Nome (es. Agente Claude Code)" value="Agente AI" style="flex:1;min-width:220px;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
         <select name="expires_days" style="padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
           <option value="30">30 giorni</option>
@@ -51,8 +52,20 @@
           <option value="180">180 giorni</option>
           <option value="365">365 giorni</option>
         </select>
-        <button class="btn" style="background:#059669;">🔄 Genera token agente</button>
       </div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:13px;color:#444;">
+        <span style="font-weight:600;">Permessi:</span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" name="scopes" value="read" checked> lettura</label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" name="scopes" value="write"> scrittura</label>
+        <span style="font-weight:600;margin-left:8px;">Tetto ruolo:</span>
+        <select name="role_cap" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+          <option value="">nessuno (ruolo pieno)</option>
+          <option value="admin">admin</option>
+          <option value="collaboratore">collaboratore</option>
+        </select>
+      </div>
+      <p style="font-size:12px;color:#999;margin-bottom:10px;">Senza "scrittura" il token può solo leggere. Il "tetto ruolo" abbassa i permessi del token rispetto al tuo (mai il contrario) — utile per consegnare il token a un'integrazione terza.</p>
+      <button class="btn" style="background:#059669;">🔄 Genera token agente</button>
     </form>
   <% } %>
 
@@ -60,7 +73,7 @@
     <details style="margin-top:12px;">
       <summary style="cursor:pointer;color:#4f46e5;font-size:13px;">Gestisci token esistenti (<%= tokens.length %>)</summary>
       <table style="margin-top:8px;font-size:13px;">
-        <thead><tr><th>Nome</th><th>Token</th><th>Scade</th><th>Ultimo uso</th><th>Stato</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>Token</th><th>Permessi</th><th>Scade</th><th>Ultimo uso</th><th>Stato</th><th></th></tr></thead>
         <tbody>
           <% tokens.forEach(tk => { %>
           <%
@@ -75,6 +88,7 @@
           <tr>
             <td><%= tk.name %></td>
             <td><code><%= tk.token_prefix %></code></td>
+            <td><%= (Array.isArray(tk.scopes) && tk.scopes.length > 0 ? tk.scopes : ['read']).join(', ') %><% if (tk.role_cap) { %><br><span style="color:#999;">tetto: <%= tk.role_cap %></span><% } %></td>
             <td><%= tk.expires_at ? new Date(tk.expires_at).toLocaleDateString('it-IT') : '—' %></td>
             <td><%= tk.last_used_at ? new Date(tk.last_used_at).toLocaleString('it-IT') : 'mai' %></td>
             <td><%- expiryBadge %></td>
