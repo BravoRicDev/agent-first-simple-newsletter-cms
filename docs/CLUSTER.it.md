@@ -40,9 +40,13 @@ Regole d'oro:
 2. **File**: qualunque nodo può scrivere → Syncthing propaga all'altro in
    secondi. `static/` e `backups/` sono scritte SOLO dal nodo che detiene il
    lock scheduler (advisory lock) e poi propagate.
-3. **Job**: lo scheduler interno e il tick esterno usano `pg_advisory_lock`
-   (già presenti in `scheduler.js`, e ora anche in `db/migrate.js` e
-   `services/tick.js`): mai doppie esecuzioni cross-nodo.
+3. **Job**: lo scheduler interno usa `pg_advisory_lock` (`scheduler.js`),
+   così come `db/migrate.js` per le migrazioni al boot: mai doppie esecuzioni
+   cross-nodo. Il tick esterno (`services/tick.js`) e le delivery webhook OUT
+   (`services/webhooks.js`) usano invece una coda per-riga con claim atomico
+   `FOR UPDATE SKIP LOCKED` (nessun lock globale): più nodi possono lavorare
+   in parallelo su righe/siti diversi, senza che uno resti fermo ad aspettare
+   il proprio turno — vedi §8.
 4. **Auth**: JWT stateless + cookie: nessuna sessione da condividere; i segreti
    (`JWT_SECRET`, `ENCRYPTION_KEY`, chiavi provider) devono essere IDENTICI su
    tutti i nodi.
@@ -243,15 +247,17 @@ come unica (no failover automatico).
 |---|---|
 | Scheduler interno (`scheduler.js`, ogni 60s) | `pg_try_advisory_lock` (già presente) |
 | Export statico + backup giornaliero | eseguiti solo dal nodo col lock; propagati da Syncthing |
-| `/api/agent/tick` (cron esterno `scripts/run-tick.sh`) | **nuovo** `pg_advisory_lock` in `services/tick.js` |
-| Migrazioni al boot (`node db/migrate.js`) | **nuovo** advisory lock in `db/migrate.js` |
-| Webhook OUT (outbox `webhook_deliveries`) | **nuovo** lock globale + claim atomico `FOR UPDATE SKIP LOCKED` (status `sending`) + reaper righe stale — un solo nodo consegna, mai due volte |
+| `/api/agent/tick` (cron esterno `scripts/run-tick.sh`) | coda `agent_tasks` per (decay, segment_refresh, workflow_delayed): claim atomico `FOR UPDATE SKIP LOCKED` scoped per sito, reaper righe `claimed` orfane a 10min — niente lock globale, più nodi lavorano in parallelo su siti diversi |
+| Migrazioni al boot (`node db/migrate.js`) | advisory lock in `db/migrate.js` |
+| Webhook OUT (outbox `webhook_deliveries`) | claim atomico `FOR UPDATE SKIP LOCKED` (status `sending`) + reaper righe stale — nessun nodo prende mai la stessa riga, senza bisogno di un lock globale (rimosso: era ridondante) |
 | Push bidirezionale CRM sorgente (outbox `source_push_queue`) | **nuovo** servizio `source-sync/push.js`: lease per-sito + claim atomico + **anti-echo** (le mutate originate da sorgente non tornano a sorgente) + niente push durante import/sync o con replica indietro |
 | Migrazioni/schermo | advisory lock per `recurring.checkFollowups` e claim atomico per `workflows.processDelayedActions` |
 
 Puoi quindi schedulare `run-tick.sh` su **entrambi** i nodi (o da un unico cron
-puntato al dominio pubblico): il secondo che arriva salterà (risposta
-`{"tick":N,"skipped":true}`).
+puntato al dominio pubblico): non c'è più un "secondo che salta" — ogni nodo
+accoda ed esegue il proprio lavoro, il claim atomico sulla coda `agent_tasks`
+garantisce solo che una stessa riga (stesso sito+tipo di job) non venga presa
+da due nodi contemporaneamente.
 
 ## 8bis — Sync bidirezionale con CRM sorgente (opzionale, per sito)
 

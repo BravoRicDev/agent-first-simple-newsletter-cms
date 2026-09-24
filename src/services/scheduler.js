@@ -202,8 +202,10 @@ async function schedulerTick({ webhookAllowPrivate = false } = {}) {
       logger.error(`Source sync tick fallito: ${err.message}`);
     }
 
-    // Webhook OUT: delivery automatica della coda (single-fire garantito da
-    // advisory lock globale + claim atomico, vedi services/webhooks.js).
+    // Webhook OUT: delivery automatica della coda (single-fire garantito dal
+    // claim atomico FOR UPDATE SKIP LOCKED su webhook_deliveries — il lock
+    // advisory globale che c'era qui prima è stato rimosso, ridondante,
+    // vedi services/webhooks.js).
     try {
       const { deliverPending } = await import("./webhooks.js");
       const dw = await deliverPending(50, { allowPrivate: webhookAllowPrivate });
