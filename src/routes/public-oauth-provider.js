@@ -15,6 +15,14 @@ import { query } from "../db.js";
 
 const router = Router();
 
+// Escape dei caratteri speciali HTML per i valori interpolati nella pagina
+// di autorizzazione: senza escape, `state`/`scope` (input dell'utente) e
+// `app.name`/`app.scopes` (dati dal client) permettono XSS riflesso.
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // GET /oauth/authorize — mostra form HTML per autorizzazione utente.
 // Query: client_id, redirect_uri, scope, state, response_type (sempre "code")
@@ -76,17 +84,17 @@ router.get("/oauth/authorize", async (req, res) => {
   <div class="container">
     <h1>Autorizzare questa app?</h1>
     <div class="info">
-      <strong>${app.name}</strong> richiede accesso ai tuoi dati.
+      <strong>${escapeHtml(app.name)}</strong> richiede accesso ai tuoi dati.
     </div>
     <div class="scopes">
       <div class="scopes-label">Permessi richiesti:</div>
-      ${(Array.isArray(app.scopes) ? app.scopes : []).map((s) => `<div class="scope-item">• ${s}</div>`).join("")}
+      ${(Array.isArray(app.scopes) ? app.scopes : []).map((s) => `<div class="scope-item">• ${escapeHtml(s)}</div>`).join("")}
     </div>
     <form method="POST" action="/oauth/authorize/decision" class="actions">
-      <input type="hidden" name="client_id" value="${String(client_id).replace(/"/g, "&quot;")}">
-      <input type="hidden" name="redirect_uri" value="${String(redirect_uri).replace(/"/g, "&quot;")}">
-      <input type="hidden" name="scope" value="${String(scope).replace(/"/g, "&quot;")}">
-      <input type="hidden" name="state" value="${String(state || "").replace(/"/g, "&quot;")}">
+      <input type="hidden" name="client_id" value="${escapeHtml(String(client_id))}">
+      <input type="hidden" name="redirect_uri" value="${escapeHtml(String(redirect_uri))}">
+      <input type="hidden" name="scope" value="${escapeHtml(String(scope))}">
+      <input type="hidden" name="state" value="${escapeHtml(String(state || ""))}">
       <button type="submit" name="decision" value="approve" class="approve">Approva</button>
       <button type="submit" name="decision" value="deny" class="deny">Nega</button>
     </form>
@@ -95,6 +103,7 @@ router.get("/oauth/authorize", async (req, res) => {
 </html>`;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
     res.send(html);
   } catch (err) {
     logger.error(`GET /oauth/authorize error: ${err.message}`);

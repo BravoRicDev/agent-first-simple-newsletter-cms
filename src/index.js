@@ -48,6 +48,7 @@ import adminDashboardRoutes from "./routes/admin-dashboard.js";
 import { publicWebhookRouter } from "./routes/public-webhooks.js";
 import { publicOauthRouter } from "./routes/public-oauth.js";
 import { publicPaymentsRouter } from "./routes/public-payments.js";
+import { stripeWebhookRouter } from "./routes/stripe-webhook.js";
 import { publicTrackedLinksRouter } from "./routes/public-tracked-links.js";
 import publicSmsInboundRoutes from "./routes/public-sms-inbound.js";
 import surveysAdminRoutes from "./routes/surveys-admin.js";
@@ -206,6 +207,8 @@ async function start() {
   // TypeError → 500 al posto del 403 previsto (index.js:139 montava csrf
   // prima di i18nMiddleware).
   app.use(i18nMiddleware);
+  app.use('/webhooks/stripe', stripeWebhookRouter);
+  app.use('/webhooks/in/', express.json({ limit: "100kb" }));
   app.use(express.urlencoded({ extended: false, limit: "50mb" }));
   app.use(express.json({ limit: "50mb" }));
 

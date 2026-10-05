@@ -1,4 +1,8 @@
 import dns from "node:dns";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import { Readable } from "node:stream";
 
 const PRIVATE_RANGES = [
   [127, 0, 0, 0, 8],
@@ -96,6 +100,31 @@ function isDisallowedIp(address, family) {
   return false;
 }
 
+export async function resolvePublicAddress(urlString) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(urlString);
+  } catch {
+    throw new Error("URL non valido");
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("Solo schemi HTTP/HTTPS consentiti");
+  }
+  const hostname = parsedUrl.hostname;
+  let addresses;
+  try {
+    addresses = await dns.promises.lookup(hostname, { all: true });
+  } catch {
+    throw new Error("Impossibile risolvere host: " + hostname);
+  }
+  for (const { address, family } of addresses) {
+    if (isDisallowedIp(address, family)) {
+      throw new Error("Indirizzo IP non consentito: " + hostname);
+    }
+  }
+  return { address: addresses[0].address, family: addresses[0].family };
+}
+
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 // Fetch che rivalida l'IP di destinazione ad ogni hop di redirect, per evitare
@@ -105,11 +134,24 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export async function safeFetch(urlString, options = {}, maxRedirects = 5) {
   let currentUrl = urlString;
   for (let i = 0; i <= maxRedirects; i++) {
-    if (!options.allowPrivate) await assertPublicHttpUrl(currentUrl);
-    const response = await fetch(currentUrl, { ...options, redirect: "manual" });
+    if (options.allowPrivate) {
+      const response = await fetch(currentUrl, { ...options, redirect: "manual" });
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const location = response.headers.get("location");
+        if (!location) throw new Error("Redirect senza header Location");
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+      return response;
+    }
+    // resolve una volta sola, valida tutti gli IP, poi si esegue la richiesta
+    // con lookup "bloccato" sull'IP validato (no DNS rebinding).
+    const pinned = await resolvePublicAddress(currentUrl);
+    const response = await pinnedRequest(currentUrl, options, pinned);
     if (REDIRECT_STATUSES.has(response.status)) {
       const location = response.headers.get("location");
       if (!location) throw new Error("Redirect senza header Location");
+      await response.body?.cancel().catch(() => {});
       currentUrl = new URL(location, currentUrl).toString();
       continue;
     }
@@ -141,4 +183,88 @@ export async function assertPublicHttpUrl(urlString) {
     }
   }
   return true;
+}
+
+// Esegue la richiesta bloccando il resolver sull'IP già validato: il
+// lookup custom restituisce solo address/family senza interrogare DNS,
+// bloccando DNS rebinding. Controlla anche socket.remoteAddress al connect.
+async function pinnedRequest(urlString, options, pinned) {
+  const parsed = new URL(urlString);
+  const isHttps = parsed.protocol === "https:";
+  const mod = isHttps ? https : http;
+  const host = parsed.hostname;
+  const port = parsed.port || (isHttps ? 443 : 80);
+  const method = options.method || "GET";
+  const headers = { ...(options.headers || {}) };
+  const body = options.body;
+  const reqOpts = {
+    protocol: parsed.protocol,
+    hostname: host,
+    port: Number(port),
+    path: parsed.pathname + parsed.search,
+    method,
+    headers,
+    signal: options.signal,
+    lookup: (_h, opts, cb) => {
+      if (opts && opts.all) {
+        cb(null, [{ address: pinned.address, family: pinned.family }]);
+      } else {
+        cb(null, pinned.address, pinned.family);
+      }
+    },
+  };
+  if (isHttps) {
+    reqOpts.servername = host;
+    reqOpts.rejectUnauthorized = true;
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const req = mod.request(reqOpts, (res) => {
+      const out = new Headers();
+      const raw = res.rawHeaders || [];
+      for (let i = 0; i < raw.length; i += 2) {
+        out.append(raw[i], raw[i + 1]);
+      }
+      const status = res.statusCode;
+      const noBody = status === 204 || status === 205 || status === 304 || method === "HEAD";
+      const bodyStream = noBody ? null : Readable.toWeb(res);
+      resolve(new Response(bodyStream, { status, headers: out }));
+      settled = true;
+    });
+    req.on("socket", (sock) => {
+      const check = () => {
+        if (settled) return;
+        const remote = sock.remoteAddress;
+        if (remote) {
+          const fam = net.isIP(remote);
+          if (fam && isDisallowedIp(remote, fam)) {
+            req.destroy(new Error("Indirizzo IP non consentito: " + remote));
+          }
+        }
+      };
+      if (sock.connecting) {
+        sock.prependOnceListener("connect", check);
+        sock.prependOnceListener("secureConnect", check);
+      } else {
+        check();
+      }
+    });
+    req.on("error", (err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+    if (body !== undefined && body !== null) {
+      const buf = Buffer.isBuffer(body)
+        ? body
+        : Buffer.from(
+            typeof body === "string" ? body
+            : body instanceof URLSearchParams ? body.toString()
+            : String(body)
+          );
+      req.write(buf);
+    }
+    req.end();
+  });
 }

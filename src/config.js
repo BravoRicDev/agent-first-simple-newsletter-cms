@@ -59,6 +59,9 @@ export default {
   // /pay/:token resta in modalità conferma simulata.
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
 
+  // Chiave segreta per verificare i webhook in ingresso da Stripe.
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+
   // Provider LLM astratto usato da services/llm.js (rewrite testo, alt-text immagini):
   // LLM_API_KEY ha priorità, con fallback a OPENAI_API_KEY per non rompere le config esistenti.
   llmBaseUrl: process.env.LLM_BASE_URL || "https://api.openai.com/v1",

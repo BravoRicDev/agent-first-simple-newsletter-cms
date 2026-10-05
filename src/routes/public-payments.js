@@ -40,6 +40,7 @@ function renderPayPage(res, link) {
   const paid = link.status === "paid";
   const expired = link.status === "expired";
   const canStripe = (link.status === "draft" || link.status === "active") && link.stripe_url;
+  const simulateAllowed = process.env.NODE_ENV !== 'production' && !link.stripe_url;
 
   let badge = "";
   if (paid) badge = '<div class="badge ok">✅ Pagamento completato</div>';
@@ -52,10 +53,12 @@ function renderPayPage(res, link) {
       ? '<div class="note">Questo link di pagamento non è più valido. Contatta chi te lo ha inviato.</div>'
       : canStripe
         ? `<a class="btn" href="${esc(link.stripe_url)}" rel="noopener noreferrer" target="_blank">💳 Paga con Stripe</a>`
-        : `<form method="POST" action="/pay/${esc(link.token)}/confirm">
-             <button class="btn" type="submit">Conferma pagamento</button>
-           </form>
-           <div class="note">Modalità simulata: nessun addebito reale (Stripe non configurato).</div>`;
+        : simulateAllowed
+          ? `<form method="POST" action="/pay/${esc(link.token)}/confirm">
+              <button class="btn" type="submit">Conferma pagamento</button>
+            </form>
+            <div class="note">Modalità simulata: nessun addebito reale (Stripe non configurato).</div>`
+          : '<div class="note">Questo link di pagamento non è disponibile. Contatta chi te lo ha inviato.</div>';
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`<!DOCTYPE html>
@@ -89,6 +92,12 @@ async function payPageHandler(req, res, next) {
   try {
     const link = await getPaymentLinkByToken(req.params.token);
     if (!link) return res.status(404).send("Link di pagamento non trovato.");
+    
+    // In produzione, disabilitare completamente la modalità simulata: se stripe_url manca, link non disponibile
+    if (process.env.NODE_ENV === 'production' && !link.stripe_url) {
+      return res.status(404).send("Link di pagamento non trovato.");
+    }
+    
     renderPayPage(res, link);
   } catch (err) { next(err); }
 }
@@ -97,6 +106,19 @@ async function payPageHandler(req, res, next) {
 // alla pagina che mostra lo stato completato.
 async function confirmHandler(req, res, next) {
   try {
+    const link = await getPaymentLinkByToken(req.params.token);
+    if (!link) return res.status(404).send("Link di pagamento non trovato o non più valido.");
+    
+    // Se stripe_url è valorizzato, non permettere la conferma simulata
+    if (link.stripe_url) {
+      return res.status(404).send("Link di pagamento non trovato o non più valido.");
+    }
+    
+    // In produzione, disabilitare completamente la modalità simulata
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(404).send("Link di pagamento non trovato o non più valido.");
+    }
+    
     const result = await markPaidByToken(req.params.token, { by: "public-page" });
     if (!result.ok) return res.status(404).send("Link di pagamento non trovato o non più valido.");
     res.redirect(302, `/pay/${req.params.token}`);

@@ -53,6 +53,8 @@ async function createStripePaymentLink({ title, amount, currency, token, baseUrl
   body.append("line_items[0][quantity]", "1");
   body.append("after_completion[type]", "redirect");
   body.append("after_completion[redirect][url]", `${baseUrl}/pay/${token}`);
+  // Aggiunge il token nei metadata per poterlo recuperare dal webhook
+  body.append("metadata[token]", token);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
