@@ -20,7 +20,23 @@ import {
 // ─────────────────────────────────────────────────────────────────────────
 
 export function registerClientServicesRoutes(router) {
-  router.use("/api/agent", requireAuth, requireAgent);
+  // Scope manuale su "/api/agent" invece di router.use("/api/agent", ...):
+  // quella forma stripa req.url/req.path del prefisso per la durata della
+  // chiamata — fatto a metà dello stack di agentRouter, causava un
+  // redirect HTML invece di un 401 JSON per le route registrate dopo
+  // questa funzione quando una richiesta arriva senza token. router.use(fn)
+  // senza path risolve QUEL bug ma applica l'auth a OGNI richiesta
+  // sull'intero router condiviso, non solo a "/api/agent" — rompe le app
+  // che montano agentRouter insieme ad altri router con route pubbliche
+  // (es. /quote/:token nei test CRM). Controllo esplicito, senza toccare
+  // req.url.
+  router.use((req, res, next) => {
+    if (!req.path.startsWith("/api/agent")) return next();
+    requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      requireAgent(req, res, next);
+    });
+  });
 
   // ── Catalogo servizi ──────────────────────────────────────────────────
 

@@ -30,7 +30,24 @@ import {
 export function registerCrmRoutes(router) {
   // Auth per TUTTE le route CRM: requireAuth decodifica il Bearer token
   // (JWT o API token) e popola req.user; requireAgent verifica il ruolo.
-  router.use("/api/agent", requireAuth, requireAgent);
+  // Scope manuale su "/api/agent" invece di router.use("/api/agent", ...):
+  // quella forma fa STRIPPARE req.url/req.path del prefisso per la durata
+  // della chiamata — fatto a metà dello stack di agentRouter (questa
+  // funzione viene chiamata dopo ~150 route già registrate), causava un
+  // redirect HTML invece di un 401 JSON per qualunque route registrata più
+  // avanti quando una richiesta arrivava senza token (requireAuth leggeva
+  // un req.path già troncato). router.use(fn) senza path risolve QUEL bug
+  // ma applica l'auth a OGNI richiesta sull'intero router condiviso, non
+  // solo a "/api/agent" — rompe le app che montano agentRouter insieme ad
+  // altri router con route pubbliche (es. /quote/:token nei test CRM). Il
+  // controllo esplicito qui sotto resta scoped SENZA toccare req.url.
+  router.use((req, res, next) => {
+    if (!req.path.startsWith("/api/agent")) return next();
+    requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      requireAgent(req, res, next);
+    });
+  });
 
   // ── F1 Segmenti ────────────────────────────────────────────────────────
   // NB: route statiche PRIMA delle parametriche (:segmentId).
