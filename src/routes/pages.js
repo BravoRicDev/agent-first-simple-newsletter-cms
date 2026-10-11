@@ -15,6 +15,7 @@ import { extractAndReplaceBase64 } from "../services/media-utils.js";
 import { normalizeUrlPath } from "../services/urls.js";
 import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js";
 import { getPageTrackingOverride, setPageTrackingOverride } from "../services/tracking.js";
+import { syncBlogListingPages } from "../services/blog-index.js";
 // Niente tracking (GA4/Pixel/consenso) nelle route di preview qui sotto:
 // sono anteprime interne nell'iframe dell'admin, non traffico pubblico —
 // iniettarlo inquinerebbe le statistiche con le visualizzazioni dell'admin
@@ -158,13 +159,14 @@ router.post("/admin/pages", requireAuth, resolveSite, authorize("pages", "create
     await assertAuthorBelongsToSite(authorId, siteId);
     const publishedBool = data.published === "true";
     const publishedAt = resolvePublishedAt(req.body, data.post_type, publishedBool);
-    await query(
+await query(
       `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at, review_at,
-                          post_type, category_id, excerpt, featured_image, published_at, author_id)
+                           post_type, category_id, excerpt, featured_image, published_at, author_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [siteId, data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
        data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId]
     );
+    if (data.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
     res.redirect(`/admin/pages?site_id=${siteId}&saved=1`);
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
@@ -321,6 +323,8 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
        data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId, req.params.id, siteId]
     );
 
+    if (data.post_type === 'article' || page.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
+
     // Snapshot dello stato precedente: salvato solo ora che l'UPDATE è andato a
     // buon fine, altrimenti (es. conflitto 23505 su url_path) restava comunque
     // una riga di versione duplicata identica allo stato pre-modifica.
@@ -407,7 +411,7 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
 
 router.post("/admin/pages/:id/publish-toggle", requireAuth, authorize("pages", "update"), async (req, res, next) => {
   try {
-    const existing = (await query("SELECT site_id, url_path, published FROM pages WHERE id = $1", [req.params.id])).rows[0];
+    const existing = (await query("SELECT site_id, url_path, published, post_type FROM pages WHERE id = $1", [req.params.id])).rows[0];
     if (!existing) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
     if (req.user.role !== "superadmin" && existing.site_id !== req.user.site_id) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
@@ -421,6 +425,7 @@ router.post("/admin/pages/:id/publish-toggle", requireAuth, authorize("pages", "
       "UPDATE pages SET published = $1, updated_at = NOW() WHERE id = $2",
       [newPublished, req.params.id]
     );
+    if (existing.post_type === 'article') await syncBlogListingPages(existing.site_id).catch(() => {});
     res.redirect(`/admin/pages?site_id=${existing.site_id}`);
     if (newPublished) {
       exportPublishedPages({ siteId: existing.site_id }).catch(() => {});
@@ -566,13 +571,14 @@ router.post("/admin/pages/:id/extract-assets", requireAuth, authorize("pages", "
 
 router.post("/admin/pages/:id/delete", requireAuth, resolveSite, authorize("pages", "delete"), async (req, res, next) => {
   try {
-    const page = (await query("SELECT site_id, url_path, title FROM pages WHERE id = $1", [req.params.id])).rows[0];
+    const page = (await query("SELECT site_id, url_path, title, post_type FROM pages WHERE id = $1", [req.params.id])).rows[0];
     if (!page) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
     // IDOR guard: utenti non-superadmin possono cancellare SOLO pagine del proprio sito
     if (req.user.role !== "superadmin" && page.site_id !== req.user.site_id) {
       return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     }
     await query("DELETE FROM pages WHERE id = $1", [req.params.id]);
+    if (page.post_type === 'article') await syncBlogListingPages(page.site_id).catch(() => {});
     await auditLog({
       userId: req.user.sub, siteId: page.site_id,
       entityType: "page", entityId: parseInt(req.params.id, 10), action: "delete",
@@ -638,11 +644,13 @@ router.post("/admin/pages/:id/versions/:versionId/restore", requireAuth, resolve
        post_type = v.post_type, category_id = v.category_id, excerpt = v.excerpt,
        featured_image = v.featured_image, published_at = v.published_at, updated_at = NOW()
        FROM page_versions v WHERE pages.id = $1 AND v.id = $2`,
-      [req.params.id, req.params.versionId, safeVersionUrl]
-    );
+       [req.params.id, req.params.versionId, safeVersionUrl]
+     );
 
-    res.redirect(`/admin/pages/${req.params.id}/edit`);
-    exportPublishedPages({ siteId: page.site_id }).catch(() => {});
+     await syncBlogListingPages(page.site_id).catch(() => {});
+
+     res.redirect(`/admin/pages/${req.params.id}/edit`);
+     exportPublishedPages({ siteId: page.site_id }).catch(() => {});
   } catch (err) { next(err); }
 });
 

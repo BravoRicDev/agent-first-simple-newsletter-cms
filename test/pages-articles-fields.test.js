@@ -113,6 +113,54 @@ describe("Campi articolo editor pagine", () => {
     assert.equal(new Date(page.published_at).toISOString(), exact);
   });
 
+  test("creazione articolo sincronizza la pagina listing gestita", async () => {
+    const listingSite = await createTestSite("Blog Listing Create Site");
+    const listingCategory = (await query(
+      "INSERT INTO categories (site_id, name, slug) VALUES ($1, $2, $3) RETURNING id",
+      [listingSite.id, "Blog News", `blog-news-${listingSite.id}`]
+    )).rows[0];
+    const listingUser = await createTestUser(listingSite.id, "admin");
+    const listingTokenVersion = (await query("SELECT token_version FROM users WHERE id = $1", [listingUser.id])).rows[0].token_version;
+    const listingToken = jwt.sign({ sub: listingUser.id, email: listingUser.email, name: "Test User", role: listingUser.role, site_id: listingUser.site_id, token_version: listingTokenVersion }, config.jwtSecret, { expiresIn: "1h", algorithm: "HS256" });
+    const response = await fetch(`${baseUrl}/admin/pages`, {
+      method: "POST", redirect: "manual",
+      headers: { cookie: `token=${listingToken}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ url_path: "/blog-create-article", title: "Listing test article", post_type: "article", category_id: String(listingCategory.id), published: "true" }),
+    });
+    assert.equal(response.status, 302);
+    const listing = (await query(
+      "SELECT id FROM pages WHERE site_id = $1 AND managed_by = 'blog_index'",
+      [listingSite.id]
+    )).rows[0];
+    assert.ok(listing, "la creazione dell'articolo deve creare la pagina /blog gestita");
+    pageIds.push(listing.id);
+    pageIds.push((await query("SELECT id FROM pages WHERE site_id = $1 AND url_path = $2", [listingSite.id, "/blog-create-article"])).rows[0].id);
+  });
+
+  test("cancellare l'unico articolo rimuove la pagina listing gestita", async () => {
+    const listingSite = await createTestSite("Blog Listing Delete Site");
+    const listingCategory = (await query(
+      "INSERT INTO categories (site_id, name, slug) VALUES ($1, $2, $3) RETURNING id",
+      [listingSite.id, "Blog Delete", `blog-delete-${listingSite.id}`]
+    )).rows[0];
+    const listingUser = await createTestUser(listingSite.id, "admin");
+    const listingTokenVersion = (await query("SELECT token_version FROM users WHERE id = $1", [listingUser.id])).rows[0].token_version;
+    const listingToken = jwt.sign({ sub: listingUser.id, email: listingUser.email, name: "Test User", role: listingUser.role, site_id: listingUser.site_id, token_version: listingTokenVersion }, config.jwtSecret, { expiresIn: "1h", algorithm: "HS256" });
+    const createResponse = await fetch(`${baseUrl}/admin/pages`, {
+      method: "POST", redirect: "manual",
+      headers: { cookie: `token=${listingToken}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ url_path: "/blog-delete-article", title: "Article to delete", post_type: "article", category_id: String(listingCategory.id), published: "true" }),
+    });
+    assert.equal(createResponse.status, 302);
+    const article = (await query("SELECT id FROM pages WHERE site_id = $1 AND url_path = $2", [listingSite.id, "/blog-delete-article"])).rows[0];
+    const deleteResponse = await fetch(`${baseUrl}/admin/pages/${article.id}/delete`, {
+      method: "POST", redirect: "manual", headers: { cookie: `token=${listingToken}` },
+    });
+    assert.equal(deleteResponse.status, 302);
+    const listing = await query("SELECT id FROM pages WHERE site_id = $1 AND managed_by = 'blog_index'", [listingSite.id]);
+    assert.equal(listing.rows.length, 0);
+  });
+
   test("IDOR: rifiuta category_id appartenente a un altro sito", async () => {
     const response = await post("/admin/pages", {
       site_id: String(siteA.id), url_path: "/article-foreign-category", title: "IDOR", post_type: "article", category_id: String(categoryB.id),
