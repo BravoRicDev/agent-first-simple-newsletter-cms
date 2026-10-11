@@ -30,6 +30,8 @@ const categorySchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100).refine(validateSlug, "Slug non valido: solo lettere minuscole, numeri e trattini tra alfanumerici (es. mia-categoria)"),
   description: z.string().optional().default(""),
+  color: z.union([z.string().regex(/^#[0-9a-fA-F]{3,8}$/), z.literal("")]).optional().default(""),
+  icon: z.string().max(10).optional().default(""),
 });
 
 // GET /admin/blog-settings - configurazione blog per-sito
@@ -79,7 +81,7 @@ router.get("/admin/categories", requireAuth, resolveSite, authorize("pages", "re
     if (!siteId) return res.status(400).render("error", { message: res.locals.t("api.common.siteNotSpecified") });
 
     const categories = (await query(
-      "SELECT id, name, slug, description, created_at, updated_at FROM categories WHERE site_id = $1 ORDER BY name",
+      "SELECT id, name, slug, description, color, icon, created_at, updated_at FROM categories WHERE site_id = $1 ORDER BY name",
       [siteId]
     )).rows;
     const site = (await query("SELECT id, name, domain FROM sites WHERE id = $1", [siteId])).rows[0];
@@ -106,9 +108,9 @@ router.post("/admin/categories", requireAuth, resolveSite, authorize("pages", "c
     const siteId = req.user.role === "superadmin" ? (parseInt(req.body.site_id, 10) || req.user.site_id) : req.user.site_id;
     if (!siteId) return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     await query(
-      `INSERT INTO categories (site_id, name, slug, description)
-       VALUES ($1, $2, $3, $4)`,
-      [siteId, data.name, data.slug, data.description]
+      `INSERT INTO categories (site_id, name, slug, description, color, icon)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [siteId, data.name, data.slug, data.description, data.color || null, data.icon || null]
     );
     res.redirect(`/admin/categories?site_id=${siteId}&saved=1`);
   } catch (err) {
@@ -151,8 +153,8 @@ router.post("/admin/categories/:id/update", requireAuth, resolveSite, authorize(
     const siteId = category.site_id;
 
     await query(
-      `UPDATE categories SET name = $1, slug = $2, description = $3, updated_at = NOW() WHERE id = $4 AND site_id = $5`,
-      [data.name, data.slug, data.description, req.params.id, siteId]
+      `UPDATE categories SET name = $1, slug = $2, description = $3, color = $4, icon = $5, updated_at = NOW() WHERE id = $6 AND site_id = $7`,
+      [data.name, data.slug, data.description, data.color || null, data.icon || null, req.params.id, siteId]
     );
 
     res.redirect(`/admin/categories?site_id=${siteId}&saved=1`);

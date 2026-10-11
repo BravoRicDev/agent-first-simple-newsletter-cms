@@ -14,6 +14,16 @@
     <label>Descrizione</label>
     <textarea name="description" style="min-height:100px;"></textarea>
   </div>
+  <div class="form-group">
+    <label>Colore (opzionale)</label>
+    <input type="color" id="categoryColor" name="color" value="#000000">
+    <label style="display:block;font-size:12px;margin-top:4px;"><input type="checkbox" id="noCategoryColor"> Nessun colore</label>
+    <script>document.getElementById('noCategoryColor').addEventListener('change', function () { document.getElementById('categoryColor').disabled = this.checked; });</script>
+  </div>
+  <div class="form-group">
+    <label>Icona (opzionale)</label>
+    <input type="text" name="icon" maxlength="10" value="" placeholder="es. 🌟">
+  </div>
   <button type="submit" class="btn">Crea categoria</button>
   <a href="/admin/categories?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#6b7280;">Annulla</a>
 </form>

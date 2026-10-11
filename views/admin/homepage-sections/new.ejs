@@ -1,0 +1,8 @@
+<h1><%= t('homepageSections.new') %> — <%= site ? site.name : '' %></h1>
+
+<form method="POST" action="/admin/homepage-sections">
+  <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+  <%- include('_fields', { section: {}, categories, site }) %>
+  <button type="submit" class="btn"><%= t('homepageSections.create') %></button>
+  <a href="/admin/homepage-sections?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#6b7280;"><%= t('homepageSections.cancel') %></a>
+</form>

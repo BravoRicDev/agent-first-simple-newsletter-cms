@@ -1,0 +1,72 @@
+<div class="form-group">
+  <label><%= t('homepageSections.position') %></label>
+  <input type="number" name="position" min="0" max="9999" value="<%= section.position ?? 0 %>" required>
+</div>
+<div class="form-group">
+  <label><%= t('homepageSections.type') %></label>
+  <select name="section_type" id="sectionType" required>
+    <% ['custom_html', 'category_band', 'category_feed', 'all_feed'].forEach(type => { %>
+      <option value="<%= type %>" <%= section.section_type === type ? 'selected' : '' %>><%= t('homepageSections.' + type) %></option>
+    <% }) %>
+  </select>
+</div>
+<div class="form-group">
+  <label><%= t('homepageSections.titleField') %></label>
+  <input type="text" name="title" maxlength="255" value="<%= section.title || '' %>">
+</div>
+<div class="form-group" id="categoryField" style="display:none;">
+  <label><%= t('homepageSections.category') %></label>
+  <select name="category_id">
+    <option value="">— Nessuna —</option>
+    <% categories.forEach(c => { %>
+      <option value="<%= c.id %>" <%= String(section.category_id || '') === String(c.id) ? 'selected' : '' %>><%= c.name %></option>
+    <% }) %>
+  </select>
+</div>
+<div class="form-group" id="limitField" style="display:none;">
+  <label><%= t('homepageSections.limit') %></label>
+  <input type="number" name="articles_limit" min="1" max="1000" value="<%= section.articles_limit || 6 %>">
+</div>
+<div class="form-group" id="htmlField" style="display:none;">
+  <label><%= t('homepageSections.html') %></label>
+  <textarea name="custom_html" style="min-height:180px;font-family:monospace;"><%= section.custom_html || '' %></textarea>
+</div>
+<div class="form-group" id="templateField" style="display:none;">
+  <label><%= t('homepageSections.template') %></label>
+  <textarea name="card_template_override" style="min-height:150px;font-family:monospace;"><%= section.card_template_override || '' %></textarea>
+</div>
+<div class="form-group" id="clientFilterField" style="display:none;">
+  <label>
+    <input type="checkbox" name="enable_client_filter" value="on" <%= section.enable_client_filter ? 'checked' : '' %>>
+    <%= t('homepageSections.clientFilter') %>
+  </label>
+</div>
+<div class="form-group">
+  <label>
+    <input type="checkbox" name="enabled" value="on" <%= section.enabled !== false ? 'checked' : '' %>>
+    <%= t('homepageSections.enabled') %>
+  </label>
+</div>
+<script>
+(function () {
+  const typeSelect = document.getElementById('sectionType');
+  const category = document.getElementById('categoryField');
+  const limit = document.getElementById('limitField');
+  const html = document.getElementById('htmlField');
+  const template = document.getElementById('templateField');
+  const clientFilter = document.getElementById('clientFilterField');
+
+  function updateFields() {
+    const type = typeSelect.value;
+    category.style.display = type === 'category_feed' ? 'block' : 'none';
+    html.style.display = type === 'custom_html' ? 'block' : 'none';
+    const isFeed = type === 'category_feed' || type === 'all_feed';
+    limit.style.display = isFeed ? 'block' : 'none';
+    template.style.display = isFeed ? 'block' : 'none';
+    clientFilter.style.display = type === 'all_feed' ? 'block' : 'none';
+  }
+
+  typeSelect.addEventListener('change', updateFields);
+  updateFields();
+})();
+</script>

@@ -52,7 +52,8 @@
 </form>
 
 <div class="actions">
-  <a href="/admin/pages/new?site_id=<%= site ? site.id : '' %>" class="btn">Nuova pagina</a>
+  <a href="/admin/pages/new?site_id=<%= site ? site.id : '' %>" class="btn"><%= t('pages.newPage') %></a>
+  <a href="/admin/pages/new-article?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#059669;"><%= t('pages.newArticle') %></a>
   <a href="/admin/sites" class="btn" style="background:#6b7280;">Torna ai siti</a>
   <button class="btn" style="background:#6b7280;" onclick="document.getElementById('import-panel').style.display=document.getElementById('import-panel').style.display==='none'?'block':'none'">
     📥 Importa da URL

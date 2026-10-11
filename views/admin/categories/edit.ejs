@@ -13,6 +13,14 @@
     <label>Descrizione</label>
     <textarea name="description" style="min-height:100px;"><%= category.description || '' %></textarea>
   </div>
+  <div class="form-group">
+    <label>Colore (opzionale)</label>
+    <input type="color" name="color" value="<%= category.color || '#000000' %>">
+  </div>
+  <div class="form-group">
+    <label>Icona (opzionale)</label>
+    <input type="text" name="icon" maxlength="10" value="<%= category.icon || '' %>">
+  </div>
   <button type="submit" class="btn">Salva</button>
   <a href="/admin/categories?site_id=<%= category.site_id %>" class="btn" style="background:#6b7280;">Annulla</a>
 </form>

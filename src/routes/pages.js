@@ -16,6 +16,7 @@ import { normalizeUrlPath } from "../services/urls.js";
 import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js";
 import { getPageTrackingOverride, setPageTrackingOverride } from "../services/tracking.js";
 import { syncBlogListingPages } from "../services/blog-index.js";
+import { syncHomepageSections } from "../services/homepage-sections.js";
 // Niente tracking (GA4/Pixel/consenso) nelle route di preview qui sotto:
 // sono anteprime interne nell'iframe dell'admin, non traffico pubblico —
 // iniettarlo inquinerebbe le statistiche con le visualizzazioni dell'admin
@@ -144,6 +145,17 @@ router.get("/admin/pages/new", requireAuth, resolveSite, authorize("pages", "cre
   } catch (err) { next(err); }
 });
 
+router.get("/admin/pages/new-article", requireAuth, resolveSite, authorize("pages", "create"), async (req, res, next) => {
+  try {
+    const siteId = req.user.role === "superadmin" && req.query.site_id
+      ? parseInt(req.query.site_id, 10)
+      : req.user.site_id;
+    const site = siteId ? (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0] : null;
+    const categories = siteId ? (await query("SELECT id, name FROM categories WHERE site_id = $1 ORDER BY name", [siteId])).rows : [];
+    res.render("admin/pages/new-article", { site, categories });
+  } catch (err) { next(err); }
+});
+
 router.post("/admin/pages", requireAuth, resolveSite, authorize("pages", "create"), async (req, res, next) => {
   try {
     const data = pageSchema.parse(req.body);
@@ -167,6 +179,7 @@ await query(
        data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId]
     );
     if (data.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
+    await syncHomepageSections(siteId).catch(() => {});
     res.redirect(`/admin/pages?site_id=${siteId}&saved=1`);
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
@@ -324,6 +337,7 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     );
 
     if (data.post_type === 'article' || page.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
+    await syncHomepageSections(siteId).catch(() => {});
 
     // Snapshot dello stato precedente: salvato solo ora che l'UPDATE è andato a
     // buon fine, altrimenti (es. conflitto 23505 su url_path) restava comunque
@@ -426,6 +440,7 @@ router.post("/admin/pages/:id/publish-toggle", requireAuth, authorize("pages", "
       [newPublished, req.params.id]
     );
     if (existing.post_type === 'article') await syncBlogListingPages(existing.site_id).catch(() => {});
+    await syncHomepageSections(existing.site_id).catch(() => {});
     res.redirect(`/admin/pages?site_id=${existing.site_id}`);
     if (newPublished) {
       exportPublishedPages({ siteId: existing.site_id }).catch(() => {});
@@ -579,6 +594,7 @@ router.post("/admin/pages/:id/delete", requireAuth, resolveSite, authorize("page
     }
     await query("DELETE FROM pages WHERE id = $1", [req.params.id]);
     if (page.post_type === 'article') await syncBlogListingPages(page.site_id).catch(() => {});
+    await syncHomepageSections(page.site_id).catch(() => {});
     await auditLog({
       userId: req.user.sub, siteId: page.site_id,
       entityType: "page", entityId: parseInt(req.params.id, 10), action: "delete",
@@ -648,6 +664,7 @@ router.post("/admin/pages/:id/versions/:versionId/restore", requireAuth, resolve
      );
 
      await syncBlogListingPages(page.site_id).catch(() => {});
+     await syncHomepageSections(page.site_id).catch(() => {});
 
      res.redirect(`/admin/pages/${req.params.id}/edit`);
      exportPublishedPages({ siteId: page.site_id }).catch(() => {});

@@ -1,0 +1,119 @@
+<h1><%= t('homepageSections.title') %> — <%= site ? site.name : '' %></h1>
+
+<% if (query && query.saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">
+  ✅ <%= t('homepageSections.save') %> — OK
+</div>
+<% } %>
+
+<% if (query && query.activated) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">
+  ✅ <%= t('homepageSections.active') %>
+</div>
+<% } %>
+
+<% if (query && query.deactivated) { %>
+<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#92400e;font-size:14px;">
+  ⏸ <%= t('homepageSections.inactive') %>
+</div>
+<% } %>
+
+<% if (sites && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:15px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label><%= t('blogSettings.site') %></label>
+    <select name="site_id">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;"><%= t('blogSettings.changeSite') %></button>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/homepage-sections/new?site_id=<%= site ? site.id : '' %>" class="btn"><%= t('homepageSections.new') %></a>
+  <a href="/admin/sites" class="btn" style="background:#6b7280;">Torna ai siti</a>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;">
+    <div>
+      <strong style="font-size:14px;">
+        <%= dynamicEnabled ? '🟢 ' + t('homepageSections.active') : '⚪ ' + t('homepageSections.inactive') %>
+      </strong>
+      <div style="font-size:13px;color:#6b7280;margin-top:6px;max-width:760px;">
+        <strong><%= t('homepageSections.activate') %>:</strong> <%= t('homepageSections.activateWarning') %><br>
+        <strong><%= t('homepageSections.deactivate') %>:</strong> <%= t('homepageSections.deactivateWarning') %>
+      </div>
+    </div>
+    <% if (!dynamicEnabled) { %>
+      <form method="POST" action="/admin/homepage-sections/activate" style="display:inline;">
+        <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+        <button type="submit" class="btn" style="background:#059669;"
+          onclick="return confirm(<%= JSON.stringify(t('homepageSections.activateWarning')) %>)">
+          <%= t('homepageSections.activate') %>
+        </button>
+      </form>
+    <% } else { %>
+      <form method="POST" action="/admin/homepage-sections/deactivate" style="display:inline;">
+        <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+        <button type="submit" class="btn" style="background:#d97706;"
+          onclick="return confirm(<%= JSON.stringify(t('homepageSections.deactivateWarning')) %>)">
+          <%= t('homepageSections.deactivate') %>
+        </button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th><%= t('homepageSections.position') %></th>
+      <th><%= t('homepageSections.type') %></th>
+      <th><%= t('homepageSections.category') %></th>
+      <th><%= t('homepageSections.titleField') %></th>
+      <th><%= t('homepageSections.limit') %></th>
+      <th><%= t('homepageSections.enabled') %></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (sections.length === 0) { %>
+      <tr><td colspan="7" style="text-align:center;color:#999;">Nessuna sezione trovata</td></tr>
+    <% } %>
+    <% sections.forEach(s => { %>
+      <tr>
+        <td>
+          <form method="POST" action="/admin/homepage-sections/<%= s.id %>" style="display:flex;gap:5px;align-items:center;">
+            <input type="hidden" name="section_type" value="<%= s.section_type %>">
+            <input type="hidden" name="category_id" value="<%= s.category_id || '' %>">
+            <input type="hidden" name="title" value="<%= s.title %>">
+            <input type="hidden" name="articles_limit" value="<%= s.articles_limit %>">
+            <input type="hidden" name="custom_html" value="<%= s.custom_html %>">
+            <input type="hidden" name="card_template_override" value="<%= s.card_template_override || '' %>">
+            <input type="hidden" name="enable_client_filter" value="<%= s.enable_client_filter ? 'true' : '' %>">
+            <input type="hidden" name="enabled" value="<%= s.enabled ? 'true' : '' %>">
+            <input type="number" name="position" value="<%= s.position %>" min="0" max="9999"
+              style="width:70px;padding:4px 6px;border:1px solid #d1d5db;border-radius:5px;">
+            <button type="submit" class="btn btn-sm" style="background:#6b7280;">💾</button>
+          </form>
+        </td>
+        <td><span class="badge badge-wrapped"><%= t('homepageSections.' + s.section_type) %></span></td>
+        <td><%= s.category_name || '—' %></td>
+        <td><%= s.title || '—' %></td>
+        <td><%= (s.section_type === 'category_feed' || s.section_type === 'all_feed') ? s.articles_limit : '—' %></td>
+        <td><%= s.enabled ? '🟢' : '⚪' %></td>
+        <td style="white-space:nowrap;">
+          <a href="/admin/homepage-sections/<%= s.id %>/edit" class="btn btn-sm">Modifica</a>
+          <form method="POST" action="/admin/homepage-sections/<%= s.id %>/delete" style="display:inline;"
+            onsubmit="return confirm('Eliminare questa sezione?')">
+            <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+          </form>
+        </td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>

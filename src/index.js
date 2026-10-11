@@ -22,6 +22,7 @@ import sitesRoutes from "./routes/sites.js";
 import usersRoutes from "./routes/users.js";
 import pagesRoutes from "./routes/pages.js";
 import categoriesRoutes from "./routes/categories.js";
+import homepageSectionsRoutes from "./routes/homepage-sections.js";
 import snippetsRoutes from "./routes/snippets.js";
 import serveRoutes, { publicCatchAllRouter } from "./routes/serve.js";
 import settingsRoutes from "./routes/settings.js";
@@ -312,6 +313,7 @@ async function start() {
   app.use(usersRoutes);
   app.use(pagesRoutes);
   app.use(categoriesRoutes);
+  app.use(homepageSectionsRoutes);
   app.use(snippetsRoutes);
   app.use(settingsRoutes);
   app.use(mediaRoutes);
