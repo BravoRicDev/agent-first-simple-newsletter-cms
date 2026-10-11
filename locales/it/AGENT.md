@@ -221,6 +221,18 @@ MAI:       Depubblicare una pagina mentre ci lavori
            Lascia published=true. Usa find-replace per modifiche parziali.
            L'utente preferisce errore piccolo a pagina offline.
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILTRARE PAGINE PER TIPO/CATEGORIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1° scelta: GET /sites/:id/pages?post_type=article&category_id=X  ← 1 chiamata, filtro lato server
+MAI:       GET /pages (tutte) e filtrare lato client scorrendo l'array
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ASSEGNARE UNA CATEGORIA A PIÙ ARTICOLI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1° scelta: POST /sites/:id/pages/bulk-categorize  ← 1 chiamata, N pagine
+MAI:       PUT /pages/:pid × N
+
 ## TABELLA COSTI — quanto risparmi usando l'endpoint giusto
 
 | Operazione | Metodo VECCHIO | Chiamate | Metodo NUOVO | Chiamate | Risparmio |
@@ -235,6 +247,7 @@ MAI:       Depubblicare una pagina mentre ci lavori
 | Aggiornare 5 variabili | PUT × 5 | 5 | PUT /variables/bulk | 1 | -80% |
 | Caricare immagine + pagina | base64 in JSON (500KB) | 1 | /media/upload + URL (1KB) | 1 | -99.8% JSON |
 | Cercare su TUTTI i siti | /sites × N + search × N | N+1 | POST /api/agent/pages/search | 1 | -90%+ |
+| Categorizzare 10 articoli | PUT × 10 | 10 | bulk-categorize | 1 | -90% |
 | **Leggibilità dimensioni** | raw bytes (es. 1048576) | — | `size_formatted` (es. "1.0 MB") | — | **Leggibile** |
 
 ## RICETTE — sequenze esatte per ogni task
@@ -439,6 +452,37 @@ La compressione sostituisce il file in background. Non blocca la risposta.
 ### Ricetta AD: disattivare la homepage dinamica
 POST /api/agent/sites/{siteId}/homepage-sections/deactivate
 → il contenuto generato fino a quel momento RESTA: non viene cancellato e non torna al contenuto originale pre-attivazione.
+
+### Ricetta AE: filtrare e assegnare categorie in blocco
+1. GET /api/agent/sites/{siteId}/pages?post_type=article
+   → elenca gli articoli (senza filtro categoria): prendi gli id da categorizzare.
+   Puoi anche aggiungere `?category_id=` per filtrare lato server gli articoli
+   già in una categoria (es. quelli senza categoria non tornano con un id valido).
+2. POST /api/agent/sites/{siteId}/pages/bulk-categorize
+   body: { "page_ids": [1, 2, 3], "category_id": 5 }
+   → assegna la categoria a TUTTI gli id in 1 chiamata.
+   Usa `category_id: null` per RIMUOVERE la categoria dagli articoli indicati.
+   [Risparmio: 1 chiamata invece di N. -90% token.]
+
+### Ricetta AF: riordinare le sezioni della homepage
+1. GET /api/agent/sites/{siteId}/homepage-sections → leggi id e posizioni attuali.
+2. POST /api/agent/sites/{siteId}/homepage-sections/reorder
+   body: { "positions": [ { "id": 1, "position": 10 }, { "id": 2, "position": 20 } ] }
+   → passa l'elenco COMPLETO delle sezioni con la posizione desiderata.
+   ATTENZIONE: se un id appartiene a un ALTRO sito, TUTTA la richiesta fallisce
+   con 400 e NESSUNA sezione viene toccata — non esiste un aggiornamento parziale.
+   [Risparmio: 1 chiamata invece di N. Richiede scope write.]
+
+### Ricetta AG: leggere e aggiornare il template delle card
+1. GET /api/agent/sites/{siteId}/blog-settings
+   → legge blog_card_template / blog_article_embed_template correnti
+     (oltre a blog_articles_per_page, blog_index_title, blog_index_intro_html,
+     homepage_custom_css, homepage_custom_js).
+2. PUT /api/agent/sites/{siteId}/blog-settings
+   body: SOLO i campi che vuoi cambiare (es. { "blog_card_template": "..." })
+   → le altre chiavi restano quelle attuali: non serve rimandarle tutte.
+   Le chiavi non riconosciute nel body vengono ignorate senza errore.
+   [Richiede scope write.]
 
 ## COMPRESSIONE VIDEO
 
@@ -674,15 +718,21 @@ PUT    /api/agent/sites/:id/homepage-sections/:sectionId ← richiede scope writ
 DELETE /api/agent/sites/:id/homepage-sections/:sectionId ← richiede scope write
 POST   /api/agent/sites/:id/homepage-sections/activate   ← richiede scope write
 POST   /api/agent/sites/:id/homepage-sections/deactivate ← richiede scope write
+POST   /api/agent/sites/:id/homepage-sections/reorder    ← riordina sezioni (positions[]), richiede scope write
+
+── BLOG SETTINGS ──
+GET    /api/agent/sites/:id/blog-settings              ← template card, articoli/pagina, css/js custom
+PUT    /api/agent/sites/:id/blog-settings              ← scrittura parziale, richiede scope write
 
 GET    /api/agent/me
 GET    /api/agent/sites
-GET    /api/agent/sites/:id/pages
+GET    /api/agent/sites/:id/pages                      ← ?post_type=&category_id=&published=
 GET    /api/agent/sites/:id/pages/:pid
 POST   /api/agent/sites/:id/pages
 PUT    /api/agent/sites/:id/pages/:pid                    ← solo se devi riscrivere tutto
 GET    /api/agent/sites/:id/pages/search?q=...
 POST   /api/agent/sites/:id/pages/bulk-publish
+POST   /api/agent/sites/:id/pages/bulk-categorize           ← assegna/rimuove categoria su più pagine
 POST   /api/agent/sites/:id/pages/bulk-find-replace         ← cerca/sostituisci su TUTTE le pagine
 POST   /api/agent/sites/:id/pages/:pid/publish-toggle
 POST   /api/agent/sites/:id/pages/:pid/duplicate
