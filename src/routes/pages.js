@@ -28,7 +28,66 @@ const pageSchema = z.object({
   content: z.string().optional().default(""),
   layout_mode: z.enum(["standalone", "wrapped"]).optional().default("wrapped"),
   published: z.string().optional().default("false"),
+  post_type: z.enum(["page", "article"]).optional().default("page"),
+  category_id: z.union([z.coerce.number().int().nonnegative(), z.literal("")]).optional(),
+  excerpt: z.string().optional().default(""),
+  featured_image: z.string().optional().default(""),
+  published_at: z.string().optional(),
+  author_id: z.union([z.coerce.number().int().nonnegative(), z.literal("")]).optional(),
 });
+
+// Normalizza un id opzionale arrivato dal form: vuoto, "0" o assente → null
+// (niente category_id=0 nel DB: 0 non è una riga esistente di categories e
+// risulterebbe comunque un riferimento invalido).
+function optionalId(value) {
+  if (value === undefined || value === null) return null;
+  const str = String(value).trim();
+  if (str === "" || str === "0") return null;
+  const num = Number(str);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+// IDOR categorie: una categoria assegnata a una pagina DEVE appartenere allo
+// stesso site_id della pagina (stessa site_id del form), mai a un altro sito.
+async function assertCategoryBelongsToSite(categoryId, siteId) {
+  if (categoryId === null) return;
+  const row = (await query("SELECT id FROM categories WHERE id = $1 AND site_id = $2", [categoryId, siteId])).rows[0];
+  if (!row) {
+    const err = new Error("Category site mismatch");
+    err.status = 400;
+    err.code = "CATEGORY_SITE_MISMATCH";
+    throw err;
+  }
+}
+
+async function assertAuthorBelongsToSite(authorId, siteId) {
+  if (authorId === null) return;
+  const row = (await query("SELECT id FROM users WHERE id = $1 AND (site_id = $2 OR role = 'superadmin')", [authorId, siteId])).rows[0];
+  if (!row) {
+    const err = new Error("Author site mismatch");
+    err.status = 400;
+    err.code = "AUTHOR_SITE_MISMATCH";
+    throw err;
+  }
+}
+
+// published_at: un valore esplicito nel body vince sempre; altrimenti, solo
+// per un articolo appena pubblicato, il server imposta NOW().
+function resolvePublishedAt(body, postType, published) {
+  const raw = body.published_at;
+  const provided = raw !== undefined && raw !== null && String(raw).trim() !== "";
+  if (provided) {
+    const date = new Date(String(raw).trim());
+    if (Number.isNaN(date.getTime())) {
+      const err = new Error("Invalid published_at");
+      err.status = 400;
+      throw err;
+    }
+    return date;
+  }
+  if (postType === "article" && published) return new Date();
+  return null;
+}
 
 router.get("/admin/pages", requireAuth, resolveSite, authorize("pages", "read"), async (req, res, next) => {
   try {
@@ -51,12 +110,26 @@ router.get("/admin/pages", requireAuth, resolveSite, authorize("pages", "read"),
 
     if (!siteId) return res.status(400).render("error", { message: res.locals.t("api.common.siteNotSpecified") });
 
+    const filters = [siteId];
+    let where = "p.site_id = $1";
+    if (req.query.post_type === "page" || req.query.post_type === "article") {
+      filters.push(req.query.post_type);
+      where += ` AND p.post_type = $${filters.length}`;
+    }
+    if (req.query.category_id && /^\d+$/.test(String(req.query.category_id))) {
+      filters.push(Number(req.query.category_id));
+      where += ` AND p.category_id = $${filters.length}`;
+    }
     const pages = (await query(
-      "SELECT id, url_path, title, layout_mode, published, publish_at, created_at, updated_at FROM pages WHERE site_id = $1 ORDER BY url_path",
-      [siteId]
+      `SELECT p.id, p.url_path, p.title, p.layout_mode, p.published, p.publish_at, p.created_at, p.updated_at,
+              p.post_type, p.category_id, c.name AS category_name
+       FROM pages p LEFT JOIN categories c ON c.id = p.category_id
+       WHERE ${where} ORDER BY p.url_path`,
+      filters
     )).rows;
+    const categories = (await query("SELECT id, name FROM categories WHERE site_id = $1 ORDER BY name", [siteId])).rows;
     const site = (await query("SELECT id, name, domain FROM sites WHERE id = $1", [siteId])).rows[0];
-    res.render("admin/pages/index", { pages, site, sites, selectedSiteId: siteId, query: req.query });
+    res.render("admin/pages/index", { pages, site, sites, selectedSiteId: siteId, categories, query: req.query });
   } catch (err) { next(err); }
 });
 
@@ -79,15 +152,26 @@ router.post("/admin/pages", requireAuth, resolveSite, authorize("pages", "create
     if (!siteId) return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     const publish_at = req.body.publish_at ? new Date(req.body.publish_at) : null;
     const review_at = req.body.review_at ? new Date(req.body.review_at) : null;
+    const categoryId = optionalId(data.category_id);
+    await assertCategoryBelongsToSite(categoryId, siteId);
+    const authorId = optionalId(data.author_id);
+    await assertAuthorBelongsToSite(authorId, siteId);
+    const publishedBool = data.published === "true";
+    const publishedAt = resolvePublishedAt(req.body, data.post_type, publishedBool);
     await query(
-      `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at, review_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [siteId, data.url_path, data.title, data.content, data.layout_mode, data.published === "true", publish_at, review_at]
+      `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at, review_at,
+                          post_type, category_id, excerpt, featured_image, published_at, author_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [siteId, data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId]
     );
     res.redirect(`/admin/pages?site_id=${siteId}&saved=1`);
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
+    if (err.code === "CATEGORY_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.categoryInvalid") });
+    if (err.code === "AUTHOR_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.authorInvalid") });
+    if (err.message === "Invalid published_at") return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.message === "URL non valido") return res.status(400).render("error", { message: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(400).render("error", { message: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -190,7 +274,11 @@ router.get("/admin/pages/:id/edit", requireAuth, resolveSite, authorize("pages",
       [page.id]
     )).rows;
 
-    res.render("admin/pages/edit", { page, snippets, site, query: req.query, analytics, top_referrers, social_posts });
+    // Categorie SOLO del sito della pagina: il select "Categoria" dell'editor
+    // non deve mai mostrare (né poter salvare) categorie di altri siti.
+    const categories = (await query("SELECT id, name FROM categories WHERE site_id = $1 ORDER BY name", [page.site_id])).rows;
+
+    res.render("admin/pages/edit", { page, snippets, site, categories, query: req.query, analytics, top_referrers, social_posts });
   } catch (err) { next(err); }
 });
 
@@ -200,7 +288,7 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     data.url_path = normalizeUrlPath(data.url_path);
 
     const page = (await query(
-      "SELECT site_id, url_path, title, content, layout_mode, published FROM pages WHERE id = $1",
+      "SELECT site_id, url_path, title, content, layout_mode, published, post_type, category_id, excerpt, featured_image, published_at, author_id FROM pages WHERE id = $1",
       [req.params.id]
     )).rows[0];
     if (!page) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
@@ -210,6 +298,12 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     }
     const siteId = page.site_id;
     const oldUrlPath = page.url_path;
+    const categoryId = optionalId(data.category_id);
+    await assertCategoryBelongsToSite(categoryId, siteId);
+    const authorId = optionalId(data.author_id);
+    await assertAuthorBelongsToSite(authorId, siteId);
+    const publishedBool = data.published === "true";
+    const publishedAt = resolvePublishedAt(req.body, data.post_type, publishedBool);
 
     // Auto-extract base64 inline (senza soglia, centralizzato)
     const { content: finalContent, converted: b64converted } = extractAndReplaceBase64(siteId, data.content);
@@ -221,17 +315,21 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     const review_at = req.body.review_at ? new Date(req.body.review_at) : null;
     await query(
       `UPDATE pages SET url_path = $1, title = $2, content = $3, layout_mode = $4, published = $5,
-       publish_at = $6, review_at = $7, updated_at = NOW() WHERE id = $8 AND site_id = $9`,
-      [data.url_path, data.title, data.content, data.layout_mode, data.published === "true", publish_at, review_at, req.params.id, siteId]
+       publish_at = $6, review_at = $7, post_type = $8, category_id = $9, excerpt = $10,
+       featured_image = $11, published_at = $12, author_id = $13, updated_at = NOW() WHERE id = $14 AND site_id = $15`,
+      [data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId, req.params.id, siteId]
     );
 
     // Snapshot dello stato precedente: salvato solo ora che l'UPDATE è andato a
     // buon fine, altrimenti (es. conflitto 23505 su url_path) restava comunque
     // una riga di versione duplicata identica allo stato pre-modifica.
     await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [req.params.id, req.user.sub, page.url_path, page.title, page.content, page.layout_mode, page.published]
+      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published,
+                                  post_type, category_id, excerpt, featured_image, published_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [req.params.id, req.user.sub, page.url_path, page.title, page.content, page.layout_mode, page.published,
+       page.post_type, page.category_id, page.excerpt, page.featured_image, page.published_at]
     );
 
     await query(
@@ -298,6 +396,9 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     exportPublishedPages({ siteId }).catch(() => {});
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
+    if (err.code === "CATEGORY_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.categoryInvalid") });
+    if (err.code === "AUTHOR_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.authorInvalid") });
+    if (err.message === "Invalid published_at") return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.message === "URL non valido") return res.status(400).render("error", { message: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(400).render("error", { message: res.locals.t("api.pages.urlExists") });
     next(err);
@@ -361,8 +462,10 @@ router.post("/admin/pages/:id/inline-to-files", requireAuth, authorize("pages", 
 
     if (count > 0) {
       await query(
-        `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-         SELECT id, $2, url_path, title, content, layout_mode, published FROM pages WHERE id = $1`,
+        `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published,
+                                    post_type, category_id, excerpt, featured_image, published_at)
+         SELECT id, $2, url_path, title, content, layout_mode, published,
+                post_type, category_id, excerpt, featured_image, published_at FROM pages WHERE id = $1`,
         [page.id, req.user.sub]
       );
       await query("UPDATE pages SET content = $1, updated_at = NOW() WHERE id = $2", [html, page.id]);
@@ -400,8 +503,10 @@ router.post("/admin/pages/:id/extract-assets", requireAuth, authorize("pages", "
     if (candidates.length === 0) return res.redirect(`/admin/pages/${req.params.id}/edit`);
 
     await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       SELECT id, $2, url_path, title, content, layout_mode, published FROM pages WHERE id = $1`,
+      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published,
+                                  post_type, category_id, excerpt, featured_image, published_at)
+       SELECT id, $2, url_path, title, content, layout_mode, published,
+              post_type, category_id, excerpt, featured_image, published_at FROM pages WHERE id = $1`,
       [page.id, req.user.sub]
     );
 
@@ -514,8 +619,10 @@ router.post("/admin/pages/:id/versions/:versionId/restore", requireAuth, resolve
     if (!version) return res.status(404).render("error", { message: res.locals.t("api.pages.versionNotFound") });
 
     await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       SELECT id, $2, url_path, title, content, layout_mode, published FROM pages WHERE id = $1`,
+      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published,
+                                  post_type, category_id, excerpt, featured_image, published_at)
+       SELECT id, $2, url_path, title, content, layout_mode, published,
+              post_type, category_id, excerpt, featured_image, published_at FROM pages WHERE id = $1`,
       [req.params.id, req.user.sub]
     );
 
@@ -527,7 +634,9 @@ router.post("/admin/pages/:id/versions/:versionId/restore", requireAuth, resolve
 
     await query(
       `UPDATE pages SET url_path = $3, title = v.title, content = v.content,
-       layout_mode = v.layout_mode, published = v.published, updated_at = NOW()
+       layout_mode = v.layout_mode, published = v.published,
+       post_type = v.post_type, category_id = v.category_id, excerpt = v.excerpt,
+       featured_image = v.featured_image, published_at = v.published_at, updated_at = NOW()
        FROM page_versions v WHERE pages.id = $1 AND v.id = $2`,
       [req.params.id, req.params.versionId, safeVersionUrl]
     );

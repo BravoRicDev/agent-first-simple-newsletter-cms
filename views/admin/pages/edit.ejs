@@ -76,6 +76,35 @@
       </div>
       <div class="form-group">
         <label>
+          <input type="checkbox" id="isArticle" <%= page.post_type === 'article' ? 'checked' : '' %>> Articolo
+        </label>
+      </div>
+      <section id="articleFields" style="display:<%= page.post_type === 'article' ? 'block' : 'none' %>;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:12px 0;">
+        <h3 style="font-size:16px;margin:0 0 12px;">Articolo</h3>
+        <input type="hidden" name="post_type" id="postTypeValue" value="<%= page.post_type === 'article' ? 'article' : 'page' %>">
+        <div class="form-group">
+          <label>Categoria</label>
+          <select name="category_id">
+            <option value="">— Nessuna —</option>
+            <% categories.forEach(c => { %><option value="<%= c.id %>" <%= page.category_id == c.id ? 'selected' : '' %>><%= c.name %></option><% }) %>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Excerpt (breve)</label>
+          <textarea name="excerpt" rows="3" style="width:100%;"><%= page.excerpt || '' %></textarea>
+        </div>
+        <div class="form-group">
+          <label>Immagine in evidenza</label>
+          <input type="text" name="featured_image" value="<%= page.featured_image || '' %>" placeholder="https://... oppure /media/..." style="width:100%;">
+          <div style="font-size:12px;color:#6b7280;margin-top:3px;"><a href="/admin/media?site_id=<%= page.site_id %>" target="_blank" rel="noopener">Apri libreria media</a> per copiare un URL.</div>
+        </div>
+        <div class="form-group">
+          <label>Data di pubblicazione</label>
+          <input type="datetime-local" name="published_at" value="<%= page.published_at ? new Date(page.published_at).toISOString().slice(0,16) : '' %>">
+        </div>
+      </section>
+      <div class="form-group">
+        <label>
           <input type="checkbox" name="published" value="true" <%= page.published ? 'checked' : '' %>> Pubblicata subito
         </label>
       </div>
@@ -374,6 +403,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.snippet-insert').forEach(el =>
     el.addEventListener('click', () => insertSnippet(el.dataset.snippetName))
   );
+  const articleToggle = document.getElementById('isArticle');
+  const articleFields = document.getElementById('articleFields');
+  const postTypeValue = document.getElementById('postTypeValue');
+  articleToggle.addEventListener('change', () => {
+    articleFields.style.display = articleToggle.checked ? 'block' : 'none';
+    postTypeValue.value = articleToggle.checked ? 'article' : 'page';
+  });
 });
 
 function togglePreview() {

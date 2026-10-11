@@ -26,6 +26,31 @@
 </form>
 <% } %>
 
+<form method="GET" style="margin-bottom:15px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+  <% if (site) { %><input type="hidden" name="site_id" value="<%= site.id %>"><% } %>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Tipo</label>
+    <select name="post_type">
+      <option value="">Tutti</option>
+      <option value="page" <%= query && query.post_type === 'page' ? 'selected' : '' %>>Pagina</option>
+      <option value="article" <%= query && query.post_type === 'article' ? 'selected' : '' %>>Articolo</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Categoria</label>
+    <select name="category_id">
+      <option value="">Tutte</option>
+      <% (typeof categories !== 'undefined' ? categories : []).forEach(c => { %>
+        <option value="<%= c.id %>" <%= query && String(query.category_id) === String(c.id) ? 'selected' : '' %>><%= c.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;">Filtra</button>
+  <% if ((query && query.post_type) || (query && query.category_id)) { %>
+    <a href="/admin/pages<%= site ? '?site_id=' + site.id : '' %>" class="btn" style="background:#6b7280;">Azzera filtri</a>
+  <% } %>
+</form>
+
 <div class="actions">
   <a href="/admin/pages/new?site_id=<%= site ? site.id : '' %>" class="btn">Nuova pagina</a>
   <a href="/admin/sites" class="btn" style="background:#6b7280;">Torna ai siti</a>
@@ -52,11 +77,11 @@
 </div>
 <table>
   <thead>
-    <tr><th>Pagina</th><th>Layout</th><th>Stato</th><th>Ultima modifica</th><th></th></tr>
+    <tr><th>Pagina</th><th>Tipo</th><th>Categoria</th><th>Layout</th><th>Stato</th><th>Ultima modifica</th><th></th></tr>
   </thead>
   <tbody>
     <% if (pages.length === 0) { %>
-      <tr><td colspan="5" style="text-align:center;color:#999;">Nessuna pagina trovata</td></tr>
+      <tr><td colspan="7" style="text-align:center;color:#999;">Nessuna pagina trovata</td></tr>
     <% } %>
     <% pages.forEach(p => { %>
       <tr>
@@ -64,6 +89,8 @@
           <strong style="display:block;"><%= p.title || p.url_path %></strong>
           <code style="font-size:11px;color:#999;"><%= p.url_path %></code>
         </td>
+        <td><span class="badge <%= p.post_type === 'article' ? 'badge-wrapped' : 'badge-standalone' %>"><%= p.post_type === 'article' ? 'Articolo' : 'Pagina' %></span></td>
+        <td><%= p.category_name || '—' %></td>
         <td>
           <% if (p.publish_at && !p.published) { %>
             <span class="badge badge-wrapped" title="Pubblicazione pianificata">

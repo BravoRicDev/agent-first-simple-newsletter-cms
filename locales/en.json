@@ -76,6 +76,8 @@
   "api.calls.slotTaken": "This slot is already booked",
   "api.common.siteNotDetermined": "Site not determined",
   "api.pages.notFound": "Page not found",
+  "api.pages.categoryInvalid": "Invalid category for this site",
+  "api.pages.authorInvalid": "Invalid author for this site",
   "api.pages.urlExists": "URL already exists for this site",
   "api.pages.versionNotFound": "Version not found",
   "api.pages.pageIdsRequired": "page_ids[] required",
