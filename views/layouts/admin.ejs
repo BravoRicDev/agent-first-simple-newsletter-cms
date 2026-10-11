@@ -51,6 +51,7 @@
     <% } %>
     <a href="/admin/pages"><%= t('nav.pages') %></a>
     <a href="/admin/categories<%= user && user.site_id ? '?site_id=' + user.site_id : '' %>"><%= t('nav.categories') %></a>
+    <a href="/admin/blog-settings<%= user && user.site_id ? '?site_id=' + user.site_id : '' %>"><%= t('nav.blog_settings') %></a>
     <a href="/admin/snippets"><%= t('nav.snippets') %></a>
     <a href="/admin/templates<%= user && user.site_id ? '?site_id=' + user.site_id : '' %>"><%= t('nav.templates') %></a>
     <a href="/admin/media<%= user && user.site_id ? '?site_id=' + user.site_id : '' %>"><%= t('nav.media') %></a>

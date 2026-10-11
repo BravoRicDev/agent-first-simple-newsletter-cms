@@ -4,8 +4,20 @@ import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { resolveSite } from "../middleware/resolve-site.js";
+import { getBlogConfig, setBlogConfig } from "../services/blog-settings.js";
 
 const router = Router();
+
+// Risolve il site_id per le route blog-settings con lo stesso pattern IDOR
+// delle route categorie: un non-superadmin può operare SOLO sul proprio
+// site_id (mai un site_id arbitrario via query string o Host header).
+function resolveSettingsSiteId(req, res) {
+  const isSuperadmin = req.user.role === "superadmin";
+  const raw = isSuperadmin && (req.query.site_id || req.body.site_id)
+    ? parseInt(req.query.site_id || req.body.site_id, 10)
+    : req.user.site_id;
+  return { isSuperadmin, siteId: Number.isFinite(raw) ? raw : null };
+}
 
 // Slug validation: solo [a-z0-9]+(-[a-z0-9]+)* in minuscolo
 function validateSlug(slug) {
@@ -18,6 +30,30 @@ const categorySchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100).refine(validateSlug, "Slug non valido: solo lettere minuscole, numeri e trattini tra alfanumerici (es. mia-categoria)"),
   description: z.string().optional().default(""),
+});
+
+// GET /admin/blog-settings - configurazione blog per-sito
+router.get("/admin/blog-settings", requireAuth, resolveSite, authorize("pages", "read"), async (req, res, next) => {
+  try {
+    const { isSuperadmin, siteId } = resolveSettingsSiteId(req, res);
+    if (!siteId) return res.status(400).render("error", { message: res.locals.t("api.common.siteNotSpecified") });
+    const sites = isSuperadmin ? (await query("SELECT id, name FROM sites ORDER BY name")).rows : [];
+    const site = (await query("SELECT id, name FROM sites WHERE id = $1", [siteId])).rows[0];
+    const config = await getBlogConfig(siteId);
+    res.render("admin/categories/settings", { config, site, sites, selectedSiteId: siteId, query: req.query });
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/blog-settings", requireAuth, resolveSite, authorize("pages", "update"), async (req, res, next) => {
+  try {
+    const { isSuperadmin, siteId } = resolveSettingsSiteId(req, res);
+    if (!siteId) return res.status(400).render("error", { message: res.locals.t("api.common.siteNotSpecified") });
+    if (!isSuperadmin && req.body.site_id && parseInt(req.body.site_id, 10) !== req.user.site_id) {
+      return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
+    }
+    await setBlogConfig(siteId, req.body);
+    res.redirect(`/admin/blog-settings?site_id=${siteId}&saved=1`);
+  } catch (err) { next(err); }
 });
 
 // GET /admin/categories - list

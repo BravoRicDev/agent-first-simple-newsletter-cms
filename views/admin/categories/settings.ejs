@@ -1,0 +1,40 @@
+<h1><%= t('blogSettings.title') %> — <%= site ? site.name : '' %></h1>
+
+<% if (query && query.saved) { %>
+<div class="alert alert-info"><%= t('blogSettings.saved') %></div>
+<% } %>
+
+<% if (sites && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:15px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label><%= t('blogSettings.site') %></label>
+    <select name="site_id">
+      <% sites.forEach(s => { %><option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option><% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn"><%= t('blogSettings.changeSite') %></button>
+</form>
+<% } %>
+
+<form method="POST" action="/admin/blog-settings">
+  <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+  <div class="form-group">
+    <label for="perPage"><%= t('blogSettings.articlesPerPage') %></label>
+    <input id="perPage" type="number" name="blog_articles_per_page" min="1" value="<%= config.blog_articles_per_page %>" required>
+  </div>
+  <div class="form-group">
+    <label for="cardTemplate"><%= t('blogSettings.cardTemplate') %></label>
+    <p style="font-size:13px;color:#555;margin:5px 0 8px;"><%= t('blogSettings.placeholders') %></p>
+    <textarea id="cardTemplate" name="blog_card_template" style="min-height:260px;" required><%= config.blog_card_template %></textarea>
+  </div>
+  <div class="form-group">
+    <label for="indexTitle"><%= t('blogSettings.indexTitle') %></label>
+    <input id="indexTitle" type="text" name="blog_index_title" value="<%= config.blog_index_title %>" required>
+  </div>
+  <div class="form-group">
+    <label for="indexIntro"><%= t('blogSettings.indexIntro') %></label>
+    <textarea id="indexIntro" name="blog_index_intro_html" style="min-height:160px;"><%= config.blog_index_intro_html %></textarea>
+  </div>
+  <button type="submit" class="btn"><%= t('blogSettings.save') %></button>
+  <a href="/admin/categories<%= site ? '?site_id=' + site.id : '' %>" class="btn" style="background:#6b7280;"><%= t('blogSettings.categories') %></a>
+</form>
