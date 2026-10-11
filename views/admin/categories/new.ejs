@@ -1,0 +1,19 @@
+<h1>Nuova categoria — <%= site ? site.name : '' %></h1>
+<form method="POST" action="/admin/categories">
+  <input type="hidden" name="site_id" value="<%= site ? site.id : '' %>">
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name" required maxlength="100" placeholder="es. Guide pratiche">
+  </div>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" name="slug" required maxlength="100" pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="es. guide-pratiche">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Solo lettere minuscole, numeri e trattini singoli tra caratteri alfanumerici.</div>
+  </div>
+  <div class="form-group">
+    <label>Descrizione</label>
+    <textarea name="description" style="min-height:100px;"></textarea>
+  </div>
+  <button type="submit" class="btn">Crea categoria</button>
+  <a href="/admin/categories?site_id=<%= site ? site.id : '' %>" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

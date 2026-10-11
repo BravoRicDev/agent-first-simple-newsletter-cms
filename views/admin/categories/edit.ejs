@@ -1,0 +1,18 @@
+<h1>Modifica categoria — <code><%= category.slug %></code></h1>
+<form method="POST" action="/admin/categories/<%= category.id %>/update">
+  <div class="form-group">
+    <label>Nome</label>
+    <input type="text" name="name" value="<%= category.name %>" required maxlength="100">
+  </div>
+  <div class="form-group">
+    <label>Slug</label>
+    <input type="text" name="slug" value="<%= category.slug %>" required maxlength="100" pattern="[a-z0-9]+(-[a-z0-9]+)*">
+    <div style="font-size:12px;color:#666;margin-top:3px;">Solo lettere minuscole, numeri e trattini singoli tra caratteri alfanumerici.</div>
+  </div>
+  <div class="form-group">
+    <label>Descrizione</label>
+    <textarea name="description" style="min-height:100px;"><%= category.description || '' %></textarea>
+  </div>
+  <button type="submit" class="btn">Salva</button>
+  <a href="/admin/categories?site_id=<%= category.site_id %>" class="btn" style="background:#6b7280;">Annulla</a>
+</form>

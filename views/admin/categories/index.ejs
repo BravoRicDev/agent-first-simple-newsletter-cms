@@ -1,0 +1,52 @@
+<h1>Categorie — <%= site ? site.name : '' %></h1>
+
+<% if (query && query.saved) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">
+  ✅ Categoria salvata correttamente.
+</div>
+<% } %>
+
+<% if (sites && sites.length > 0) { %>
+<form method="GET" style="margin-bottom:15px;display:flex;gap:10px;align-items:flex-end;">
+  <div class="form-group" style="margin-bottom:0;">
+    <label>Sito</label>
+    <select name="site_id">
+      <% sites.forEach(s => { %>
+        <option value="<%= s.id %>" <%= selectedSiteId == s.id ? 'selected' : '' %>><%= s.name %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;">Cambia</button>
+</form>
+<% } %>
+
+<div class="actions">
+  <a href="/admin/categories/new?site_id=<%= site ? site.id : '' %>" class="btn">Nuova categoria</a>
+  <a href="/admin/sites" class="btn" style="background:#6b7280;">Torna ai siti</a>
+</div>
+
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Slug</th><th>Descrizione</th><th>Creato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% if (categories.length === 0) { %>
+      <tr><td colspan="5" style="text-align:center;color:#999;">Nessuna categoria trovata</td></tr>
+    <% } %>
+    <% categories.forEach(c => { %>
+      <tr>
+        <td><strong><%= c.name %></strong></td>
+        <td><code><%= c.slug %></code></td>
+        <td><% if (c.description) { %><%= c.description %><% } else { %><span style="color:#999;">—</span><% } %></td>
+        <td><%= new Date(c.created_at).toLocaleDateString('it-IT') %></td>
+        <td style="white-space:nowrap;">
+          <a href="/admin/categories/<%= c.id %>/edit" class="btn btn-sm">Modifica</a>
+          <form method="POST" action="/admin/categories/<%= c.id %>/delete" style="display:inline;"
+            onsubmit="return confirm('Eliminare questa categoria?')">
+            <button type="submit" class="btn btn-sm btn-danger">Elimina</button>
+          </form>
+        </td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
