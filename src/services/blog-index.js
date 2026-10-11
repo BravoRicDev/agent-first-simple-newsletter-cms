@@ -82,7 +82,7 @@ export async function syncBlogListingPages(siteId) {
   const parsedPerPage = parseInt(config.blog_articles_per_page, 10);
   const perPage = parsedPerPage || 10;
   const articles = (await query(
-    `SELECT id, title, excerpt, featured_image, published_at, url_path, category_id, content
+    `SELECT id, title, excerpt, featured_image, published_at, url_path, category_id, content, reading_time_minutes
      FROM pages WHERE site_id = $1 AND post_type = 'article' AND published = true
      ORDER BY published_at DESC NULLS LAST, id DESC`,
     [siteId]
@@ -114,7 +114,7 @@ export async function syncBlogListingPages(siteId) {
       category_url: category ? `/blog/categoria/${category.slug}` : "",
       category_slug: category ? category.slug : "",
       category_icon: category ? category.icon || "" : "",
-      reading_time: estimateReadingTime(article.content),
+      reading_time: article.reading_time_minutes ?? estimateReadingTime(article.content),
     }).replaceAll(imageToken, imageHtml);
   }).join("\n");
 

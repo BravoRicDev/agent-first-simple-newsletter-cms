@@ -127,12 +127,17 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     assert.ok(!dopo.includes("cibo"));
   });
 
-  test("custom_css della categoria: <style> iniettato e data-category sulle card", async () => {
+  test("custom_css della categoria: <style> iniettato; data-category SOLO con enable_client_filter=true", async () => {
     const css = '[data-category="viaggi"] { border-color: #1e40af; }';
     await query("UPDATE categories SET custom_css=$1 WHERE site_id=$2 AND slug='viaggi'", [css, site.id]);
-    const html = await expandArticleLists(site.id, "{{articles:category=viaggi|limit=1}}");
-    assert.ok(html.includes(`<style>${css}</style>`));
-    assert.ok(html.includes('<article data-category="viaggi"'));
+    const withoutFilter = await expandArticleLists(site.id, "{{articles:category=viaggi|limit=1}}");
+    assert.ok(withoutFilter.includes(`<style>${css}</style>`));
+    // Nota: "data-category" compare comunque nel testo del CSS iniettato
+    // (è il selettore scritto dall'owner); controlla l'ATTRIBUTO sul tag,
+    // non la sottostringa grezza.
+    assert.ok(!withoutFilter.includes('<article data-category='), "default: nessun data-category senza enable_client_filter");
+    const withFilter = await expandArticleLists(site.id, "{{articles:category=viaggi|limit=1|enable_client_filter=true}}");
+    assert.ok(withFilter.includes('<article data-category="viaggi"'));
   });
 
   test("category=cat1,cat2: articoli di entrambe le categorie, ordinati per data", async () => {
@@ -213,5 +218,23 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     });
     const html = await expandArticleLists(site.id, "{{articles:category=imgtest}}");
     assert.ok(html.includes('<img src="/media/7/foto.jpg" alt="Con immagine" loading="lazy">'));
+  });
+
+  test("reading_time_minutes esplicito sovrascrive la stima automatica", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat = await addCategory("Override", "override");
+    const withOverrideId = await addArticle({
+      title: "Con override", categoryId: cat, publishedAt: "'2024-08-01T10:00:00Z'",
+      content: "<p>" + "word ".repeat(2000).trim() + "</p>", // stimerebbe ~10 min
+    });
+    await query("UPDATE pages SET reading_time_minutes=1 WHERE id=$1", [withOverrideId]);
+    await addArticle({
+      title: "Senza override", categoryId: cat, publishedAt: "'2024-08-02T10:00:00Z'",
+      content: "<p>" + "word ".repeat(2000).trim() + "</p>",
+    });
+    await setBlogConfig(site.id, { blog_card_template: "<article>{{title}}: {{reading_time}} min</article>" });
+    const html = await expandArticleLists(site.id, "{{articles:category=override}}");
+    assert.ok(html.includes("Con override: 1 min"), "l'override esplicito deve vincere sulla stima");
+    assert.ok(html.includes("Senza override: 10 min"), "senza override resta la stima automatica");
   });
 });

@@ -49,7 +49,7 @@ describe("expandSingleArticles (snippet {{article:...}})", () => {
     assert.ok(html.includes("{{article:/articoli/non-esiste}}"));
   });
 
-  test("categoria con custom_css: <style> iniettato e data-category presente", async () => {
+  test("categoria con custom_css: <style> iniettato (nessun data-category per l'embed del singolo articolo)", async () => {
     const css = '[data-category="cibo"] { border-color: #b45309; }';
     const categoryId = await addCategory("Cibo", "cibo", { customCss: css });
     await addArticle({
@@ -61,7 +61,9 @@ describe("expandSingleArticles (snippet {{article:...}})", () => {
     });
     const html = await expandSingleArticles(site.id, "{{article:/articoli/ricetta}}");
     assert.ok(html.includes(`<style>${css}</style>`));
-    assert.ok(html.includes('<article data-category="cibo"'));
+    // "data-category" compare nel testo del CSS (selettore scritto
+    // dall'owner): controlla l'ATTRIBUTO sul tag, non la sottostringa grezza.
+    assert.ok(!html.includes('<article data-category='));
   });
 
   test("content HTML dell'articolo NON viene escapato", async () => {

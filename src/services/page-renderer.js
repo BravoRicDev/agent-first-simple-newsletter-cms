@@ -490,14 +490,21 @@ const MAX_ARTICLES_LIMIT = 500;
 
 // Parsing parametri dello snippet {{articles:...}}: gruppo opzionale
 // (undefined/null = nessun parametro), parametri separati da `|`, ciascuno
-// `chiave=valore`. Riconosciute 5 chiavi: category (uno o più slug separati
+// `chiave=valore`. Riconosciute 6 chiavi: category (uno o più slug separati
 // da virgola — SEMPRE un array se presente, con un solo elemento per il caso
 // singolo, per uniformità), limit (intero, default 6, clampato
 // 1..MAX_ARTICLES_LIMIT), show_date (booleano, default true), date_from/
-// date_to (date YYYY-MM-DD inclusive, solo se valide). Parametri non
-// riconosciuti/malformati: ignorati silenziosamente.
+// date_to (date YYYY-MM-DD inclusive, solo se valide), enable_client_filter
+// (booleano, default FALSE: solo se true inietta data-category="<slug>" sul
+// tag principale di ogni card, per un eventuale filtro JS lato client — un
+// sito che veicola già la categoria a modo suo, es. nel proprio
+// card_template_override, non deve vedersi aggiungere un attributo non
+// richiesto). Parametri non riconosciuti/malformati: ignorati silenziosamente.
 function parseArticlesParams(raw) {
-  const params = { category: null, limit: 6, show_date: true, date_from: null, date_to: null };
+  const params = {
+    category: null, limit: 6, show_date: true, date_from: null, date_to: null,
+    enable_client_filter: false,
+  };
   if (!raw) return params;
   for (const part of raw.split("|")) {
     const eq = part.indexOf("=");
@@ -516,6 +523,8 @@ function parseArticlesParams(raw) {
       if (isValidDateOnly(value)) params.date_from = value;
     } else if (key === "date_to") {
       if (isValidDateOnly(value)) params.date_to = value;
+    } else if (key === "enable_client_filter") {
+      params.enable_client_filter = value === "true";
     }
   }
   return params;
@@ -577,6 +586,7 @@ export async function expandArticleLists(siteId, html) {
     }
 
     let sql = `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
+       p.reading_time_minutes,
        c.slug AS category_slug, c.name AS category_name, c.color AS category_color, c.icon AS category_icon,
        c.custom_css AS category_custom_css
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
@@ -620,11 +630,14 @@ export async function expandArticleLists(siteId, html) {
         category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
         category_slug: article.category_slug || "",
         category_icon: article.category_icon || "",
-        reading_time: estimateReadingTime(article.content),
+        reading_time: article.reading_time_minutes ?? estimateReadingTime(article.content),
       }).replaceAll(imageToken, imageHtml);
-      // data-category sul primo tag HTML della card, SOLO se l'articolo ha
-      // una categoria risolta (funzione condivisa col singolo articolo).
-      if (article.category_slug) {
+      // data-category sul primo tag HTML della card: SOLO se richiesto
+      // esplicitamente (enable_client_filter=true, default false — un sito
+      // può già veicolare la categoria a modo suo, es. una classe CSS scritta
+      // nel proprio card_template_override, e non deve vedersi aggiungere un
+      // attributo che non ha chiesto) E se l'articolo ha una categoria risolta.
+      if (params.enable_client_filter && article.category_slug) {
         cardHtml = injectDataCategory(cardHtml, article.category_slug);
       }
       cards.push(cardHtml);
@@ -668,6 +681,7 @@ export async function expandSingleArticles(siteId, html) {
   for (const urlPath of urlPaths) {
     const row = (await query(
       `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.content,
+         p.reading_time_minutes,
          c.slug AS category_slug, c.name AS category_name, c.color AS category_color,
          c.icon AS category_icon, c.custom_css AS category_custom_css
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
@@ -703,15 +717,13 @@ export async function expandSingleArticles(siteId, html) {
       category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
       category_slug: article.category_slug || "",
       category_icon: article.category_icon || "",
-      reading_time: estimateReadingTime(article.content),
+      reading_time: article.reading_time_minutes ?? estimateReadingTime(article.content),
     })
       .replaceAll(imageToken, () => imageHtml)
       .replaceAll(contentToken, () => contentHtml);
-    // data-category sul primo tag HTML (stesso trucco delle liste), SOLO se
-    // l'articolo ha una categoria risolta.
-    if (article.category_slug) {
-      embedHtml = injectDataCategory(embedHtml, article.category_slug);
-    }
+    // Nessun data-category qui: è un embed di UN SOLO articolo, il
+    // filtraggio client-side (data-category, vedi enable_client_filter in
+    // expandArticleLists) ha senso solo tra più card di una lista.
     // CSS di categoria (custom_css non vuoto): <style> prima dell'HTML.
     const styleBlock = article.category_custom_css ? `<style>${article.category_custom_css}</style>` : "";
     return styleBlock + embedHtml;

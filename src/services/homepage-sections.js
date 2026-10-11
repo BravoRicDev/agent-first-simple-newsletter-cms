@@ -99,7 +99,7 @@ export async function syncHomepageSections(siteId) {
 
         const articles = (await query(
           `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
-            c.slug AS category_slug, c.icon AS category_icon
+            p.reading_time_minutes, c.slug AS category_slug, c.icon AS category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
            WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND p.category_id = $2
@@ -124,7 +124,7 @@ export async function syncHomepageSections(siteId) {
             category_url: "",
             category_slug: article.category_slug || "",
             category_icon: article.category_icon || "",
-            reading_time: estimateReadingTime(article.content),
+            reading_time: article.reading_time_minutes ?? estimateReadingTime(article.content),
           }).replaceAll(imageToken, imageHtml);
         }).join("\n");
 
@@ -134,7 +134,7 @@ export async function syncHomepageSections(siteId) {
 
       case "all_feed": {
         const articles = (await query(
-          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, c.slug as category_slug, c.icon as category_icon
+          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, p.reading_time_minutes, c.slug as category_slug, c.icon as category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
            WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true
@@ -159,7 +159,7 @@ export async function syncHomepageSections(siteId) {
             category_url: "",
             category_slug: article.category_slug || "",
             category_icon: article.category_icon || "",
-            reading_time: estimateReadingTime(article.content),
+            reading_time: article.reading_time_minutes ?? estimateReadingTime(article.content),
           }).replaceAll(imageToken, imageHtml);
 
           if (section.enable_client_filter && article.category_slug) {

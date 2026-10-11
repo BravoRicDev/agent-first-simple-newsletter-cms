@@ -38,7 +38,8 @@ rompono mai la pagina).
 | `date_from` | data `YYYY-MM-DD` | nessun limite inferiore | Filtra `published_at >= 'YYYY-MM-DD 00:00:00'`. Valore non valido → ignorato silenziosamente |
 | `date_to` | data `YYYY-MM-DD` | nessun limite superiore | Filtra `published_at <= 'YYYY-MM-DD 23:59:59'` (l'intero giorno finale è **incluso**). Valore non valido → ignorato silenziosamente |
 | `limit` | intero | `6` | **Clampato 1–500**. NESSUNA paginazione per design: per un archivio completo usare le pagine generate `/blog` o `/blog/categoria/<slug>`. Il tetto (alzato da 24 a 500) resta un limite di sicurezza generico, non pensato per un sito specifico: evita un valore arbitrario che generi un blocco illimitato, ma consente di sostituire anche un feed homepage di dimensioni reali |
-| `show_date` | `true`/`false` | `true` | Con `false` la data non è passata al template (`{{published_at}}` vuoto) |
+| `show_date` | `true`/`false` | `true` | Con `false` la data non è passata al template (`{{published_at}}`/`{{published_at_short}}` vuoti) |
+| `enable_client_filter` | `true`/`false` | `false` | Con `true`, ogni card riceve `data-category="<slug>"` sul tag principale (per un filtro JS lato client sulle card della stessa lista). **Default `false`**: un sito che veicola già la categoria a modo suo (es. una classe nel proprio `card_template_override`) non deve vedersi aggiungere un attributo non richiesto — serve per riprodurre esattamente un markup esistente |
 
 **Esempio**: `{{articles:category=viaggi,cibo|limit=8|show_date=false|date_from=2024-01-01}}`.
 
@@ -96,6 +97,16 @@ Trattamento dei placeholder (identico per entrambi i template, via
   (solo per l'embed del singolo articolo — il corpo HTML completo e fidato
   dell'articolo).
 
+`reading_time` è stimato automaticamente (parole del `content` / 200 parole al
+minuto, minimo 1 — `estimateReadingTime` in `blog-index.js`), **ma può essere
+sovrascritto per singolo articolo**: colonna `pages.reading_time_minutes`
+(intero, NULL = usa la stima). Serve per chi vuole controllare esattamente il
+valore mostrato (es. riprodurre un calcolo storico diverso dalla stima a
+parole/minuto) senza dover approssimare l'algoritmo generico. Non ancora
+esposto nell'editor admin delle pagine: impostabile oggi via aggiornamento
+diretto della riga `pages` (stesso livello della API agente, nessun vincolo
+di sicurezza aggiuntivo).
+
 ## 6. Personalizzazione per categoria
 
 Ogni categoria (da `/admin/categories`) ha `color`, `icon` e `custom_css`.
@@ -104,11 +115,16 @@ Ogni categoria (da `/admin/categories`) ha `color`, `icon` e `custom_css`.
   categoria con `custom_css` non vuoto, il CSS viene iniettato una sola volta
   come `<style>...</style>` **prima** dell'HTML generato (card, o articolo
   singolo). Nessun duplicato nella stessa combinazione.
-- Ogni card e ogni embed del singolo articolo riceve l'attributo
-  `data-category="<slug>"` **sul primo tag HTML** del template, così il CSS
-  della categoria può puntare selettivamente ai suoi contenuti (es.
-  `[data-category="viaggi"] { border-color: … }`). L'attributo è presente solo
-  se l'articolo ha una categoria risolta.
+- `data-category="<slug>"` **sul primo tag HTML** di ogni card: SOLO in
+  `{{articles:...}}` con `enable_client_filter=true` (default `false`, §2) —
+  utile per un filtro JS lato client che nasconde/mostra card della stessa
+  lista in base alla categoria (es. `[data-category="viaggi"] { … }`). Non
+  esiste per l'embed del singolo articolo (`{{article:...}}`): il filtraggio
+  ha senso solo tra più card di una lista. Un sito che veicola già la
+  categoria a modo suo (es. una classe scritta nel proprio
+  `card_template_override`, come `class="tag {{category_slug}}"`) può
+  semplicemente non attivare `enable_client_filter` e scrivere il proprio CSS
+  su quella classe invece che sull'attributo.
 
 ## 7. Sicurezza / sanitizzazione
 
