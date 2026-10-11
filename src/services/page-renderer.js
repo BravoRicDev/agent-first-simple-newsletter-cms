@@ -1,10 +1,14 @@
 import { query } from "../db.js";
+import { renderCardTemplate, deriveExcerptFromContent } from "./blog-index.js";
+import { getBlogConfig } from "./blog-settings.js";
 
 const SNIPPET_RE = /\{\{snippet:([a-zA-Z0-9_-]+)\}\}/g;
 const VARIABLE_RE = /\{\{var:([a-zA-Z0-9_-]+)\}\}/g;
 const FORM_RE = /\{\{form:([a-zA-Z0-9_-]+)\}\}/g;
 const CALENDAR_RE = /\{\{calendar:([a-zA-Z0-9_-]+)\}\}/g;
 const QUIZ_RE = /\{\{quiz:([a-zA-Z0-9_-]+)\}\}/g;
+// Il gruppo dei parametri è opzionale: `{{articles}}` nudo è valido (default).
+const ARTICLES_RE = /\{\{articles(?::([^}]*))?\}\}/g;
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -463,6 +467,132 @@ async function expandQuizzes(siteId, html) {
   return html.replace(QUIZ_RE, (full, slug) => (map[slug] && map[slug].enabled ? renderQuizWidget(siteId, map[slug]) : full));
 }
 
+// Parsing parametri dello snippet {{articles:...}}: gruppo opzionale
+// (undefined/null = nessun parametro), parametri separati da `|`, ciascuno
+// `chiave=valore`. Riconosciute SOLO 3 chiavi: category (slug), limit
+// (intero, default 6, clampato 1..24), show_date (booleano, default true).
+// Parametri non riconosciuti: ignorati silenziosamente.
+function parseArticlesParams(raw) {
+  const params = { category: null, limit: 6, show_date: true };
+  if (!raw) return params;
+  for (const part of raw.split("|")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key === "category") {
+      if (value) params.category = value;
+    } else if (key === "limit") {
+      const n = parseInt(value, 10);
+      if (Number.isFinite(n)) params.limit = Math.min(24, Math.max(1, n));
+    } else if (key === "show_date") {
+      params.show_date = value !== "false";
+    }
+  }
+  return params;
+}
+
+// Widget {{articles:...}} (roadmap §10): liste articoli filtrabili per
+// categoria incollabili in qualunque pagina. Riusa lo stesso
+// renderCardTemplate/blog_card_template del blog e delle homepage. Stesso
+// contratto d'errore degli altri expand*: se lo slug categoria non esiste per
+// il sito, il placeholder resta invariato in HTML (così l'owner si accorge
+// dell'errore); "categoria trovata ma zero articoli" → stringa vuota.
+export async function expandArticleLists(siteId, html) {
+  const matches = [...html.matchAll(ARTICLES_RE)];
+  if (matches.length === 0) return html;
+
+  // Raggruppa per combinazione UNICA di parametri: stessa category+limit+
+  // show_date → stessa query, eseguita una sola volta anche se identica in
+  // più punti della pagina.
+  const combos = new Map();
+  for (const m of matches) {
+    const params = parseArticlesParams(m[1]);
+    const key = JSON.stringify(params);
+    if (!combos.has(key)) combos.set(key, { params, results: null });
+  }
+
+  const config = await getBlogConfig(siteId);
+  const imageToken = "ARTICLES_IMAGE_BLOCK_TOKEN";
+
+  for (const combo of combos.values()) {
+    const { params } = combo;
+
+    // Se category è presente, risolvi lo slug → id. Non trovata: la
+    // combinazione produce "categoria non trovata" (placeholder invariato),
+    // DIVERSO da "categoria trovata ma senza articoli" (stringa vuota).
+    let category = null;
+    if (params.category) {
+      category = (await query(
+        "SELECT id, name, slug, color, icon, custom_css FROM categories WHERE site_id = $1 AND slug = $2",
+        [siteId, params.category]
+      )).rows[0];
+      if (!category) {
+        combo.results = { miss: true };
+        continue;
+      }
+    }
+
+    let sql = `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
+       c.slug AS category_slug, c.name AS category_name, c.color AS category_color, c.icon AS category_icon,
+       c.custom_css AS category_custom_css
+       FROM pages p LEFT JOIN categories c ON c.id = p.category_id
+       WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true`;
+    const queryParams = [siteId];
+    if (category) {
+      queryParams.push(category.id);
+      sql += ` AND p.category_id = $${queryParams.length}`;
+    }
+    queryParams.push(params.limit);
+    sql += ` ORDER BY p.published_at DESC NULLS LAST, p.id DESC LIMIT $${queryParams.length}`;
+    const articles = (await query(sql, queryParams)).rows;
+
+    const cards = [];
+    const cssBlocks = [];
+    const cssSeen = new Set();
+    for (const article of articles) {
+      const excerpt = article.excerpt || deriveExcerptFromContent(article.content);
+      const imageHtml = article.featured_image ? `<img src="${escapeHtml(article.featured_image)}" alt="">` : "";
+      const publishedAt = params.show_date && article.published_at
+        ? new Date(article.published_at).toLocaleDateString("it-IT")
+        : "";
+      let cardHtml = renderCardTemplate(config.blog_card_template, {
+        title: article.title,
+        excerpt,
+        url: article.url_path,
+        image: imageToken,
+        published_at: publishedAt,
+        category_name: article.category_name || "",
+        category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
+      }).replaceAll(imageToken, imageHtml);
+      // data-category sul primo tag HTML della card (stesso trucco di
+      // homepage-sections.js): SOLO se l'articolo ha una categoria risolta.
+      if (article.category_slug) {
+        cardHtml = cardHtml.replace(/^<([a-zA-Z0-9]+)/,
+          (m, tag) => `<${tag} data-category="${escapeHtml(article.category_slug)}"`);
+      }
+      cards.push(cardHtml);
+      // CSS per categoria distinta (custom_css non vuoto), senza duplicati
+      // nella stessa combinazione — anche per il caso "senza filtro
+      // categoria", dove più categorie possono comparire tra gli articoli.
+      if (article.category_custom_css && !cssSeen.has(article.category_slug)) {
+        cssSeen.add(article.category_slug);
+        cssBlocks.push(`<style>${article.category_custom_css}</style>`);
+      }
+    }
+
+    // Zero articoli (categoria risolta o non richiesta) → stringa vuota.
+    // Con articoli → style dei CSS di categoria (se presenti) + card.
+    combo.results = { html: cssBlocks.join("\n") + cards.join("\n") };
+  }
+
+  return html.replace(ARTICLES_RE, (full, raw) => {
+    const combo = combos.get(JSON.stringify(parseArticlesParams(raw)));
+    if (combo.results && combo.results.miss) return full;
+    return combo.results.html;
+  });
+}
+
 export async function expandSnippets(siteId, html) {
   let result = await expandVariables(siteId, html);
   let prev = "";
@@ -488,5 +618,7 @@ export async function expandSnippets(siteId, html) {
   }
   result = await expandForms(siteId, result);
   result = await expandCalendars(siteId, result);
-  return expandQuizzes(siteId, result);
+  result = await expandQuizzes(siteId, result);
+  result = await expandArticleLists(siteId, result);
+  return result;
 }

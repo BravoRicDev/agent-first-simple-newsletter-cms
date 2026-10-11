@@ -21,6 +21,15 @@
     <label>Icona (opzionale)</label>
     <input type="text" name="icon" maxlength="10" value="<%= category.icon || '' %>">
   </div>
+  <div class="form-group">
+    <label>CSS personalizzato (opzionale)</label>
+    <textarea name="custom_css" style="min-height:100px;font-family:monospace;" placeholder="es. [data-category=&quot;nome-slug&quot;] { border-color: #1e40af; }"><%= category.custom_css || '' %></textarea>
+    <div style="font-size:12px;color:#666;margin-top:3px;">
+      Questo CSS viene iniettato automaticamente (in un blocco <code>&lt;style&gt;</code>) quando gli articoli di questa categoria vengono mostrati tramite lo snippet <code>{{articles:...}}</code> inserito nel contenuto di una pagina (ad es. <code>{{articles:category=<%= category.slug %>}}</code>).
+      Per puntare SOLO alle card di questa categoria usa il selettore <code>[data-category="&lt;slug-categoria&gt;"]</code> con lo slug ESATTO di questa categoria (es. <code>[data-category="<%= category.slug %>"]</code>): ogni card generata riceve infatti l'attributo <code>data-category</code> con lo slug della sua categoria.
+      Lascia vuoto se non ti serve nessun CSS aggiuntivo.
+    </div>
+  </div>
   <button type="submit" class="btn">Salva</button>
   <a href="/admin/categories?site_id=<%= category.site_id %>" class="btn" style="background:#6b7280;">Annulla</a>
 </form>

@@ -1,0 +1,134 @@
+import { test, describe, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { query } from "../src/db.js";
+import { createTestSite, closeDb } from "./helpers.js";
+import { expandArticleLists } from "../src/services/page-renderer.js";
+
+describe("expandArticleLists (snippet {{articles:...}})", () => {
+  let site;
+  before(async () => { site = await createTestSite("Article Snippet Test"); });
+  after(async () => { await closeDb(); });
+
+  async function addCategory(name, slug, extra = {}) {
+    return (await query(
+      `INSERT INTO categories (site_id,name,slug,color,icon,custom_css)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [site.id, name, slug, extra.color || null, extra.icon || null, extra.customCss || null]
+    )).rows[0].id;
+  }
+  async function addArticle({ title, categoryId = null, published = true, publishedAt = "NOW()", excerpt = "", content = "<p>Testo articolo di esempio per l'estratto.</p>" }) {
+    return (await query(
+      `INSERT INTO pages (site_id,url_path,title,content,post_type,published,category_id,excerpt,published_at,layout_mode)
+       VALUES ($1,$2,$3,$4,'article',$5,$6,$7,$8,'wrapped') RETURNING id`,
+      [site.id, `/articoli/${Date.now()}-${Math.random().toString(16).slice(2)}`, title, content, published, categoryId, excerpt, publishedAt]
+    )).rows[0].id;
+  }
+  function countCards(html) {
+    return (html.match(/<article/g) || []).length;
+  }
+
+  test("category=viaggi|limit=3 con più di 3 articoli: 3 card, più recente prima", async () => {
+    const categoryId = await addCategory("Viaggi", "viaggi");
+    const days = ["01", "02", "03", "04", "05"];
+    for (let i = 0; i < 5; i++) {
+      await addArticle({ title: `Viaggi ${i + 1}`, categoryId, publishedAt: `'2024-01-${days[i]}T10:00:00Z'` });
+    }
+    const html = await expandArticleLists(site.id, "<div>{{articles:category=viaggi|limit=3}}</div>");
+    assert.equal(countCards(html), 3);
+    assert.ok(html.includes("Viaggi 5"));
+    assert.ok(html.includes("Viaggi 4"));
+    assert.ok(html.includes("Viaggi 3"));
+    assert.ok(!html.includes("Viaggi 2"));
+    assert.ok(!html.includes("Viaggi 1"));
+    // Ordine decrescente per published_at: 5 prima di 4 prima di 3
+    assert.ok(html.indexOf("Viaggi 5") < html.indexOf("Viaggi 4"));
+    assert.ok(html.indexOf("Viaggi 4") < html.indexOf("Viaggi 3"));
+  });
+
+  test("{{articles}} nudo: default limit 6, tutte le categorie, nessun filtro", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const alfa = await addCategory("Alfa", "alfa");
+    const beta = await addCategory("Beta", "beta");
+    // 4+4 articoli, i primi 6 per published_at includono entrambe le categorie
+    const pairs = [["Alfa 1", alfa], ["Beta 1", beta], ["Alfa 2", alfa], ["Beta 2", beta],
+      ["Alfa 3", alfa], ["Beta 3", beta], ["Alfa 4", alfa], ["Beta 4", beta]];
+    for (let i = 0; i < pairs.length; i++) {
+      const dd = String(10 - i).padStart(2, "0");
+      await addArticle({ title: pairs[i][0], categoryId: pairs[i][1], publishedAt: `'2024-02-${dd}T10:00:00Z'` });
+    }
+    const html = await expandArticleLists(site.id, "<div>{{articles}}</div>");
+    assert.equal(countCards(html), 6);
+    assert.ok(html.includes("Alfa 1"));
+    assert.ok(html.includes("Beta 1"));
+    assert.ok(!html.includes("Alfa 4"));
+  });
+
+  test("categoria con slug inesistente per il sito: placeholder lasciato invariato", async () => {
+    const html = await expandArticleLists(site.id, "<div>{{articles:category=non-esiste}}</div>");
+    assert.ok(html.includes("{{articles:category=non-esiste}}"));
+  });
+
+  test("limit=999 viene clampato a 24", async () => {
+    const categoryId = await addCategory("Molti", "molti");
+    for (let i = 0; i < 25; i++) {
+      const dd = String((i % 27) + 1).padStart(2, "0");
+      await addArticle({ title: `Molti ${i}`, categoryId, publishedAt: `'2023-01-${dd}T10:00:00Z'` });
+    }
+    const html = await expandArticleLists(site.id, "<div>{{articles:category=molti|limit=999}}</div>");
+    assert.equal(countCards(html), 24);
+  });
+
+  test("show_date=false toglie la data; default/true la mostra", async () => {
+    const categoryId = await addCategory("Date", "date");
+    await addArticle({ title: "Con data", categoryId, publishedAt: "'2024-03-15T12:00:00Z'" });
+    const withoutDate = await expandArticleLists(site.id, "{{articles:category=date|show_date=false}}");
+    assert.equal(countCards(withoutDate), 1);
+    assert.ok(!withoutDate.includes("15/03/2024"));
+    const withDate = await expandArticleLists(site.id, "{{articles:category=date|show_date=true}}");
+    assert.ok(withDate.includes("15/03/2024"));
+    const defaultDate = await expandArticleLists(site.id, "{{articles:category=date}}");
+    assert.ok(defaultDate.includes("15/03/2024"));
+  });
+
+  test("categoria valida ma senza articoli pubblicati: stringa vuota al posto del placeholder", async () => {
+    await addCategory("Vuota", "vuota");
+    const html = await expandArticleLists(site.id, "<div>{{articles:category=vuota}}</div>");
+    assert.equal(html, "<div></div>");
+    assert.ok(!html.includes("{{articles:category=vuota}}"));
+  });
+
+  test("due blocchi con categorie diverse nella stessa pagina: nessuna interferenza", async () => {
+    // "viaggi" è stata svuotata dal DELETE della pagina precedente: ricrea
+    // gli articoli necessari invece di assumere lo stato lasciato dal primo
+    // test (la categoria "viaggi" stessa resta, solo le sue pagine erano state
+    // cancellate).
+    const viaggi = (await query("SELECT id FROM categories WHERE site_id=$1 AND slug='viaggi'", [site.id])).rows[0].id;
+    await addArticle({ title: "Viaggi 5", categoryId: viaggi, publishedAt: "'2024-01-05T10:00:00Z'" });
+    await addArticle({ title: "Viaggi 4", categoryId: viaggi, publishedAt: "'2024-01-04T10:00:00Z'" });
+    const cibo = await addCategory("Cibo", "cibo");
+    await addArticle({ title: "Ricetta speciale cibo", categoryId: cibo, publishedAt: "'2024-04-01T10:00:00Z'" });
+    await addArticle({ title: "Seconda ricetta cibo", categoryId: cibo, publishedAt: "'2024-04-02T10:00:00Z'" });
+    const html = await expandArticleLists(
+      site.id,
+      "<p>INIZIO</p>{{articles:category=cibo|limit=1}}<p>MEZZO</p>{{articles:category=viaggi|limit=2}}<p>FINE</p>"
+    );
+    const prima = html.slice(0, html.indexOf("MEZZO"));
+    const dopo = html.slice(html.indexOf("MEZZO"));
+    assert.equal(countCards(prima), 1);
+    assert.ok(prima.includes("Seconda ricetta cibo"));
+    assert.ok(!prima.includes("Viaggi"));
+    assert.ok(!prima.includes("Ricetta speciale cibo"));
+    assert.equal(countCards(dopo), 2);
+    assert.ok(dopo.includes("Viaggi 5"));
+    assert.ok(dopo.includes("Viaggi 4"));
+    assert.ok(!dopo.includes("cibo"));
+  });
+
+  test("custom_css della categoria: <style> iniettato e data-category sulle card", async () => {
+    const css = '[data-category="viaggi"] { border-color: #1e40af; }';
+    await query("UPDATE categories SET custom_css=$1 WHERE site_id=$2 AND slug='viaggi'", [css, site.id]);
+    const html = await expandArticleLists(site.id, "{{articles:category=viaggi|limit=1}}");
+    assert.ok(html.includes(`<style>${css}</style>`));
+    assert.ok(html.includes('<article data-category="viaggi"'));
+  });
+});

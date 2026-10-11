@@ -32,6 +32,10 @@ const categorySchema = z.object({
   description: z.string().optional().default(""),
   color: z.union([z.string().regex(/^#[0-9a-fA-F]{3,8}$/), z.literal("")]).optional().default(""),
   icon: z.string().max(10).optional().default(""),
+  // CSS libero scritto dal proprietario del sito (iniettato in un <style> nel
+  // widget {{articles:...}}): nessun limite di formato, stesso livello di
+  // fiducia di homepage_custom_css in blog-settings.js.
+  custom_css: z.string().optional().default(""),
 });
 
 // GET /admin/blog-settings - configurazione blog per-sito
@@ -108,9 +112,9 @@ router.post("/admin/categories", requireAuth, resolveSite, authorize("pages", "c
     const siteId = req.user.role === "superadmin" ? (parseInt(req.body.site_id, 10) || req.user.site_id) : req.user.site_id;
     if (!siteId) return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
     await query(
-      `INSERT INTO categories (site_id, name, slug, description, color, icon)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [siteId, data.name, data.slug, data.description, data.color || null, data.icon || null]
+      `INSERT INTO categories (site_id, name, slug, description, color, icon, custom_css)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [siteId, data.name, data.slug, data.description, data.color || null, data.icon || null, data.custom_css || null]
     );
     res.redirect(`/admin/categories?site_id=${siteId}&saved=1`);
   } catch (err) {
@@ -153,8 +157,8 @@ router.post("/admin/categories/:id/update", requireAuth, resolveSite, authorize(
     const siteId = category.site_id;
 
     await query(
-      `UPDATE categories SET name = $1, slug = $2, description = $3, color = $4, icon = $5, updated_at = NOW() WHERE id = $6 AND site_id = $7`,
-      [data.name, data.slug, data.description, data.color || null, data.icon || null, req.params.id, siteId]
+      `UPDATE categories SET name = $1, slug = $2, description = $3, color = $4, icon = $5, custom_css = $6, updated_at = NOW() WHERE id = $7 AND site_id = $8`,
+      [data.name, data.slug, data.description, data.color || null, data.icon || null, data.custom_css || null, req.params.id, siteId]
     );
 
     res.redirect(`/admin/categories?site_id=${siteId}&saved=1`);
