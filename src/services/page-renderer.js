@@ -586,7 +586,7 @@ export async function expandArticleLists(siteId, html) {
     }
 
     let sql = `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
-       p.reading_time_minutes,
+       p.reading_time_minutes, p.card_html_override,
        c.slug AS category_slug, c.name AS category_name, c.color AS category_color, c.icon AS category_icon,
        c.custom_css AS category_custom_css
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
@@ -612,6 +612,12 @@ export async function expandArticleLists(siteId, html) {
     const cssBlocks = [];
     const cssSeen = new Set();
     for (const article of articles) {
+      // Override verbatim: congela l'HTML esatto di questa card, ignora il
+      // template per questo solo articolo (stesso campo di blog-index.js).
+      if (article.card_html_override) {
+        cards.push(article.card_html_override);
+        continue;
+      }
       const excerpt = article.excerpt || deriveExcerptFromContent(article.content);
       const imageHtml = article.featured_image ? `<img src="${escapeHtml(article.featured_image)}" alt="">` : "";
       const publishedAt = params.show_date && article.published_at

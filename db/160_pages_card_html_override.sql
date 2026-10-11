@@ -1,0 +1,14 @@
+-- Migration 160: override opzionale dell'HTML COMPLETO di una card nelle
+-- liste (blog index, {{articles:...}}, sezioni homepage). NULL = genera la
+-- card dal template di sito (comportamento attuale, invariato). Se
+-- impostato, l'HTML viene usato VERBATIM al posto del render da template
+-- per quell'articolo specifico in TUTTE le superfici di lista.
+--
+-- Generale e riusabile (non specifico per nessun sito): serve a congelare
+-- l'aspetto esatto di contenuto storico/legacy durante una migrazione a un
+-- sistema a template, esattamente come già fa 'custom_html' nelle sezioni
+-- homepage (§9.2) per l'intera pagina — qui lo stesso principio applicato
+-- alla singola card. I nuovi articoli, senza override, usano comunque il
+-- template generato: la dinamicità resta intatta per tutto il contenuto
+-- futuro.
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS card_html_override TEXT;

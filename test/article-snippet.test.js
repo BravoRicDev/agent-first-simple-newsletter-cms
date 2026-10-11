@@ -248,4 +248,17 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     assert.ok(html.includes("<article>Titolo breve</article>"));
     assert.ok(!html.includes("Titolo SEO lungo"));
   });
+
+  test("card_html_override: usa l'HTML verbatim al posto del template per quell'articolo", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat = await addCategory("Override", "htmloverride");
+    const normalId = await addArticle({ title: "Normale", categoryId: cat, publishedAt: "'2024-10-01T10:00:00Z'" });
+    const frozenId = await addArticle({ title: "Storico", categoryId: cat, publishedAt: "'2024-10-02T10:00:00Z'" });
+    const verbatim = '<article class="legacy-card" data-weird-spacing="  yes">HTML congelato storico</article>';
+    await query("UPDATE pages SET card_html_override=$1 WHERE id=$2", [verbatim, frozenId]);
+    await setBlogConfig(site.id, { blog_card_template: "<article>{{title}}</article>" });
+    const html = await expandArticleLists(site.id, "{{articles:category=htmloverride}}");
+    assert.ok(html.includes(verbatim), "l'articolo con override deve apparire byte-identico");
+    assert.ok(html.includes("<article>Normale</article>"), "l'articolo senza override usa comunque il template");
+  });
 });

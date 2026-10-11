@@ -99,7 +99,7 @@ export async function syncHomepageSections(siteId) {
 
         const articles = (await query(
           `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
-            p.reading_time_minutes, c.slug AS category_slug, c.icon AS category_icon
+            p.reading_time_minutes, p.card_html_override, c.slug AS category_slug, c.icon AS category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
            WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND p.category_id = $2
@@ -109,6 +109,7 @@ export async function syncHomepageSections(siteId) {
         )).rows;
 
         const cards = articles.map(article => {
+          if (article.card_html_override) return article.card_html_override;
           const excerpt = article.excerpt || deriveExcerptFromContent(article.content);
           const publishedAt = article.published_at ? new Date(article.published_at).toLocaleDateString("it-IT") : "";
           const imageHtml = article.featured_image ? `<img src="${escapeAttr(article.featured_image)}" alt="">` : "";
@@ -134,7 +135,7 @@ export async function syncHomepageSections(siteId) {
 
       case "all_feed": {
         const articles = (await query(
-          `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, p.reading_time_minutes, c.slug as category_slug, c.icon as category_icon
+          `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, p.reading_time_minutes, p.card_html_override, c.slug as category_slug, c.icon as category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
            WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true
@@ -144,6 +145,7 @@ export async function syncHomepageSections(siteId) {
         )).rows;
 
         const cards = articles.map(article => {
+          if (article.card_html_override) return article.card_html_override;
           const excerpt = article.excerpt || deriveExcerptFromContent(article.content);
           const publishedAt = article.published_at ? new Date(article.published_at).toLocaleDateString("it-IT") : "";
           const imageHtml = article.featured_image ? `<img src="${escapeAttr(article.featured_image)}" alt="">` : "";

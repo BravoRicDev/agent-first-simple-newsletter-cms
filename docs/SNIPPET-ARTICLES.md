@@ -133,6 +133,18 @@ Ogni categoria (da `/admin/categories`) ha `color`, `icon` e `custom_css`.
   semplicemente non attivare `enable_client_filter` e scrivere il proprio CSS
   su quella classe invece che sull'attributo.
 
+**`pages.card_html_override`** (TEXT, NULL di default): se impostato, l'HTML
+di QUESTA card viene usato **verbatim**, al posto del render dal template, in
+TUTTE le liste (`syncBlogListingPages`, `{{articles:...}}`,
+`category_feed`/`all_feed` di `homepage_sections`). Non esiste per l'embed
+del singolo articolo. Serve a **congelare l'aspetto esatto di contenuto
+storico/legacy** durante una migrazione a un sistema a template — stesso
+principio già usato da `custom_html` nelle sezioni homepage (§9.2, dove
+l'attivazione copia il content esistente prima di attivare la generazione),
+qui applicato alla singola card: i nuovi articoli, senza override, usano
+comunque il template generato — la dinamicità resta intatta per tutto il
+contenuto futuro, solo quello storico resta bit-per-bit quello che era.
+
 ## 7. Sicurezza / sanitizzazione
 
 Il CSS di categoria e il contenuto HTML dell'articolo sono scritti dal

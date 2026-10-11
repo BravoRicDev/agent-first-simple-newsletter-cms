@@ -89,7 +89,7 @@ export async function syncBlogListingPages(siteId) {
   const parsedPerPage = parseInt(config.blog_articles_per_page, 10);
   const perPage = parsedPerPage || 10;
   const articles = (await query(
-    `SELECT id, title, card_title, excerpt, featured_image, published_at, url_path, category_id, content, reading_time_minutes
+    `SELECT id, title, card_title, excerpt, featured_image, published_at, url_path, category_id, content, reading_time_minutes, card_html_override
      FROM pages WHERE site_id = $1 AND post_type = 'article' AND published = true
      ORDER BY published_at DESC NULLS LAST, id DESC`,
     [siteId]
@@ -102,6 +102,9 @@ export async function syncBlogListingPages(siteId) {
   const writtenIds = [];
 
   const renderCards = list => list.map(article => {
+    // Override verbatim: congela l'HTML esatto di questa card (es. contenuto
+    // storico migrato), ignora il template per questo solo articolo.
+    if (article.card_html_override) return article.card_html_override;
     const category = categoriesById.get(article.category_id);
     const excerpt = article.excerpt || deriveExcerptFromContent(article.content);
     const publishedAt = article.published_at ? new Date(article.published_at).toLocaleDateString("it-IT") : "";
