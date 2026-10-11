@@ -10,6 +10,8 @@ export const DEFAULTS = {
 </article>`,
   blog_index_title: "Blog",
   blog_index_intro_html: "",
+  homepage_custom_css: "",
+  homepage_custom_js: "",
 };
 
 export async function getBlogConfig(siteId) {
