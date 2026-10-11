@@ -34,9 +34,16 @@ export function estimateReadingTime(html, wordsPerMinute = 200) {
   return Math.max(1, Math.round(wordCount / wordsPerMinute));
 }
 
+// timeZone fisso a Europe/Rome: senza specificarlo, toLocaleDateString usa il
+// timezone di sistema del processo Node (in produzione tipicamente UTC), che
+// può far scivolare la data al giorno prima/dopo rispetto a quella percepita
+// da un pubblico italiano (es. un articolo pubblicato alle 23:30 ora
+// italiana è già il giorno dopo in UTC). Fisso, non derivato dal sito: una
+// generalizzazione più corretta (timezone per sito) è fuori scope qui, ma
+// Europe/Rome è comunque la scelta giusta per l'uso previsto (date "it-IT").
 export function formatShortDate(date, locale = "it-IT") {
   if (!date) return "";
-  return new Date(date).toLocaleDateString(locale, { day: "numeric", month: "short" });
+  return new Date(date).toLocaleDateString(locale, { day: "numeric", month: "short", timeZone: "Europe/Rome" });
 }
 
 function escapeAttr(value) {
