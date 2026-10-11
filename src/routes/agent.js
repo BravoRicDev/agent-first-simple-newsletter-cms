@@ -7,6 +7,9 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { requireTokenWrite } from "../middleware/scopes.js";
+import { syncBlogListingPages } from "../services/blog-index.js";
+import { syncHomepageSections, isHomepageDynamicEnabled, activateHomepageDynamic, deactivateHomepageDynamic } from "../services/homepage-sections.js";
 import { expandSnippets } from "../services/page-renderer.js";
 import { auditLog } from "../services/audit.js";
 import { z } from "zod";
@@ -215,10 +218,51 @@ function handleAgentError(err, req, res, next) {
   if (err.message === "URL non valido") {
     return res.status(400).json({ error: "invalid_url", code: "invalid_url" });
   }
+  if (err.code === "CATEGORY_SITE_MISMATCH" || err.code === "CATEGORY_REQUIRED" || err.message === "Invalid published_at") {
+    return res.status(400).json({ error: "invalid_data", code: "invalid_data" });
+  }
   if (err.code === "23505") {
     return res.status(409).json({ error: "conflict", code: "conflict" });
   }
   next(err);
+}
+
+function optionalId(value) {
+  if (value === undefined || value === null) return null;
+  const str = String(value).trim();
+  if (str === "" || str === "0") return null;
+  const num = Number(str);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+async function assertCategoryBelongsToSite(categoryId, siteId) {
+  if (categoryId === null) return;
+  const row = (await query("SELECT id FROM categories WHERE id = $1 AND site_id = $2", [categoryId, siteId])).rows[0];
+  if (!row) {
+    const err = new Error("Category site mismatch");
+    err.code = "CATEGORY_SITE_MISMATCH";
+    throw err;
+  }
+}
+
+function resolvePublishedAt(body, postType, published) {
+  const raw = body.published_at;
+  const provided = raw !== undefined && raw !== null && String(raw).trim() !== "";
+  if (provided) {
+    const date = new Date(String(raw).trim());
+    if (Number.isNaN(date.getTime())) {
+      const err = new Error("Invalid published_at");
+      throw err;
+    }
+    return date;
+  }
+  if (postType === "article" && published) return new Date();
+  return null;
+}
+
+function toBool(v) {
+  if (typeof v === "boolean") return v;
+  return v === "on" || v === "true" || v === "1";
 }
 
 function sanitizeQuizQuestions(raw) {
@@ -456,6 +500,83 @@ router.post("/api/agent/sites/:siteId/pages/bulk-publish", requireAuth, requireA
 
 
 
+// ── Categorie (agente) ─────────────────────────────────────────────────────
+
+const agentCategorySchema = z.object({
+  name: z.string().min(1).max(100),
+  slug: z.string().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  description: z.string().optional().default(""),
+  color: z.union([z.string().regex(/^#[0-9a-fA-F]{3,8}$/), z.literal("")]).optional().default(""),
+  icon: z.string().max(10).optional().default(""),
+  custom_css: z.string().optional().default(""),
+});
+
+router.get("/api/agent/sites/:siteId/categories", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const limit = Math.min(parseIntParam(req.query.limit, 50), 200);
+    const offset = parseIntParam(req.query.offset, 0);
+    const total = parseInt((await query("SELECT COUNT(*) FROM categories WHERE site_id = $1", [siteId])).rows[0].count, 10);
+    const categories = (await query(
+      "SELECT * FROM categories WHERE site_id = $1 ORDER BY name LIMIT $2 OFFSET $3",
+      [siteId, limit, offset]
+    )).rows;
+    res.json({ categories, pagination: { total, limit, offset, has_more: offset + limit < total } });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.get("/api/agent/sites/:siteId/categories/:categoryId", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const category = (await query("SELECT * FROM categories WHERE id = $1 AND site_id = $2", [req.params.categoryId, siteId])).rows[0];
+    if (!category) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+    res.json({ category });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.post("/api/agent/sites/:siteId/categories", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const data = agentCategorySchema.parse(req.body);
+    const category = (await query(
+      `INSERT INTO categories (site_id, name, slug, description, color, icon, custom_css)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [siteId, data.name, data.slug, data.description, data.color || null, data.icon || null, data.custom_css || null]
+    )).rows[0];
+    res.status(201).json({ category });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.put("/api/agent/sites/:siteId/categories/:categoryId", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const existing = (await query("SELECT id FROM categories WHERE id = $1 AND site_id = $2", [req.params.categoryId, siteId])).rows[0];
+    if (!existing) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+    const data = agentCategorySchema.parse(req.body);
+    const category = (await query(
+      `UPDATE categories SET name = $1, slug = $2, description = $3, color = $4, icon = $5, custom_css = $6, updated_at = NOW()
+       WHERE id = $7 AND site_id = $8 RETURNING *`,
+      [data.name, data.slug, data.description, data.color || null, data.icon || null, data.custom_css || null, req.params.categoryId, siteId]
+    )).rows[0];
+    res.json({ category });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.delete("/api/agent/sites/:siteId/categories/:categoryId", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const existing = (await query("SELECT id FROM categories WHERE id = $1 AND site_id = $2", [req.params.categoryId, siteId])).rows[0];
+    if (!existing) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+    await query("DELETE FROM categories WHERE id = $1 AND site_id = $2", [req.params.categoryId, siteId]);
+    res.json({ ok: true });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
 // ── Pagine ─────────────────────────────────────────────────────────────────
 
 router.get("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (req, res, next) => {
@@ -464,7 +585,7 @@ router.get("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (r
     if (!await canAccessSite(req.user, siteId)) {
       return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
     }
-    const allowedFields = ["id", "url_path", "title", "layout_mode", "published", "created_at", "updated_at"];
+    const allowedFields = ["id", "url_path", "title", "layout_mode", "published", "created_at", "updated_at", "post_type", "category_id", "excerpt", "featured_image", "published_at", "card_title", "reading_time_minutes"];
     const fields = req.query.fields
       ? req.query.fields.split(",").filter(f => allowedFields.includes(f.trim()))
       : allowedFields;
@@ -629,6 +750,13 @@ const agentPageSchema = z.object({
   layout_mode: z.enum(["standalone", "wrapped"]).optional().default("wrapped"),
   published: z.boolean().optional().default(false),
   publish_at: z.string().datetime({ offset: true }).nullable().optional(),
+  post_type: z.enum(["page", "article"]).optional().default("page"),
+  category_id: z.union([z.coerce.number().int().nonnegative(), z.literal(""), z.null()]).optional(),
+  excerpt: z.string().optional().default(""),
+  featured_image: z.string().optional().default(""),
+  published_at: z.string().optional(),
+  card_title: z.string().optional().default(""),
+  reading_time_minutes: z.union([z.coerce.number().int().nonnegative(), z.literal(""), z.null()]).optional(),
 });
 
 router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (req, res, next) => {
@@ -646,13 +774,20 @@ router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (
     const data = agentPageSchema.parse(req.body);
     data.url_path = normalizeUrlPath(data.url_path);
 
+    const categoryId = optionalId(data.category_id);
+    await assertCategoryBelongsToSite(categoryId, siteId);
+    const readingTimeMinutes = optionalId(data.reading_time_minutes);
+
     const publishAt = data.publish_at ? new Date(data.publish_at) : null;
     const effectivePublished = publishAt ? false : data.published;
+    const publishedAt = resolvePublishedAt(req.body, data.post_type, effectivePublished);
 
     const result = await query(
-      `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [siteId, data.url_path, data.title, data.content, data.layout_mode, effectivePublished, publishAt]
+      `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at,
+                          post_type, category_id, excerpt, featured_image, published_at, card_title, reading_time_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      [siteId, data.url_path, data.title, data.content, data.layout_mode, effectivePublished, publishAt,
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, data.card_title, readingTimeMinutes]
     );
     const page = result.rows[0];
 
@@ -661,6 +796,11 @@ router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (
     if (b64converted > 0) {
       await query("UPDATE pages SET content = $1, updated_at = NOW() WHERE id = $2", [finalContent, page.id]);
       page.content = finalContent;
+    }
+
+    if (data.post_type === "article") {
+      await syncBlogListingPages(siteId).catch(() => {});
+      await syncHomepageSections(siteId).catch(() => {});
     }
 
     await auditLog({
@@ -702,19 +842,30 @@ router.put("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, 
     const data = agentPageSchema.parse(req.body);
     data.url_path = normalizeUrlPath(data.url_path);
 
+    const categoryId = optionalId(data.category_id);
+    await assertCategoryBelongsToSite(categoryId, siteId);
+    const readingTimeMinutes = optionalId(data.reading_time_minutes);
+
     const publishAt = data.publish_at ? new Date(data.publish_at) : null;
     const effectivePublished = publishAt ? false : data.published;
+    const publishedAt = resolvePublishedAt(req.body, data.post_type, effectivePublished);
 
     await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [existing.id, req.user.sub, existing.url_path, existing.title, existing.content, existing.layout_mode, existing.published]
+      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published,
+                                  post_type, category_id, excerpt, featured_image, published_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [existing.id, req.user.sub, existing.url_path, existing.title, existing.content, existing.layout_mode, existing.published,
+       existing.post_type, existing.category_id, existing.excerpt, existing.featured_image, existing.published_at]
     );
 
     const result = await query(
       `UPDATE pages SET url_path = $1, title = $2, content = $3, layout_mode = $4,
-       published = $5, publish_at = $6, updated_at = NOW() WHERE id = $7 AND site_id = $8 RETURNING *`,
-      [data.url_path, data.title, data.content, data.layout_mode, effectivePublished, publishAt, req.params.pageId, siteId]
+       published = $5, publish_at = $6, post_type = $7, category_id = $8, excerpt = $9,
+       featured_image = $10, published_at = $11, card_title = $12, reading_time_minutes = $13,
+       updated_at = NOW() WHERE id = $14 AND site_id = $15 RETURNING *`,
+      [data.url_path, data.title, data.content, data.layout_mode, effectivePublished, publishAt,
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt,
+       data.card_title, readingTimeMinutes, req.params.pageId, siteId]
     );
 
     const updatedPage = result.rows[0];
@@ -724,6 +875,11 @@ router.put("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, 
     if (b64converted > 0) {
       await query("UPDATE pages SET content = $1, updated_at = NOW() WHERE id = $2", [finalContent, req.params.pageId]);
       updatedPage.content = finalContent;
+    }
+
+    if (data.post_type === "article" || existing.post_type === "article") {
+      await syncBlogListingPages(siteId).catch(() => {});
+      await syncHomepageSections(siteId).catch(() => {});
     }
 
     await auditLog({
@@ -746,6 +902,39 @@ router.put("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, 
 });
 
 // ── Pagine — azioni atomiche ───────────────────────────────────────────────
+
+// Endpoint dedicato per l'override HTML della card: azione esplicita e
+// intenzionale, separata dall'update di routine della pagina. null o stringa
+// vuota rimuove l'override (la card torna al template).
+const cardOverrideSchema = z.object({
+  card_html_override: z.union([z.string(), z.null()]).optional().default(null),
+});
+
+router.patch("/api/agent/sites/:siteId/pages/:pageId/card-override", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+
+    const existing = (await query(
+      "SELECT id FROM pages WHERE id = $1 AND site_id = $2",
+      [req.params.pageId, siteId]
+    )).rows[0];
+    if (!existing) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+
+    const data = cardOverrideSchema.parse(req.body);
+    const overrideValue = data.card_html_override !== null && data.card_html_override !== undefined
+      ? (String(data.card_html_override).trim() || null)
+      : null;
+
+    const page = (await query(
+      "UPDATE pages SET card_html_override = $1, updated_at = NOW() WHERE id = $2 AND site_id = $3 RETURNING *",
+      [overrideValue, req.params.pageId, siteId]
+    )).rows[0];
+
+    res.json({ page });
+    exportPublishedPages({ siteId, pageIds: [existing.id] }).catch(() => {});
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
 
 router.post("/api/agent/sites/:siteId/pages/:pageId/publish-toggle", requireAuth, requireAgent, async (req, res, next) => {
   try {
@@ -5361,6 +5550,166 @@ router.post("/api/agent/sites/:siteId/pages/:pageId/snippet-candidates/apply", r
       pages_updated: updated.map((p) => ({ id: p.id, url_path: p.url_path, title: p.title })),
     });
     exportPublishedPages({ siteId }).catch(() => {});
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+// ── Homepage Sections (agente) ─────────────────────────────────────────────
+
+const agentSectionSchema = z.object({
+  section_type: z.enum(["custom_html", "category_band", "category_feed", "all_feed"]),
+  category_id: z.union([z.coerce.number().int().positive(), z.literal(""), z.null()]).optional(),
+  title: z.string().max(255).optional().default(""),
+  articles_limit: z.coerce.number().int().min(1).max(1000).optional().default(6),
+  custom_html: z.string().optional().default(""),
+  card_template_override: z.string().max(5000).optional().default(""),
+  position: z.coerce.number().int().min(0).max(9999).optional().default(0),
+  enable_client_filter: z.union([z.boolean(), z.literal("on"), z.literal("true"), z.literal("1"), z.literal("")]).optional().default(false),
+  enabled: z.union([z.boolean(), z.literal("on"), z.literal("true"), z.literal("1"), z.literal("")]).optional().default(true),
+});
+
+// Estrae i campi convalidati + i 2 booleani normalizzati, con il vincolo
+// category_id obbligatorio solo per category_feed (stessa logica di
+// routes/homepage-sections.js).
+function parseAgentSectionData(req) {
+  const data = agentSectionSchema.parse(req.body);
+  const categoryId = optionalId(data.category_id);
+  if (data.section_type === "category_feed" && categoryId === null) {
+    const err = new Error("category_id richiesto per category_feed");
+    err.code = "CATEGORY_REQUIRED";
+    throw err;
+  }
+  return {
+    ...data,
+    category_id: data.section_type === "category_feed" ? categoryId : null,
+    enable_client_filter: toBool(data.enable_client_filter),
+    enabled: toBool(data.enabled),
+  };
+}
+
+router.get("/api/agent/sites/:siteId/homepage-sections", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const sections = (await query(
+      `SELECT s.*, c.name AS category_name
+       FROM homepage_sections s
+       LEFT JOIN categories c ON c.id = s.category_id
+       WHERE s.site_id = $1
+       ORDER BY s.position ASC, s.id ASC`,
+      [siteId]
+    )).rows;
+    const dynamicEnabled = await isHomepageDynamicEnabled(siteId);
+    res.json({ sections, dynamic_enabled: dynamicEnabled });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+// NB: activate/deactivate registrate prima di /:sectionId (stesso motivo di
+// routes/homepage-sections.js: "activate" verrebbe altrimenti catturato come id).
+router.post("/api/agent/sites/:siteId/homepage-sections/activate", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    await activateHomepageDynamic(siteId);
+    await syncHomepageSections(siteId).catch(() => {});
+    await exportPublishedPages({ siteId }).catch(() => {});
+    res.json({ activated: true });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.post("/api/agent/sites/:siteId/homepage-sections/deactivate", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    await deactivateHomepageDynamic(siteId);
+    await syncHomepageSections(siteId).catch(() => {});
+    await exportPublishedPages({ siteId }).catch(() => {});
+    res.json({ activated: false });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.get("/api/agent/sites/:siteId/homepage-sections/:sectionId", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const section = (await query(
+      `SELECT s.*, c.name AS category_name
+       FROM homepage_sections s
+       LEFT JOIN categories c ON c.id = s.category_id
+       WHERE s.id = $1 AND s.site_id = $2`,
+      [req.params.sectionId, siteId]
+    )).rows[0];
+    if (!section) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+    res.json({ section });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.post("/api/agent/sites/:siteId/homepage-sections", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const data = parseAgentSectionData(req);
+    await assertCategoryBelongsToSite(data.category_id, siteId);
+
+    const section = (await query(
+      `INSERT INTO homepage_sections
+         (site_id, position, section_type, category_id, title, articles_limit,
+          custom_html, card_template_override, enable_client_filter, enabled)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [siteId, data.position, data.section_type, data.category_id, data.title,
+       data.articles_limit, data.custom_html, data.card_template_override || null,
+       data.enable_client_filter, data.enabled]
+    )).rows[0];
+
+    if (await isHomepageDynamicEnabled(siteId)) {
+      await syncHomepageSections(siteId).catch(() => {});
+      await exportPublishedPages({ siteId }).catch(() => {});
+    }
+    res.status(201).json({ section });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.put("/api/agent/sites/:siteId/homepage-sections/:sectionId", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const existing = (await query("SELECT id FROM homepage_sections WHERE id = $1 AND site_id = $2", [req.params.sectionId, siteId])).rows[0];
+    if (!existing) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+
+    const data = parseAgentSectionData(req);
+    await assertCategoryBelongsToSite(data.category_id, siteId);
+
+    const section = (await query(
+      `UPDATE homepage_sections
+       SET position = $1, section_type = $2, category_id = $3, title = $4,
+           articles_limit = $5, custom_html = $6, card_template_override = $7,
+           enable_client_filter = $8, enabled = $9, updated_at = NOW()
+       WHERE id = $10 AND site_id = $11 RETURNING *`,
+      [data.position, data.section_type, data.category_id, data.title,
+       data.articles_limit, data.custom_html, data.card_template_override || null,
+       data.enable_client_filter, data.enabled, req.params.sectionId, siteId]
+    )).rows[0];
+
+    if (await isHomepageDynamicEnabled(siteId)) {
+      await syncHomepageSections(siteId).catch(() => {});
+      await exportPublishedPages({ siteId }).catch(() => {});
+    }
+    res.json({ section });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.delete("/api/agent/sites/:siteId/homepage-sections/:sectionId", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const existing = (await query("SELECT id FROM homepage_sections WHERE id = $1 AND site_id = $2", [req.params.sectionId, siteId])).rows[0];
+    if (!existing) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+
+    await query("DELETE FROM homepage_sections WHERE id = $1 AND site_id = $2", [req.params.sectionId, siteId]);
+    if (await isHomepageDynamicEnabled(siteId)) {
+      await syncHomepageSections(siteId).catch(() => {});
+      await exportPublishedPages({ siteId }).catch(() => {});
+    }
+    res.json({ ok: true });
   } catch (err) { return handleAgentError(err, req, res, next); }
 });
 
