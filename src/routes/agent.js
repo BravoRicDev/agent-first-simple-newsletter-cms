@@ -36,6 +36,7 @@ import {
   listCalendars, getCalendar, createCalendar, updateCalendar, deleteCalendar,
 } from "../services/calls.js";
 import { getSiteTrackingConfigMasked, setSiteTrackingConfig, getPageTrackingOverride, setPageTrackingOverride } from "../services/tracking.js";
+import { getBlogConfig, setBlogConfig, DEFAULTS as BLOG_SETTINGS_DEFAULTS } from "../services/blog-settings.js";
 import { getSiteSeoConfig, setSiteSeoConfig } from "../services/site-seo.js";
 import { formatBytes, formatKb, formatMb } from "../services/format.js";
 import { normalizeUrlPath } from "../services/urls.js";
@@ -457,13 +458,25 @@ router.get("/api/agent/sites/:siteId/pages/search", requireAuth, requireAgent, a
     const q = req.query.q?.trim();
     if (!q || q.length < 2) return res.status(400).json({ error: res.locals.t("api.pages.searchQueryRequired") });
 
+    const filters = ["site_id = $1", "(content ILIKE $2 OR title ILIKE $2)"];
+    const values = [siteId, `%${q}%`];
+
+    if (req.query.post_type === "page" || req.query.post_type === "article") {
+      filters.push(`post_type = $${filters.length + 1}`);
+      values.push(req.query.post_type);
+    }
+    if (req.query.category_id && /^\d+$/.test(String(req.query.category_id))) {
+      filters.push(`category_id = $${filters.length + 1}`);
+      values.push(Number(req.query.category_id));
+    }
+
     const rows = (await query(
       `SELECT id, url_path, title, published, updated_at,
               LEFT(content, 200) AS content_preview
        FROM pages
-       WHERE site_id = $1 AND (content ILIKE $2 OR title ILIKE $2)
+       WHERE ${filters.join(" AND ")}
        ORDER BY updated_at DESC`,
-      [siteId, `%${q}%`]
+      values
     )).rows;
 
     res.json({ results: rows, query: q });
@@ -486,9 +499,14 @@ router.post("/api/agent/sites/:siteId/pages/bulk-publish", requireAuth, requireA
     const result = await query(
       `UPDATE pages SET published = $1, updated_at = NOW()
        WHERE site_id = $2 AND id IN (${placeholders})
-       RETURNING id, url_path, published`,
+       RETURNING id, url_path, published, post_type`,
       [published, siteId, ...page_ids]
     );
+
+    if (result.rows.some(r => r.post_type === 'article')) {
+      await syncBlogListingPages(siteId).catch(() => {});
+      await syncHomepageSections(siteId).catch(() => {});
+    }
 
     res.json({ updated: result.rows, count: result.rowCount });
     exportPublishedPages({ siteId }).catch(() => {});
@@ -496,6 +514,40 @@ router.post("/api/agent/sites/:siteId/pages/bulk-publish", requireAuth, requireA
     return handleAgentError(err, req, res, next);
     next(err);
   }
+});
+
+// ── Pagine — bulk categorize ───────────────────────────────────────────────
+// Assegna (o rimuove con category_id=null) la categoria a più pagine in una
+// sola chiamata. Se almeno una delle pagine è un articolo, risincronizza le
+// listing del blog e le sezioni homepage come fanno le route di scrittura.
+const bulkCategorizeSchema = z.object({
+  page_ids: z.array(z.number().int().positive()).min(1).max(50),
+  category_id: z.number().int().positive().nullable().optional().default(null),
+});
+
+router.post("/api/agent/sites/:siteId/pages/bulk-categorize", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+
+    const { page_ids, category_id } = bulkCategorizeSchema.parse(req.body);
+    await assertCategoryBelongsToSite(category_id, siteId);
+
+    const placeholders = page_ids.map((_, i) => `$${i + 3}`).join(",");
+    const result = await query(
+      `UPDATE pages SET category_id = $1, updated_at = NOW()
+       WHERE site_id = $2 AND id IN (${placeholders})
+       RETURNING id, url_path, post_type, category_id`,
+      [category_id, siteId, ...page_ids]
+    );
+
+    if (result.rows.some(r => r.post_type === "article")) {
+      await syncBlogListingPages(siteId).catch(() => {});
+      await syncHomepageSections(siteId).catch(() => {});
+    }
+
+    res.json({ updated: result.rows, count: result.rowCount });
+  } catch (err) { return handleAgentError(err, req, res, next); }
 });
 
 
@@ -595,12 +647,31 @@ router.get("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (r
     const limit = Math.min(parseIntParam(req.query.limit, 50), 200);
     const offset = parseIntParam(req.query.offset, 0);
 
-    const countResult = await query("SELECT COUNT(*) FROM pages WHERE site_id = $1", [siteId]);
+    const filters = ["site_id = $1"];
+    const values = [siteId];
+
+    if (req.query.post_type === "page" || req.query.post_type === "article") {
+      filters.push(`post_type = $${filters.length + 1}`);
+      values.push(req.query.post_type);
+    }
+    if (req.query.category_id && /^\d+$/.test(String(req.query.category_id))) {
+      filters.push(`category_id = $${filters.length + 1}`);
+      values.push(Number(req.query.category_id));
+    }
+    if (req.query.published !== undefined) {
+      const pub = toBool(req.query.published);
+      filters.push(`published = $${filters.length + 1}`);
+      values.push(pub);
+    }
+
+    const where = filters.join(" AND ");
+
+    const countResult = await query(`SELECT COUNT(*) FROM pages WHERE ${where}`, values);
     const total = parseInt(countResult.rows[0].count, 10);
 
     const pages = (await query(
-      `SELECT ${fields.join(", ")} FROM pages WHERE site_id = $1 ORDER BY url_path LIMIT $2 OFFSET $3`,
-      [siteId, limit, offset]
+      `SELECT ${fields.join(", ")} FROM pages WHERE ${where} ORDER BY url_path LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
     )).rows;
 
     res.json({ pages, pagination: { total, limit, offset, has_more: offset + limit < total } });
@@ -5627,6 +5698,48 @@ router.post("/api/agent/sites/:siteId/homepage-sections/deactivate", requireAuth
   } catch (err) { return handleAgentError(err, req, res, next); }
 });
 
+// ── Homepage sections — reorder ────────────────────────────────────────────
+// Riassegna la posizione di più sezioni in una sola chiamata. Verifica in
+// blocco che TUTTI gli id appartengano al sito prima di aggiornare.
+const reorderSectionsSchema = z.object({
+  positions: z.array(z.object({
+    id: z.number().int().positive(),
+    position: z.number().int(),
+  })).min(1),
+});
+
+router.post("/api/agent/sites/:siteId/homepage-sections/reorder", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+
+    const { positions } = reorderSectionsSchema.parse(req.body);
+    const ids = positions.map(p => p.id);
+
+    const found = (await query(
+      "SELECT id FROM homepage_sections WHERE site_id = $1 AND id = ANY($2::int[])",
+      [siteId, ids]
+    )).rows;
+    if (found.length !== ids.length) {
+      return res.status(400).json({ error: "alcune sezioni non appartengono a questo sito" });
+    }
+
+    for (const p of positions) {
+      await query(
+        "UPDATE homepage_sections SET position = $1, updated_at = NOW() WHERE id = $2 AND site_id = $3",
+        [p.position, p.id, siteId]
+      );
+    }
+
+    if (await isHomepageDynamicEnabled(siteId)) {
+      await syncHomepageSections(siteId).catch(() => {});
+      await exportPublishedPages({ siteId }).catch(() => {});
+    }
+
+    res.json({ reordered: true, count: positions.length });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
 router.get("/api/agent/sites/:siteId/homepage-sections/:sectionId", requireAuth, requireAgent, async (req, res, next) => {
   try {
     const siteId = parseInt(req.params.siteId, 10);
@@ -5710,6 +5823,37 @@ router.delete("/api/agent/sites/:siteId/homepage-sections/:sectionId", requireAu
       await exportPublishedPages({ siteId }).catch(() => {});
     }
     res.json({ ok: true });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+// ── Blog settings ──────────────────────────────────────────────────────────
+// Lettura/scrittura della configurazione blog del sito. In scrittura viene
+// accettata solo l'intersezione con le chiavi note (Object.keys(DEFAULTS)):
+// le chiavi sconosciute vengono scartate silenziosamente, mai persistite.
+
+router.get("/api/agent/sites/:siteId/blog-settings", requireAuth, requireAgent, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    const config = await getBlogConfig(siteId);
+    res.json({ settings: config });
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
+router.put("/api/agent/sites/:siteId/blog-settings", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+
+    const allowedKeys = new Set(Object.keys(BLOG_SETTINGS_DEFAULTS));
+    const filteredBody = {};
+    for (const key of Object.keys(req.body || {})) {
+      if (allowedKeys.has(key)) filteredBody[key] = req.body[key];
+    }
+
+    await setBlogConfig(siteId, filteredBody);
+    const config = await getBlogConfig(siteId);
+    res.json({ settings: config });
   } catch (err) { return handleAgentError(err, req, res, next); }
 });
 
