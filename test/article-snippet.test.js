@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { query } from "../src/db.js";
 import { createTestSite, closeDb } from "./helpers.js";
 import { expandArticleLists } from "../src/services/page-renderer.js";
+import { setBlogConfig } from "../src/services/blog-settings.js";
 
 describe("expandArticleLists (snippet {{articles:...}})", () => {
   let site;
@@ -68,14 +69,16 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     assert.ok(html.includes("{{articles:category=non-esiste}}"));
   });
 
-  test("limit=999 viene clampato a 24", async () => {
+  test("limit=10000 viene clampato al tetto massimo (500), limit=3 non viene toccato", async () => {
     const categoryId = await addCategory("Molti", "molti");
     for (let i = 0; i < 25; i++) {
       const dd = String((i % 27) + 1).padStart(2, "0");
       await addArticle({ title: `Molti ${i}`, categoryId, publishedAt: `'2023-01-${dd}T10:00:00Z'` });
     }
-    const html = await expandArticleLists(site.id, "<div>{{articles:category=molti|limit=999}}</div>");
-    assert.equal(countCards(html), 24);
+    const html = await expandArticleLists(site.id, "<div>{{articles:category=molti|limit=10000}}</div>");
+    assert.equal(countCards(html), 25); // meno del tetto: nessun clamp, tutti i 25 articoli
+    const limited = await expandArticleLists(site.id, "<div>{{articles:category=molti|limit=3}}</div>");
+    assert.equal(countCards(limited), 3);
   });
 
   test("show_date=false toglie la data; default/true la mostra", async () => {
@@ -179,5 +182,36 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     // Comportamento identico a "parametro assente": nessun errore, entrambi gli articoli.
     assert.equal(withInvalid, noParam);
     assert.equal(countCards(withInvalid), 2);
+  });
+
+  test("card_template_override con nuovi placeholder: reading_time, published_at_short, category_slug, category_icon", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat = await addCategory("Tech", "tech", { icon: "💻" });
+    await addArticle({
+      title: "Articolo Tech",
+      categoryId: cat,
+      publishedAt: "'2024-09-25T10:00:00Z'",
+      content: "<p>" + "word ".repeat(400).trim() + "</p>",
+    });
+    await setBlogConfig(site.id, {
+      blog_card_template: '<article><span class="tag {{category_slug}}"><span class="zh">{{category_icon}}</span></span><span>{{published_at_short}}</span><span>{{reading_time}} min</span></article>',
+    });
+    const html = await expandArticleLists(site.id, "{{articles:category=tech}}");
+    assert.ok(html.includes('<span class="tag tech">'), "category_slug non popolato");
+    assert.ok(html.includes('<span class="zh">💻</span>'), "category_icon non popolata");
+    assert.ok(html.includes('<span>25 set</span>'), "published_at_short non popolato");
+    assert.ok(html.includes('<span>2 min</span>'), "reading_time non popolato (400 parole / 200wpm = 2)");
+  });
+
+  test("image_url: URL nudo escapato, per template che vogliono un <img> custom (alt/style propri)", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat = await addCategory("ImgTest", "imgtest");
+    const articleId = await addArticle({ title: "Con immagine", categoryId: cat, publishedAt: "'2024-10-01T10:00:00Z'" });
+    await query("UPDATE pages SET featured_image=$1 WHERE id=$2", ["/media/7/foto.jpg", articleId]);
+    await setBlogConfig(site.id, {
+      blog_card_template: '<article><img src="{{image_url}}" alt="{{title}}" loading="lazy"></article>',
+    });
+    const html = await expandArticleLists(site.id, "{{articles:category=imgtest}}");
+    assert.ok(html.includes('<img src="/media/7/foto.jpg" alt="Con immagine" loading="lazy">'));
   });
 });

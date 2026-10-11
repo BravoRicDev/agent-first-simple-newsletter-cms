@@ -23,6 +23,22 @@ export function deriveExcerptFromContent(html, maxLen = 200) {
   return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut) + "…";
 }
 
+export function estimateReadingTime(html, wordsPerMinute = 200) {
+  const text = String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&")
+    .replace(/\s{2,}/g, " ").trim();
+  const wordCount = text.split(/\s+/).filter(word => word.length > 0).length;
+  return Math.max(1, Math.round(wordCount / wordsPerMinute));
+}
+
+export function formatShortDate(date, locale = "it-IT") {
+  if (!date) return "";
+  return new Date(date).toLocaleDateString(locale, { day: "numeric", month: "short" });
+}
+
 function escapeAttr(value) {
   return String(value).replace(/&/g, "&amp;").replace(/\"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -72,7 +88,7 @@ export async function syncBlogListingPages(siteId) {
     [siteId]
   )).rows;
   const categories = (await query(
-    "SELECT id, name, slug FROM categories WHERE site_id = $1",
+    "SELECT id, name, slug, icon FROM categories WHERE site_id = $1",
     [siteId]
   )).rows;
   const categoriesById = new Map(categories.map(category => [category.id, category]));
@@ -91,9 +107,14 @@ export async function syncBlogListingPages(siteId) {
       excerpt,
       url: article.url_path,
       image: imageToken,
+      image_url: article.featured_image || "",
       published_at: publishedAt,
+      published_at_short: formatShortDate(article.published_at),
       category_name: category ? category.name : "",
       category_url: category ? `/blog/categoria/${category.slug}` : "",
+      category_slug: category ? category.slug : "",
+      category_icon: category ? category.icon || "" : "",
+      reading_time: estimateReadingTime(article.content),
     }).replaceAll(imageToken, imageHtml);
   }).join("\n");
 

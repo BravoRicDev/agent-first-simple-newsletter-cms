@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { renderCardTemplate, deriveExcerptFromContent } from "./blog-index.js";
+import { renderCardTemplate, deriveExcerptFromContent, estimateReadingTime, formatShortDate } from "./blog-index.js";
 import { getBlogConfig } from "./blog-settings.js";
 
 const SNIPPET_RE = /\{\{snippet:([a-zA-Z0-9_-]+)\}\}/g;
@@ -479,14 +479,23 @@ function isValidDateOnly(value) {
   return DATE_ONLY_RE.test(value) && !Number.isNaN(new Date(value).getTime());
 }
 
+// Tetto massimo di `limit`: resta un widget con un limite esplicito (non una
+// paginazione), ma 24 si è rivelato troppo basso per un caso reale legittimo
+// — un sito che vuole sostituire un intero feed homepage scritto a mano
+// (es. 222 articoli) con lo snippet, senza inventare un meccanismo diverso.
+// Alzato a un tetto comunque bounded (nessun sito può passare un numero
+// arbitrario che generi un blocco illimitato): generale, non specifico per
+// nessun sito.
+const MAX_ARTICLES_LIMIT = 500;
+
 // Parsing parametri dello snippet {{articles:...}}: gruppo opzionale
 // (undefined/null = nessun parametro), parametri separati da `|`, ciascuno
 // `chiave=valore`. Riconosciute 5 chiavi: category (uno o più slug separati
 // da virgola — SEMPRE un array se presente, con un solo elemento per il caso
-// singolo, per uniformità), limit (intero, default 6, clampato 1..24),
-// show_date (booleano, default true), date_from/date_to (date YYYY-MM-DD
-// inclusive, solo se valide). Parametri non riconosciuti/malformati: ignorati
-// silenziosamente.
+// singolo, per uniformità), limit (intero, default 6, clampato
+// 1..MAX_ARTICLES_LIMIT), show_date (booleano, default true), date_from/
+// date_to (date YYYY-MM-DD inclusive, solo se valide). Parametri non
+// riconosciuti/malformati: ignorati silenziosamente.
 function parseArticlesParams(raw) {
   const params = { category: null, limit: 6, show_date: true, date_from: null, date_to: null };
   if (!raw) return params;
@@ -500,7 +509,7 @@ function parseArticlesParams(raw) {
       if (slugs.length > 0) params.category = slugs;
     } else if (key === "limit") {
       const n = parseInt(value, 10);
-      if (Number.isFinite(n)) params.limit = Math.min(24, Math.max(1, n));
+      if (Number.isFinite(n)) params.limit = Math.min(MAX_ARTICLES_LIMIT, Math.max(1, n));
     } else if (key === "show_date") {
       params.show_date = value !== "false";
     } else if (key === "date_from") {
@@ -598,14 +607,20 @@ export async function expandArticleLists(siteId, html) {
       const publishedAt = params.show_date && article.published_at
         ? new Date(article.published_at).toLocaleDateString("it-IT")
         : "";
+      const publishedAtShort = params.show_date ? formatShortDate(article.published_at) : "";
       let cardHtml = renderCardTemplate(config.blog_card_template, {
         title: article.title,
         excerpt,
         url: article.url_path,
         image: imageToken,
+        image_url: article.featured_image || "",
         published_at: publishedAt,
+        published_at_short: publishedAtShort,
         category_name: article.category_name || "",
         category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
+        category_slug: article.category_slug || "",
+        category_icon: article.category_icon || "",
+        reading_time: estimateReadingTime(article.content),
       }).replaceAll(imageToken, imageHtml);
       // data-category sul primo tag HTML della card, SOLO se l'articolo ha
       // una categoria risolta (funzione condivisa col singolo articolo).
@@ -681,9 +696,14 @@ export async function expandSingleArticles(siteId, html) {
       excerpt,
       content: contentToken,
       image: imageToken,
+      image_url: article.featured_image || "",
       published_at: publishedAt,
+      published_at_short: formatShortDate(article.published_at),
       category_name: article.category_name || "",
       category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
+      category_slug: article.category_slug || "",
+      category_icon: article.category_icon || "",
+      reading_time: estimateReadingTime(article.content),
     })
       .replaceAll(imageToken, () => imageHtml)
       .replaceAll(contentToken, () => contentHtml);

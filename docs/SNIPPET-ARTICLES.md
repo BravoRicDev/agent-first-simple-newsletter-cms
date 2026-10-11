@@ -37,7 +37,7 @@ rompono mai la pagina).
 | `category` | uno slug (`viaggi`) o più slug separati da virgola (`viaggi,cibo`) | omesso = tutte le categorie | Internamente è **sempre un array** (anche con un solo slug). Se anche **uno solo** degli slug non esiste per il sito, l'intera combinazione non si espande (vedi §4) |
 | `date_from` | data `YYYY-MM-DD` | nessun limite inferiore | Filtra `published_at >= 'YYYY-MM-DD 00:00:00'`. Valore non valido → ignorato silenziosamente |
 | `date_to` | data `YYYY-MM-DD` | nessun limite superiore | Filtra `published_at <= 'YYYY-MM-DD 23:59:59'` (l'intero giorno finale è **incluso**). Valore non valido → ignorato silenziosamente |
-| `limit` | intero | `6` | **Clampato 1–24**. NESSUNA paginazione per design: per un archivio completo usare le pagine generate `/blog` o `/blog/categoria/<slug>` |
+| `limit` | intero | `6` | **Clampato 1–500**. NESSUNA paginazione per design: per un archivio completo usare le pagine generate `/blog` o `/blog/categoria/<slug>`. Il tetto (alzato da 24 a 500) resta un limite di sicurezza generico, non pensato per un sito specifico: evita un valore arbitrario che generi un blocco illimitato, ma consente di sostituire anche un feed homepage di dimensioni reali |
 | `show_date` | `true`/`false` | `true` | Con `false` la data non è passata al template (`{{published_at}}` vuoto) |
 
 **Esempio**: `{{articles:category=viaggi,cibo|limit=8|show_date=false|date_from=2024-01-01}}`.
@@ -80,17 +80,21 @@ template HTML:
 
 | Chiave (`settings.key`) | Superficie | Placeholder disponibili |
 |---|---|---|
-| `blog_card_template` | ogni card delle **liste** (`{{articles:...}}`, indice blog, pagine categoria) | `{{title}}`, `{{excerpt}}`, `{{url}}`, `{{image}}`, `{{published_at}}`, `{{category_name}}`, `{{category_url}}` |
-| `blog_article_embed_template` | il **singolo articolo** (`{{article:...}}`) | `{{title}}`, `{{excerpt}}`, `{{content}}`, `{{image}}`, `{{published_at}}`, `{{category_name}}`, `{{category_url}}` |
+| `blog_card_template` | ogni card delle **liste** (`{{articles:...}}`, indice blog, pagine categoria) | `{{title}}`, `{{excerpt}}`, `{{url}}`, `{{image}}`, `{{image_url}}`, `{{published_at}}`, `{{published_at_short}}`, `{{category_name}}`, `{{category_url}}`, `{{category_slug}}`, `{{category_icon}}`, `{{reading_time}}` |
+| `blog_article_embed_template` | il **singolo articolo** (`{{article:...}}`) | `{{title}}`, `{{excerpt}}`, `{{content}}`, `{{image}}`, `{{image_url}}`, `{{published_at}}`, `{{published_at_short}}`, `{{category_name}}`, `{{category_url}}`, `{{category_slug}}`, `{{category_icon}}`, `{{reading_time}}` |
 
 Trattamento dei placeholder (identico per entrambi i template, via
 `renderCardTemplate`):
 
-- **testo escapato**: `title`, `excerpt`, `published_at`, `category_name`,
-  `category_url`, `url`.
-- **blocchi HTML pronti, NON escapati**: `image` (l'`<img>` dell'immagine in
-  evidenza) e `content` (solo per l'embed del singolo articolo — il corpo HTML
-  completo e fidato dell'articolo).
+- **testo escapato**: `title`, `excerpt`, `published_at`, `published_at_short`,
+  `category_name`, `category_url`, `category_slug`, `category_icon`,
+  `reading_time`, `url`, `image_url` (l'URL nudo dell'immagine, escapato —
+  usarlo quando `{{image}}` non basta, es. per un `<img>` con `alt`/`style`/
+  attributi diversi dal blocco pronto).
+- **blocchi HTML pronti, NON escapati**: `image` (un `<img src="...">` già
+  completo, `alt` vuoto — scelta semplice per il caso comune) e `content`
+  (solo per l'embed del singolo articolo — il corpo HTML completo e fidato
+  dell'articolo).
 
 ## 6. Personalizzazione per categoria
 

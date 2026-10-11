@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { renderCardTemplate, deriveExcerptFromContent } from "./blog-index.js";
+import { renderCardTemplate, deriveExcerptFromContent, estimateReadingTime, formatShortDate } from "./blog-index.js";
 import { getBlogConfig } from "./blog-settings.js";
 
 function escapeAttr(value) {
@@ -98,10 +98,12 @@ export async function syncHomepageSections(siteId) {
         if (!section.category_id) break;
 
         const articles = (await query(
-          `SELECT id, title, excerpt, featured_image, published_at, url_path, content
-           FROM pages
-           WHERE site_id = $1 AND post_type = 'article' AND published = true AND category_id = $2
-           ORDER BY published_at DESC NULLS LAST, id DESC
+          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
+            c.slug AS category_slug, c.icon AS category_icon
+           FROM pages p
+           LEFT JOIN categories c ON c.id = p.category_id
+           WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND p.category_id = $2
+           ORDER BY p.published_at DESC NULLS LAST, p.id DESC
            LIMIT $3`,
           [siteId, section.category_id, section.articles_limit]
         )).rows;
@@ -115,9 +117,14 @@ export async function syncHomepageSections(siteId) {
             excerpt,
             url: article.url_path,
             image: imageToken,
+            image_url: article.featured_image || "",
             published_at: publishedAt,
+            published_at_short: formatShortDate(article.published_at),
             category_name: "",
             category_url: "",
+            category_slug: article.category_slug || "",
+            category_icon: article.category_icon || "",
+            reading_time: estimateReadingTime(article.content),
           }).replaceAll(imageToken, imageHtml);
         }).join("\n");
 
@@ -127,7 +134,7 @@ export async function syncHomepageSections(siteId) {
 
       case "all_feed": {
         const articles = (await query(
-          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, c.slug as category_slug
+          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, c.slug as category_slug, c.icon as category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
            WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true
@@ -145,9 +152,14 @@ export async function syncHomepageSections(siteId) {
             excerpt,
             url: article.url_path,
             image: imageToken,
+            image_url: article.featured_image || "",
             published_at: publishedAt,
+            published_at_short: formatShortDate(article.published_at),
             category_name: "",
             category_url: "",
+            category_slug: article.category_slug || "",
+            category_icon: article.category_icon || "",
+            reading_time: estimateReadingTime(article.content),
           }).replaceAll(imageToken, imageHtml);
 
           if (section.enable_client_filter && article.category_slug) {

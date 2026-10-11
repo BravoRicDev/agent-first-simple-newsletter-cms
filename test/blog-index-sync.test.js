@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { query } from "../src/db.js";
 import { createTestSite, closeDb } from "./helpers.js";
 import { setBlogConfig } from "../src/services/blog-settings.js";
-import { deriveExcerptFromContent, syncBlogListingPages } from "../src/services/blog-index.js";
+import { deriveExcerptFromContent, estimateReadingTime, formatShortDate, syncBlogListingPages } from "../src/services/blog-index.js";
 
 describe("syncBlogListingPages", () => {
   let site;
@@ -83,5 +83,42 @@ describe("syncBlogListingPages", () => {
     await addArticle({ title: "Non sovrascrivere" });
     await syncBlogListingPages(site.id);
     assert.equal((await listing("/blog")).content, "ORIGINALE");
+  });
+});
+
+describe("estimateReadingTime", () => {
+  test("testo breve → 1 minuto", () => {
+    assert.equal(estimateReadingTime("<p>Ciao mondo</p>"), 1);
+    assert.equal(estimateReadingTime(""), 1);
+    assert.equal(estimateReadingTime(null), 1);
+  });
+
+  test("testo lungo 600 parole → 3 minuti a 200wpm", () => {
+    const longText = "word ".repeat(600).trim();
+    assert.equal(estimateReadingTime(longText), 3);
+  });
+
+  test("testo da 400 parole → 2 minuti", () => {
+    const text = "word ".repeat(400).trim();
+    assert.equal(estimateReadingTime(text), 2);
+  });
+
+  test("non restituisce mai 0", () => {
+    assert.ok(estimateReadingTime("a") >= 1);
+    assert.ok(estimateReadingTime("one two") >= 1);
+  });
+});
+
+describe("formatShortDate", () => {
+  test("data nota → formato breve italiano", () => {
+    assert.equal(formatShortDate("2024-09-25"), "25 set");
+    assert.equal(formatShortDate("2024-01-15"), "15 gen");
+    assert.equal(formatShortDate("2024-12-01"), "1 dic");
+  });
+
+  test("data null/undefined → stringa vuota", () => {
+    assert.equal(formatShortDate(null), "");
+    assert.equal(formatShortDate(undefined), "");
+    assert.equal(formatShortDate(""), "");
   });
 });
