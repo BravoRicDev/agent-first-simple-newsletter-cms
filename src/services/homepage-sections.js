@@ -98,7 +98,7 @@ export async function syncHomepageSections(siteId) {
         if (!section.category_id) break;
 
         const articles = (await query(
-          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
+          `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
             p.reading_time_minutes, c.slug AS category_slug, c.icon AS category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
@@ -113,7 +113,7 @@ export async function syncHomepageSections(siteId) {
           const publishedAt = article.published_at ? new Date(article.published_at).toLocaleDateString("it-IT") : "";
           const imageHtml = article.featured_image ? `<img src="${escapeAttr(article.featured_image)}" alt="">` : "";
           return renderCardTemplate(section.card_template_override || config.blog_card_template, {
-            title: article.title,
+            title: article.card_title || article.title,
             excerpt,
             url: article.url_path,
             image: imageToken,
@@ -134,7 +134,7 @@ export async function syncHomepageSections(siteId) {
 
       case "all_feed": {
         const articles = (await query(
-          `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, p.reading_time_minutes, c.slug as category_slug, c.icon as category_icon
+          `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, p.reading_time_minutes, c.slug as category_slug, c.icon as category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
            WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true
@@ -148,7 +148,7 @@ export async function syncHomepageSections(siteId) {
           const publishedAt = article.published_at ? new Date(article.published_at).toLocaleDateString("it-IT") : "";
           const imageHtml = article.featured_image ? `<img src="${escapeAttr(article.featured_image)}" alt="">` : "";
           let cardHtml = renderCardTemplate(section.card_template_override || config.blog_card_template, {
-            title: article.title,
+            title: article.card_title || article.title,
             excerpt,
             url: article.url_path,
             image: imageToken,

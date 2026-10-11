@@ -107,7 +107,14 @@ esposto nell'editor admin delle pagine: impostabile oggi via aggiornamento
 diretto della riga `pages` (stesso livello della API agente, nessun vincolo
 di sicurezza aggiuntivo).
 
-## 6. Personalizzazione per categoria
+`title` (nelle **liste**, `{{articles:...}}`/indice blog/sezioni homepage)
+usa **`pages.card_title` se impostato, altrimenti `pages.title`** — due
+concetti distinti: `title` è spesso pensato per il tag `<title>` SEO della
+pagina (può includere un suffisso, es. "... - NomeSito"), `card_title` è il
+titolo breve pensato per essere mostrato in una card di lista. NULL (il
+default) = nessuna differenza, le card usano semplicemente `title`.
+**L'embed del singolo articolo (`{{article:...}}`) usa sempre `title`**, mai
+`card_title`: lì si mostra la pagina intera, non una card di lista.
 
 Ogni categoria (da `/admin/categories`) ha `color`, `icon` e `custom_css`.
 

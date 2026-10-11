@@ -89,7 +89,7 @@ export async function syncBlogListingPages(siteId) {
   const parsedPerPage = parseInt(config.blog_articles_per_page, 10);
   const perPage = parsedPerPage || 10;
   const articles = (await query(
-    `SELECT id, title, excerpt, featured_image, published_at, url_path, category_id, content, reading_time_minutes
+    `SELECT id, title, card_title, excerpt, featured_image, published_at, url_path, category_id, content, reading_time_minutes
      FROM pages WHERE site_id = $1 AND post_type = 'article' AND published = true
      ORDER BY published_at DESC NULLS LAST, id DESC`,
     [siteId]
@@ -110,7 +110,7 @@ export async function syncBlogListingPages(siteId) {
     // restore only the generated image block (the sole trusted HTML value).
     const imageToken = "BLOG_IMAGE_BLOCK_TOKEN";
     return renderCardTemplate(config.blog_card_template, {
-      title: article.title,
+      title: article.card_title || article.title,
       excerpt,
       url: article.url_path,
       image: imageToken,

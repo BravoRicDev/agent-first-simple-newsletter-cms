@@ -237,4 +237,15 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     assert.ok(html.includes("Con override: 1 min"), "l'override esplicito deve vincere sulla stima");
     assert.ok(html.includes("Senza override: 10 min"), "senza override resta la stima automatica");
   });
+
+  test("card_title esplicito sovrascrive title SOLO nelle liste", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat = await addCategory("CardTitle", "cardtitle");
+    const articleId = await addArticle({ title: "Titolo SEO lungo - VicChina", categoryId: cat, publishedAt: "'2024-09-01T10:00:00Z'" });
+    await query("UPDATE pages SET card_title='Titolo breve' WHERE id=$1", [articleId]);
+    await setBlogConfig(site.id, { blog_card_template: "<article>{{title}}</article>" });
+    const html = await expandArticleLists(site.id, "{{articles:category=cardtitle}}");
+    assert.ok(html.includes("<article>Titolo breve</article>"));
+    assert.ok(!html.includes("Titolo SEO lungo"));
+  });
 });

@@ -81,4 +81,15 @@ describe("expandSingleArticles (snippet {{article:...}})", () => {
     assert.ok(!html.includes("&lt;b&gt;grassetto&lt;/b&gt;"));
     assert.ok(!html.includes("&lt;em&gt;corsivo&lt;/em&gt;"));
   });
+
+  test("card_title viene ignorato: l'embed del singolo articolo usa sempre title", async () => {
+    const articleId = await addArticle({
+      urlPath: "/articoli/con-card-title", title: "Titolo pagina completo",
+      publishedAt: "'2024-06-01T10:00:00Z'",
+    });
+    await query("UPDATE pages SET card_title='Titolo breve card' WHERE id=$1", [articleId]);
+    const html = await expandSingleArticles(site.id, "{{article:/articoli/con-card-title}}");
+    assert.ok(html.includes("Titolo pagina completo"));
+    assert.ok(!html.includes("Titolo breve card"));
+  });
 });

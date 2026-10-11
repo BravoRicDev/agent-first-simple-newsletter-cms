@@ -585,7 +585,7 @@ export async function expandArticleLists(siteId, html) {
       categoryIds = rows.map(r => r.id);
     }
 
-    let sql = `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
+    let sql = `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
        p.reading_time_minutes,
        c.slug AS category_slug, c.name AS category_name, c.color AS category_color, c.icon AS category_icon,
        c.custom_css AS category_custom_css
@@ -619,7 +619,7 @@ export async function expandArticleLists(siteId, html) {
         : "";
       const publishedAtShort = params.show_date ? formatShortDate(article.published_at) : "";
       let cardHtml = renderCardTemplate(config.blog_card_template, {
-        title: article.title,
+        title: article.card_title || article.title,
         excerpt,
         url: article.url_path,
         image: imageToken,
