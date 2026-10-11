@@ -5,6 +5,16 @@
 
 ## REGOLE ASSOLUTE
 
+### METODO PREFERITO: articoli strutturati (category_id + post_type=article)
+
+Se il sito ha già delle categorie create (GET /api/agent/sites/:id/categories ritorna almeno 1 risultato) e/o la homepage usa già lo snippet `{{articles:...}}` o `{{article:...}}` nel suo contenuto, usa SEMPRE questo metodo, MAI editing manuale di HTML.
+
+Sequenza esatta:
+(a) se serve una categoria nuova, crea con POST /api/agent/sites/:id/categories;
+(b) crea l'articolo con POST /api/agent/sites/:id/pages passando `post_type="article"`, `category_id=<id>`, `excerpt`, `featured_image`, `published=true` — NON serve toccare nessun HTML a mano, l'articolo appare automaticamente ovunque il sito lo mostri (indice /blog, pagina categoria, homepage se usa lo snippet).
+
+Se la homepage del sito NON usa ancora lo snippet ma è ancora un blocco scritto a mano (il "vecchio" metodo descritto sotto), quello resta valido per QUEL sito finché non viene migrato — un agente non deve assumere che tutti i siti siano già sullo stesso sistema, verifica sempre leggendo il contenuto attuale della homepage prima di scegliere il metodo.
+
 ### HOMEPAGE CARD — STRUTTURA OBBLIGATORIA
 
 La homepage (`/`) contiene griglie di card suddivise per rubrica. Ogni griglia è un `<div class="cards">` (o `<div class="cards util">` per "La guida utile" a 2 colonne).
@@ -152,6 +162,12 @@ GET /api/agent/sites
 GET /api/agent/sites/{siteId}/pages
   Risposta: { "pages": [ { "id": 5, "url_path": "/landing", "title": "Landing", "published": true } ] }
   Usa questa lista per trovare l'id numerico di una pagina dal suo url_path o titolo.
+
+GET /api/agent/sites/{siteId}/categories
+  Risposta: { "categories": [ { "id": 2, "name": "News", "slug": "news" }, { "id": 3, "name": "Guide", "slug": "guide" } ], "pagination": { "total": 2, "limit": 50, "offset": 0, "has_more": false } }
+
+GET /api/agent/sites/{siteId}/homepage-sections
+  Risposta: { "sections": [], "dynamic_enabled": true }
 
 ## GERARCHIA ENDPOINT — cosa usare IN ORDINE
 
@@ -402,6 +418,28 @@ La compressione sostituisce il file in background. Non blocca la risposta.
 3. Usa GET /api/agent/sites/{siteId}/pages/search per un singolo sito.
    [Risparmio: 1 chiamata invece di N+1. -90%+.]
 
+### Ricetta AA: creare un articolo con categoria
+1. GET /api/agent/sites/{siteId}/categories → trova l'id della categoria, oppure crea una categoria nuova con POST /api/agent/sites/{siteId}/categories.
+2. POST /api/agent/sites/{siteId}/pages con `post_type="article"`, `category_id=<id>`, `excerpt`, `featured_image` e `published=true`.
+3. Non modificare HTML a mano: l'articolo strutturato appare automaticamente nell'indice /blog, nella pagina categoria e nella homepage (se usa lo snippet).
+
+### Ricetta AB: congelare l'HTML di una card esistente
+1. PATCH /api/agent/sites/{siteId}/pages/{pageId}/card-override
+   body: { "card_html_override": "<article class=\"card\">...</article>" }
+   → congela l'HTML esatto di quella card nelle liste, ignorando il template.
+2. Per rimuovere l'override e tornare al template:
+   body: { "card_html_override": null }
+
+### Ricetta AC: attivare la homepage dinamica a sezioni
+1. GET /api/agent/sites/{siteId}/homepage-sections → verifica `dynamic_enabled`.
+2. POST /api/agent/sites/{siteId}/homepage-sections/activate
+   → copia automaticamente il contenuto attuale come prima sezione: NESSUNA perdita di contenuto.
+3. POST /api/agent/sites/{siteId}/homepage-sections per aggiungere sezioni (`category_feed`, `all_feed`, `category_band`).
+
+### Ricetta AD: disattivare la homepage dinamica
+POST /api/agent/sites/{siteId}/homepage-sections/deactivate
+→ il contenuto generato fino a quel momento RESTA: non viene cancellato e non torna al contenuto originale pre-attivazione.
+
 ## COMPRESSIONE VIDEO
 
 I file MP4 vengono automaticamente compressi in background dopo l'upload o il fetch da URL.
@@ -617,6 +655,25 @@ Il reminder NON modifica il comportamento delle API. È solo un memo.
   espanso da uno snippet: controlla con GET .../snippet-usage e poi modifica lo snippet direttamente.
 
 ## ENDPOINT COMPLETI
+
+── CATEGORIE ──
+GET    /api/agent/sites/:id/categories
+GET    /api/agent/sites/:id/categories/:categoryId
+POST   /api/agent/sites/:id/categories                 ← richiede scope write
+PUT    /api/agent/sites/:id/categories/:categoryId     ← richiede scope write
+DELETE /api/agent/sites/:id/categories/:categoryId    ← richiede scope write
+
+── CARD OVERRIDE ──
+PATCH  /api/agent/sites/:id/pages/:pid/card-override   ← congela/rimuove card HTML, richiede scope write
+
+── HOMEPAGE SECTIONS ──
+GET    /api/agent/sites/:id/homepage-sections          ← include dynamic_enabled
+GET    /api/agent/sites/:id/homepage-sections/:sectionId
+POST   /api/agent/sites/:id/homepage-sections          ← richiede scope write
+PUT    /api/agent/sites/:id/homepage-sections/:sectionId ← richiede scope write
+DELETE /api/agent/sites/:id/homepage-sections/:sectionId ← richiede scope write
+POST   /api/agent/sites/:id/homepage-sections/activate   ← richiede scope write
+POST   /api/agent/sites/:id/homepage-sections/deactivate ← richiede scope write
 
 GET    /api/agent/me
 GET    /api/agent/sites
