@@ -170,9 +170,12 @@ export async function syncHomepageSections(siteId) {
     html += `<script>${config.homepage_custom_js}</script>\n`;
   }
 
+  // layout_mode NON viene forzato: una homepage già standalone (HTML
+  // completo scritto a mano, es. vicchina.it) deve restare standalone,
+  // altrimenti l'output smette di essere identico a quello statico.
   await query(
     `UPDATE pages
-     SET content = $1, layout_mode = 'wrapped', managed_by = 'homepage', updated_at = NOW()
+     SET content = $1, managed_by = 'homepage', updated_at = NOW()
      WHERE site_id = $2 AND url_path = $3`,
     [html, siteId, homepageUrlPath]
   );
