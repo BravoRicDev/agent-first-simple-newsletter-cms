@@ -28,6 +28,11 @@
     <textarea id="cardTemplate" name="blog_card_template" style="min-height:260px;" required><%= config.blog_card_template %></textarea>
   </div>
   <div class="form-group">
+    <label for="articleEmbedTemplate"><%= t('blogSettings.articleEmbedTemplate') %></label>
+    <p style="font-size:13px;color:#555;margin:5px 0 8px;"><%= t('blogSettings.articleEmbedPlaceholders') %></p>
+    <textarea id="articleEmbedTemplate" name="blog_article_embed_template" style="min-height:200px;"><%= config.blog_article_embed_template %></textarea>
+  </div>
+  <div class="form-group">
     <label for="indexTitle"><%= t('blogSettings.indexTitle') %></label>
     <input id="indexTitle" type="text" name="blog_index_title" value="<%= config.blog_index_title %>" required>
   </div>

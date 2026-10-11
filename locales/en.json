@@ -41,6 +41,8 @@
   "blogSettings.articlesPerPage": "Articles per page",
   "blogSettings.cardTemplate": "Card template",
   "blogSettings.placeholders": "Placeholders: {{title}} {{excerpt}} {{category_name}} {{published_at}} (escaped text); {{image}} (ready-made HTML block); {{url}} to use inside href=\"...\".",
+  "blogSettings.articleEmbedTemplate": "Article embed template",
+  "blogSettings.articleEmbedPlaceholders": "Placeholders: {{title}} {{excerpt}} {{category_name}} {{category_url}} {{published_at}} (escaped text); {{image}} and {{content}} (ready-made HTML blocks).",
   "blogSettings.indexTitle": "Blog page title",
   "blogSettings.indexIntro": "Blog page intro HTML",
   "blogSettings.save": "Save settings",

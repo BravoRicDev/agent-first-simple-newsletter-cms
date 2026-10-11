@@ -131,4 +131,53 @@ describe("expandArticleLists (snippet {{articles:...}})", () => {
     assert.ok(html.includes(`<style>${css}</style>`));
     assert.ok(html.includes('<article data-category="viaggi"'));
   });
+
+  test("category=cat1,cat2: articoli di entrambe le categorie, ordinati per data", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat1 = await addCategory("Cat Uno", "cat1");
+    const cat2 = await addCategory("Cat Due", "cat2");
+    await addArticle({ title: "Uno vecchio", categoryId: cat1, publishedAt: "'2024-05-01T10:00:00Z'" });
+    await addArticle({ title: "Due nuovo", categoryId: cat2, publishedAt: "'2024-05-03T10:00:00Z'" });
+    await addArticle({ title: "Uno nuovo", categoryId: cat1, publishedAt: "'2024-05-02T10:00:00Z'" });
+    const html = await expandArticleLists(site.id, "{{articles:category=cat1,cat2}}");
+    assert.equal(countCards(html), 3);
+    assert.ok(html.includes("Uno vecchio"));
+    assert.ok(html.includes("Due nuovo"));
+    assert.ok(html.includes("Uno nuovo"));
+    // Ordine decrescente per published_at: Due nuovo (03) > Uno nuovo (02) > Uno vecchio (01)
+    assert.ok(html.indexOf("Due nuovo") < html.indexOf("Uno nuovo"));
+    assert.ok(html.indexOf("Uno nuovo") < html.indexOf("Uno vecchio"));
+  });
+
+  test("category=cat1,slug-inesistente: un solo slug mancante blocca l'intera combinazione", async () => {
+    const html = await expandArticleLists(site.id, "{{articles:category=cat1,categoria-che-non-esiste}}");
+    assert.ok(html.includes("{{articles:category=cat1,categoria-che-non-esiste}}"));
+  });
+
+  test("date_from/date_to: solo gli articoli nel range (estremi inclusi)", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const range = await addCategory("Range", "range");
+    await addArticle({ title: "Fuori prima", categoryId: range, publishedAt: "'2024-06-01T10:00:00Z'" });
+    await addArticle({ title: "Dentro 1", categoryId: range, publishedAt: "'2024-06-10T10:00:00Z'" });
+    await addArticle({ title: "Dentro 2", categoryId: range, publishedAt: "'2024-06-15T10:00:00Z'" });
+    await addArticle({ title: "Fuori dopo", categoryId: range, publishedAt: "'2024-06-20T10:00:00Z'" });
+    const html = await expandArticleLists(site.id, "{{articles:category=range|date_from=2024-06-05|date_to=2024-06-15}}");
+    assert.equal(countCards(html), 2);
+    assert.ok(html.includes("Dentro 1"));
+    assert.ok(html.includes("Dentro 2"));
+    assert.ok(!html.includes("Fuori prima"));
+    assert.ok(!html.includes("Fuori dopo"));
+  });
+
+  test("date_from con formato non valido: parametro ignorato silenziosamente", async () => {
+    await query("DELETE FROM pages WHERE site_id=$1", [site.id]);
+    const cat = await addCategory("DateTest", "datetest");
+    await addArticle({ title: "DT A", categoryId: cat, publishedAt: "'2024-07-01T10:00:00Z'" });
+    await addArticle({ title: "DT B", categoryId: cat, publishedAt: "'2024-07-02T10:00:00Z'" });
+    const withInvalid = await expandArticleLists(site.id, "{{articles:category=datetest|date_from=non-una-data}}");
+    const noParam = await expandArticleLists(site.id, "{{articles:category=datetest}}");
+    // Comportamento identico a "parametro assente": nessun errore, entrambi gli articoli.
+    assert.equal(withInvalid, noParam);
+    assert.equal(countCards(withInvalid), 2);
+  });
 });

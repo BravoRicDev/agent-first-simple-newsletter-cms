@@ -8,6 +8,12 @@ export const DEFAULTS = {
   <p class="meta">{{category_name}} — {{published_at}}</p>
   <p>{{excerpt}}</p>
 </article>`,
+  blog_article_embed_template: `<article class="article-embed">
+  {{image}}
+  <h1>{{title}}</h1>
+  <p class="meta">{{category_name}} — {{published_at}}</p>
+  {{content}}
+</article>`,
   blog_index_title: "Blog",
   blog_index_intro_html: "",
   homepage_custom_css: "",

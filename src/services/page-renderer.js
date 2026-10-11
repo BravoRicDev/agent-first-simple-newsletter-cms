@@ -9,6 +9,9 @@ const CALENDAR_RE = /\{\{calendar:([a-zA-Z0-9_-]+)\}\}/g;
 const QUIZ_RE = /\{\{quiz:([a-zA-Z0-9_-]+)\}\}/g;
 // Il gruppo dei parametri è opzionale: `{{articles}}` nudo è valido (default).
 const ARTICLES_RE = /\{\{articles(?::([^}]*))?\}\}/g;
+// `article:` (SINGOLO, non `articles:`): il gruppo url_path è OBBLIGATORIO —
+// senza un url_path non si sa quale articolo mostrare.
+const ARTICLE_RE = /\{\{article:([^}]+)\}\}/g;
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -467,13 +470,25 @@ async function expandQuizzes(siteId, html) {
   return html.replace(QUIZ_RE, (full, slug) => (map[slug] && map[slug].enabled ? renderQuizWidget(siteId, map[slug]) : full));
 }
 
+// Solo date "nude" YYYY-MM-DD, nessun orario. Un valore che non rispetta il
+// pattern o che new Date() non sa interpretare viene ignorato silenziosamente
+// (stesso trattamento degli altri parametri malformati: non deve mai rompere
+// la pagina).
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+function isValidDateOnly(value) {
+  return DATE_ONLY_RE.test(value) && !Number.isNaN(new Date(value).getTime());
+}
+
 // Parsing parametri dello snippet {{articles:...}}: gruppo opzionale
 // (undefined/null = nessun parametro), parametri separati da `|`, ciascuno
-// `chiave=valore`. Riconosciute SOLO 3 chiavi: category (slug), limit
-// (intero, default 6, clampato 1..24), show_date (booleano, default true).
-// Parametri non riconosciuti: ignorati silenziosamente.
+// `chiave=valore`. Riconosciute 5 chiavi: category (uno o più slug separati
+// da virgola — SEMPRE un array se presente, con un solo elemento per il caso
+// singolo, per uniformità), limit (intero, default 6, clampato 1..24),
+// show_date (booleano, default true), date_from/date_to (date YYYY-MM-DD
+// inclusive, solo se valide). Parametri non riconosciuti/malformati: ignorati
+// silenziosamente.
 function parseArticlesParams(raw) {
-  const params = { category: null, limit: 6, show_date: true };
+  const params = { category: null, limit: 6, show_date: true, date_from: null, date_to: null };
   if (!raw) return params;
   for (const part of raw.split("|")) {
     const eq = part.indexOf("=");
@@ -481,15 +496,29 @@ function parseArticlesParams(raw) {
     const key = part.slice(0, eq).trim();
     const value = part.slice(eq + 1).trim();
     if (key === "category") {
-      if (value) params.category = value;
+      const slugs = value.split(",").map(s => s.trim()).filter(s => s !== "");
+      if (slugs.length > 0) params.category = slugs;
     } else if (key === "limit") {
       const n = parseInt(value, 10);
       if (Number.isFinite(n)) params.limit = Math.min(24, Math.max(1, n));
     } else if (key === "show_date") {
       params.show_date = value !== "false";
+    } else if (key === "date_from") {
+      if (isValidDateOnly(value)) params.date_from = value;
+    } else if (key === "date_to") {
+      if (isValidDateOnly(value)) params.date_to = value;
     }
   }
   return params;
+}
+
+// data-category sul primo tag HTML (stesso trucco di homepage-sections.js e
+// già in uso per le card di expandArticleLists): SOLO se l'articolo ha una
+// categoria risolta. Estratta in funzione condivisa per non duplicarla tra
+// liste e singolo articolo.
+function injectDataCategory(html, slug) {
+  return html.replace(/^<([a-zA-Z0-9]+)/,
+    (m, tag) => `<${tag} data-category="${escapeHtml(slug)}"`);
 }
 
 // Widget {{articles:...}} (roadmap §10): liste articoli filtrabili per
@@ -518,19 +547,24 @@ export async function expandArticleLists(siteId, html) {
   for (const combo of combos.values()) {
     const { params } = combo;
 
-    // Se category è presente, risolvi lo slug → id. Non trovata: la
-    // combinazione produce "categoria non trovata" (placeholder invariato),
-    // DIVERSO da "categoria trovata ma senza articoli" (stringa vuota).
-    let category = null;
+    // Se category è presente, risolvi TUTTI gli slug → id con UNA sola query.
+    // Se ANCHE UNO SOLO degli slug richiesti manca, l'intera combinazione
+    // produce "categoria non trovata" (placeholder invariato) — stessa
+    // filosofia dello slug singolo: un typo nello slug deve essere visibile
+    // all'owner, non ignorato silenziosamente. DIVERSO da "categorie risolte
+    // ma zero articoli" (stringa vuota).
+    let categoryIds = null;
     if (params.category) {
-      category = (await query(
-        "SELECT id, name, slug, color, icon, custom_css FROM categories WHERE site_id = $1 AND slug = $2",
+      const rows = (await query(
+        "SELECT id, slug FROM categories WHERE site_id = $1 AND slug = ANY($2::text[])",
         [siteId, params.category]
-      )).rows[0];
-      if (!category) {
+      )).rows;
+      const found = new Set(rows.map(r => r.slug));
+      if (params.category.some(slug => !found.has(slug))) {
         combo.results = { miss: true };
         continue;
       }
+      categoryIds = rows.map(r => r.id);
     }
 
     let sql = `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content,
@@ -539,9 +573,17 @@ export async function expandArticleLists(siteId, html) {
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
        WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true`;
     const queryParams = [siteId];
-    if (category) {
-      queryParams.push(category.id);
-      sql += ` AND p.category_id = $${queryParams.length}`;
+    if (categoryIds) {
+      queryParams.push(categoryIds);
+      sql += ` AND p.category_id = ANY($${queryParams.length}::int[])`;
+    }
+    if (params.date_from) {
+      queryParams.push(`${params.date_from} 00:00:00`);
+      sql += ` AND p.published_at >= $${queryParams.length}`;
+    }
+    if (params.date_to) {
+      queryParams.push(`${params.date_to} 23:59:59`);
+      sql += ` AND p.published_at <= $${queryParams.length}`;
     }
     queryParams.push(params.limit);
     sql += ` ORDER BY p.published_at DESC NULLS LAST, p.id DESC LIMIT $${queryParams.length}`;
@@ -565,11 +607,10 @@ export async function expandArticleLists(siteId, html) {
         category_name: article.category_name || "",
         category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
       }).replaceAll(imageToken, imageHtml);
-      // data-category sul primo tag HTML della card (stesso trucco di
-      // homepage-sections.js): SOLO se l'articolo ha una categoria risolta.
+      // data-category sul primo tag HTML della card, SOLO se l'articolo ha
+      // una categoria risolta (funzione condivisa col singolo articolo).
       if (article.category_slug) {
-        cardHtml = cardHtml.replace(/^<([a-zA-Z0-9]+)/,
-          (m, tag) => `<${tag} data-category="${escapeHtml(article.category_slug)}"`);
+        cardHtml = injectDataCategory(cardHtml, article.category_slug);
       }
       cards.push(cardHtml);
       // CSS per categoria distinta (custom_css non vuoto), senza duplicati
@@ -590,6 +631,70 @@ export async function expandArticleLists(siteId, html) {
     const combo = combos.get(JSON.stringify(parseArticlesParams(raw)));
     if (combo.results && combo.results.miss) return full;
     return combo.results.html;
+  });
+}
+
+// Widget {{article:<url_path>}}: embed del SINGOLO articolo completo (titolo,
+// data, corpo HTML) incollabile in qualunque pagina. Riusa lo stesso
+// renderCardTemplate/blog_article_embed_template del blog. Stesso contratto
+// d'errore degli altri expand*: se l'url_path non esiste per il sito, il
+// placeholder resta invariato in HTML (così l'owner si accorge dell'errore);
+// la data è SEMPRE mostrata (snippet del singolo articolo completo, non c'è
+// un parametro show_date). Contenuto e immagine passano per token dedicati
+// perché renderCardTemplate li escaperebbe — sono HTML fidato per costruzione
+// (scritto dal proprietario dello stesso sito).
+export async function expandSingleArticles(siteId, html) {
+  const matches = [...html.matchAll(ARTICLE_RE)];
+  if (matches.length === 0) return html;
+
+  // Stesso url_path incollato più volte → una sola query per articolo unico.
+  const urlPaths = [...new Set(matches.map(m => m[1].trim()))];
+  const map = {};
+  for (const urlPath of urlPaths) {
+    const row = (await query(
+      `SELECT p.id, p.title, p.excerpt, p.featured_image, p.published_at, p.content,
+         c.slug AS category_slug, c.name AS category_name, c.color AS category_color,
+         c.icon AS category_icon, c.custom_css AS category_custom_css
+       FROM pages p LEFT JOIN categories c ON c.id = p.category_id
+       WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND p.url_path = $2`,
+      [siteId, urlPath]
+    )).rows[0];
+    if (row) map[urlPath] = row;
+  }
+
+  const config = await getBlogConfig(siteId);
+  const imageToken = "ARTICLE_IMAGE_BLOCK_TOKEN";
+  const contentToken = "ARTICLE_CONTENT_BLOCK_TOKEN";
+
+  return html.replace(ARTICLE_RE, (full, raw) => {
+    const urlPath = raw.trim();
+    const article = map[urlPath];
+    if (!article) return full;
+    const excerpt = article.excerpt || deriveExcerptFromContent(article.content);
+    const imageHtml = article.featured_image ? `<img src="${escapeHtml(article.featured_image)}" alt="">` : "";
+    const contentHtml = article.content || "";
+    const publishedAt = article.published_at
+      ? new Date(article.published_at).toLocaleDateString("it-IT")
+      : "";
+    let embedHtml = renderCardTemplate(config.blog_article_embed_template, {
+      title: article.title,
+      excerpt,
+      content: contentToken,
+      image: imageToken,
+      published_at: publishedAt,
+      category_name: article.category_name || "",
+      category_url: article.category_slug ? `/blog/categoria/${article.category_slug}` : "",
+    })
+      .replaceAll(imageToken, () => imageHtml)
+      .replaceAll(contentToken, () => contentHtml);
+    // data-category sul primo tag HTML (stesso trucco delle liste), SOLO se
+    // l'articolo ha una categoria risolta.
+    if (article.category_slug) {
+      embedHtml = injectDataCategory(embedHtml, article.category_slug);
+    }
+    // CSS di categoria (custom_css non vuoto): <style> prima dell'HTML.
+    const styleBlock = article.category_custom_css ? `<style>${article.category_custom_css}</style>` : "";
+    return styleBlock + embedHtml;
   });
 }
 
@@ -620,5 +725,6 @@ export async function expandSnippets(siteId, html) {
   result = await expandCalendars(siteId, result);
   result = await expandQuizzes(siteId, result);
   result = await expandArticleLists(siteId, result);
+  result = await expandSingleArticles(siteId, result);
   return result;
 }
