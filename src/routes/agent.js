@@ -972,6 +972,37 @@ router.put("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, 
   }
 });
 
+// Parità con /admin/pages/:id/delete: l'API agente poteva creare/leggere/
+// aggiornare una pagina ma non eliminarla — gap trovato verificando la
+// parità admin UI ↔ agente.
+router.delete("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, requireTokenWrite, async (req, res, next) => {
+  try {
+    const siteId = parseInt(req.params.siteId, 10);
+    if (!await canAccessSite(req.user, siteId)) {
+      return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
+    }
+    const page = (await query(
+      "SELECT site_id, url_path, title, post_type FROM pages WHERE id = $1 AND site_id = $2",
+      [req.params.pageId, siteId]
+    )).rows[0];
+    if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
+
+    await query("DELETE FROM pages WHERE id = $1", [req.params.pageId]);
+    if (page.post_type === "article") await syncBlogListingPages(siteId).catch(() => {});
+    await syncHomepageSections(siteId).catch(() => {});
+
+    await auditLog({
+      userId: req.user.sub, siteId,
+      entityType: "page", entityId: parseInt(req.params.pageId, 10), action: "delete",
+      oldData: { url_path: page.url_path, title: page.title, source: "agent" },
+      ipAddress: req.ip,
+    });
+
+    res.json({ deleted: true, url_path: page.url_path });
+    deleteStaticPage(siteId, page.url_path).catch(() => {});
+  } catch (err) { return handleAgentError(err, req, res, next); }
+});
+
 // ── Pagine — azioni atomiche ───────────────────────────────────────────────
 
 // Endpoint dedicato per l'override HTML della card: azione esplicita e

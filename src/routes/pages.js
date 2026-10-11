@@ -36,6 +36,9 @@ const pageSchema = z.object({
   featured_image: z.string().optional().default(""),
   published_at: z.string().optional(),
   author_id: z.union([z.coerce.number().int().nonnegative(), z.literal("")]).optional(),
+  card_title: z.string().optional().default(""),
+  reading_time_minutes: z.union([z.coerce.number().int().positive(), z.literal("")]).optional(),
+  card_html_override: z.string().optional().default(""),
 });
 
 // Normalizza un id opzionale arrivato dal form: vuoto, "0" o assente → null
@@ -171,12 +174,15 @@ router.post("/admin/pages", requireAuth, resolveSite, authorize("pages", "create
     await assertAuthorBelongsToSite(authorId, siteId);
     const publishedBool = data.published === "true";
     const publishedAt = resolvePublishedAt(req.body, data.post_type, publishedBool);
+    const readingTimeMinutes = optionalId(data.reading_time_minutes);
 await query(
       `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at, review_at,
-                           post_type, category_id, excerpt, featured_image, published_at, author_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                           post_type, category_id, excerpt, featured_image, published_at, author_id,
+                           card_title, reading_time_minutes, card_html_override)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [siteId, data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
-       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId]
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId,
+       data.card_title, readingTimeMinutes, data.card_html_override || null]
     );
     if (data.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
     await syncHomepageSections(siteId).catch(() => {});
@@ -328,12 +334,15 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
 
     const publish_at = req.body.publish_at ? new Date(req.body.publish_at) : null;
     const review_at = req.body.review_at ? new Date(req.body.review_at) : null;
+    const readingTimeMinutes = optionalId(data.reading_time_minutes);
     await query(
       `UPDATE pages SET url_path = $1, title = $2, content = $3, layout_mode = $4, published = $5,
        publish_at = $6, review_at = $7, post_type = $8, category_id = $9, excerpt = $10,
-       featured_image = $11, published_at = $12, author_id = $13, updated_at = NOW() WHERE id = $14 AND site_id = $15`,
+       featured_image = $11, published_at = $12, author_id = $13, card_title = $14,
+       reading_time_minutes = $15, card_html_override = $16, updated_at = NOW() WHERE id = $17 AND site_id = $18`,
       [data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
-       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId, req.params.id, siteId]
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId,
+       data.card_title, readingTimeMinutes, data.card_html_override || null, req.params.id, siteId]
     );
 
     if (data.post_type === 'article' || page.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});

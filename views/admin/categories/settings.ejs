@@ -40,6 +40,14 @@
     <label for="indexIntro"><%= t('blogSettings.indexIntro') %></label>
     <textarea id="indexIntro" name="blog_index_intro_html" style="min-height:160px;"><%= config.blog_index_intro_html %></textarea>
   </div>
+  <div class="form-group">
+    <label for="homepageCustomCss"><%= t('blogSettings.homepageCustomCss') %></label>
+    <textarea id="homepageCustomCss" name="homepage_custom_css" style="min-height:140px;font-family:monospace;"><%= config.homepage_custom_css %></textarea>
+  </div>
+  <div class="form-group">
+    <label for="homepageCustomJs"><%= t('blogSettings.homepageCustomJs') %></label>
+    <textarea id="homepageCustomJs" name="homepage_custom_js" style="min-height:140px;font-family:monospace;"><%= config.homepage_custom_js %></textarea>
+  </div>
   <button type="submit" class="btn"><%= t('blogSettings.save') %></button>
   <a href="/admin/categories<%= site ? '?site_id=' + site.id : '' %>" class="btn" style="background:#6b7280;"><%= t('blogSettings.categories') %></a>
 </form>

@@ -212,4 +212,35 @@ describe("agent: ergonomics (pages filtering, categorize, settings)", () => {
     });
     assert.equal(res.status, 403);
   });
+
+  test("DELETE /pages/:pid elimina la pagina e risincronizza se articolo", async () => {
+    const cat = (await query("INSERT INTO categories (site_id, name, slug) VALUES ($1, $2, $3) RETURNING id", [site.id, "Del Cat", "del-cat"])).rows[0].id;
+    const p = (await query(
+      "INSERT INTO pages (site_id, url_path, post_type, category_id, published) VALUES ($1, $2, 'article', $3, true) RETURNING id",
+      [site.id, "/to-delete", cat]
+    )).rows[0].id;
+
+    const res = await fetch(`${baseUrl}/api/agent/sites/${site.id}/pages/${p}`, { method: "DELETE", headers: auth(rwToken) });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.deleted, true);
+    assert.equal(data.url_path, "/to-delete");
+
+    const gone = (await query("SELECT id FROM pages WHERE id = $1", [p])).rows[0];
+    assert.equal(gone, undefined);
+  });
+
+  test("DELETE /pages/:pid IDOR: pagina di un altro sito → 404", async () => {
+    const foreign = (await query("INSERT INTO pages (site_id, url_path) VALUES ($1, $2) RETURNING id", [otherSite.id, "/foreign-del"])).rows[0].id;
+    const res = await fetch(`${baseUrl}/api/agent/sites/${site.id}/pages/${foreign}`, { method: "DELETE", headers: auth(rwToken) });
+    assert.equal(res.status, 404);
+    const still = (await query("SELECT id FROM pages WHERE id = $1", [foreign])).rows[0];
+    assert.ok(still, "la pagina dell'altro sito non deve essere stata toccata");
+  });
+
+  test("DELETE /pages/:pid token senza scope write → 403", async () => {
+    const p = (await query("INSERT INTO pages (site_id, url_path) VALUES ($1, $2) RETURNING id", [site.id, "/no-write-del"])).rows[0].id;
+    const res = await fetch(`${baseUrl}/api/agent/sites/${site.id}/pages/${p}`, { method: "DELETE", headers: auth(rToken) });
+    assert.equal(res.status, 403);
+  });
 });

@@ -189,4 +189,37 @@ describe("Campi articolo editor pagine", () => {
       assert.equal(page.category_id, null);
     }
   });
+
+  test("card_title/reading_time_minutes/card_html_override: creati, letti e preservati su un update successivo", async () => {
+    const url = "/article-card-override-roundtrip";
+    let response = await post("/admin/pages", {
+      site_id: String(siteA.id), url_path: url, title: "Titolo SEO lungo", post_type: "article",
+      card_title: "Titolo breve", reading_time_minutes: "4", card_html_override: "<article>CONGELATO</article>",
+    });
+    assert.equal(response.status, 302);
+    let page = (await query(
+      "SELECT id, card_title, reading_time_minutes, card_html_override FROM pages WHERE site_id = $1 AND url_path = $2",
+      [siteA.id, url]
+    )).rows[0];
+    pageIds.push(page.id);
+    assert.equal(page.card_title, "Titolo breve");
+    assert.equal(page.reading_time_minutes, 4);
+    assert.equal(page.card_html_override, "<article>CONGELATO</article>");
+
+    // Un admin che ri-salva la pagina dall'editor (che precompila questi campi
+    // con i valori attuali) NON deve farli sparire: simula l'update inviando
+    // di nuovo esattamente i valori che l'editor avrebbe precompilato.
+    response = await post(`/admin/pages/${page.id}`, {
+      url_path: url, title: "Titolo SEO lungo modificato", post_type: "article",
+      card_title: "Titolo breve", reading_time_minutes: "4", card_html_override: "<article>CONGELATO</article>",
+    });
+    assert.equal(response.status, 302);
+    page = (await query(
+      "SELECT card_title, reading_time_minutes, card_html_override FROM pages WHERE id = $1",
+      [page.id]
+    )).rows[0];
+    assert.equal(page.card_title, "Titolo breve", "card_title non deve sparire su un update che lo ripropone");
+    assert.equal(page.reading_time_minutes, 4);
+    assert.equal(page.card_html_override, "<article>CONGELATO</article>");
+  });
 });
