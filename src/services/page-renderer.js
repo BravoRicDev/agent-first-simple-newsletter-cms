@@ -766,3 +766,104 @@ export async function expandSnippets(siteId, html) {
   result = await expandSingleArticles(siteId, result);
   return result;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Persistenza UTM attraverso un funnel a più pagine + iframe di terze parti
+// incollati a mano (es. GoHighLevel: <iframe src="https://api.
+// leadconnectorhq.com/widget/form/...">).
+//
+// Il meccanismo già esistente in expandForms() inietta gli UTM come campi
+// hidden SOLO dentro un <form> nativo generato da {{form:slug}} — un
+// iframe cross-origin non ha accesso all'URL della pagina che lo ospita
+// (niente da fare lato server: gli UTM sono del VISITATORE, cambiano per
+// ogni richiesta, non si possono "cuocere" nell'export statico), quindi
+// l'unico punto dove possono arrivare al form embeddato è lato client,
+// appendendoli al `src` dell'iframe prima che carichi.
+//
+// Secondo problema distinto: un CTA interno (<a href="/pagina-successiva">)
+// in un funnel a più pagine (landing -> contatto -> iframe) azzera gli UTM
+// alla prima navigazione, anche se la pagina di arrivo ha un iframe pronto
+// a riceverli. Senza riportarli avanti ad ogni hop, il primo problema da
+// solo non basta: l'iframe sulla pagina finale si troverebbe comunque un
+// location.search vuoto.
+//
+// GENERALE E RIUSABILE: non specifico per nessun sito/pagina. Si applica
+// automaticamente a QUALUNQUE pagina (standalone o wrapped, live o export
+// statico) che passa da expandPageContent() invece di expandSnippets() —
+// vedi i call-site in serve.js/static-export.js/pages.js/agent.js. NON
+// applicato a newsletter.js: gli script <script> sono inerti nella stragrande
+// maggioranza dei client email, iniettarli lì sarebbe solo peso morto.
+// ─────────────────────────────────────────────────────────────────────────
+
+const GHL_IFRAME_MARKERS = ["leadconnectorhq.com", "msgsndr.com"];
+
+function hasGhlIframeMarker(html) {
+  return GHL_IFRAME_MARKERS.some((m) => html.includes(m));
+}
+
+// Appeso UNA VOLTA per pagina (non per iframe): rilegge tutti gli iframe GHL
+// presenti nel DOM al momento dell'esecuzione, quindi funziona anche se ce
+// n'è più di uno. data-utm-forwarded evita un doppio append se lo script
+// finisse eseguito due volte per qualche motivo.
+function ghlIframeUtmScript() {
+  return `<script>
+(function () {
+  var keys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+  var params = new URLSearchParams(location.search);
+  var extra = [];
+  keys.forEach(function (k) {
+    var v = params.get(k);
+    if (v) extra.push(k + "=" + encodeURIComponent(v.length > 255 ? v.slice(0, 255) : v));
+  });
+  if (extra.length === 0) return;
+  var qs = extra.join("&");
+  document.querySelectorAll('iframe[src*="leadconnectorhq.com"], iframe[src*="msgsndr.com"]').forEach(function (f) {
+    if (!f.src || f.dataset.utmForwarded === "1") return;
+    f.dataset.utmForwarded = "1";
+    f.src = f.src + (f.src.indexOf("?") === -1 ? "?" : "&") + qs;
+  });
+})();
+</script>`;
+}
+
+// Riporta avanti gli UTM della pagina corrente sui link INTERNI (path
+// relativo, stesso sito) che non hanno già una propria query string —
+// mai su link esterni, mailto:/tel:, o link con query/hash già impostati
+// (non li tocchiamo per non interferire con parametri espliciti). Sempre
+// attivo, anche su pagine senza iframe/form: serve a NON perdere gli UTM
+// al primo hop di un funnel, qualunque sia la pagina di arrivo.
+function utmLinkForwardScript() {
+  return `<script>
+(function () {
+  var keys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+  var params = new URLSearchParams(location.search);
+  var extra = [];
+  keys.forEach(function (k) {
+    var v = params.get(k);
+    if (v) extra.push(k + "=" + encodeURIComponent(v.length > 255 ? v.slice(0, 255) : v));
+  });
+  if (extra.length === 0) return;
+  var qs = extra.join("&");
+  document.querySelectorAll("a[href]").forEach(function (a) {
+    var href = a.getAttribute("href");
+    if (!href || href.charAt(0) !== "/" || href.charAt(1) === "/") return;
+    var hashIdx = href.indexOf("#");
+    var path = hashIdx === -1 ? href : href.slice(0, hashIdx);
+    var hash = hashIdx === -1 ? "" : href.slice(hashIdx);
+    if (path.indexOf("?") !== -1) return;
+    a.setAttribute("href", path + "?" + qs + hash);
+  });
+})();
+</script>`;
+}
+
+// Punto d'ingresso per QUALUNQUE pagina servita a un browser (live, export
+// statico, preview admin, risposta API agente): fa expandSnippets() e poi
+// appende i due script sopra. newsletter.js continua a usare expandSnippets()
+// direttamente, senza passare da qui.
+export async function expandPageContent(siteId, html) {
+  let result = await expandSnippets(siteId, html);
+  if (hasGhlIframeMarker(result)) result += ghlIframeUtmScript();
+  result += utmLinkForwardScript();
+  return result;
+}

@@ -7,7 +7,7 @@ import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { resolveSite } from "../middleware/resolve-site.js";
-import { expandSnippets } from "../services/page-renderer.js";
+import { expandPageContent } from "../services/page-renderer.js";
 import { auditLog } from "../services/audit.js";
 import { ensureSiteDir, fetchUrlToMedia, saveBufferToMedia } from "./media.js";
 import { exportPublishedPages, deleteStaticPage, fullExport } from "../services/static-export.js";
@@ -689,7 +689,7 @@ router.post("/admin/pages/:id/preview", requireAuth, authorize("pages", "read"),
       return res.status(403).send("Accesso negato");
     }
     const { content, layout_mode } = req.body;
-    const rendered = await expandSnippets(page.site_id, content || "");
+    const rendered = await expandPageContent(page.site_id, content || "");
     if (layout_mode === "standalone") return res.send(rendered);
     const site = (await query("SELECT layout_template FROM sites WHERE id = $1", [page.site_id])).rows[0];
     const layoutName = "layouts/" + resolveLayoutName(site?.layout_template);
@@ -715,7 +715,7 @@ router.get("/admin/pages/:id/preview-tab", requireAuth, authorize("pages", "read
     if (req.user.role !== "superadmin" && page.site_id !== req.user.site_id) {
       return res.status(403).send("Accesso negato");
     }
-    const rendered = await expandSnippets(page.site_id, page.content);
+    const rendered = await expandPageContent(page.site_id, page.content);
     if (page.layout_mode === "standalone") return res.send(rendered);
     const site = (await query("SELECT layout_template FROM sites WHERE id = $1", [page.site_id])).rows[0];
     const layoutName = "layouts/" + resolveLayoutName(site?.layout_template);

@@ -3,7 +3,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { query } from "../db.js";
-import { expandSnippets } from "./page-renderer.js";
+import { expandPageContent } from "./page-renderer.js";
 import { logger } from "./logger.js";
 import { resolveLayoutName, getSiteThemeVars } from "./site-render.js";
 import { getSiteTrackingConfigMasked, getEffectiveTrackingConfig, renderTrackingBlocks, injectTrackingIntoStandalone } from "./tracking.js";
@@ -64,7 +64,7 @@ function buildSeoLocals(page, urlPath, { baseUrl, siteSeo, brandName, isHomepage
 async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
   try {
     const layoutTemplate = path.join(VIEWS_DIR, "layouts", `${layoutName}.ejs`);
-    const html = await expandSnippets(siteId, page.content || "");
+    const html = await expandPageContent(siteId, page.content || "");
     const seoLocals = seoContext
       ? buildSeoLocals(page, page.url_path, { ...seoContext, isHomepage: page.url_path === "/" })
       : {};
@@ -260,7 +260,7 @@ export async function generate404Page(siteId) {
     if (pages.length === 0) return { ok: false, error: "Homepage page not found" };
 
     const page = pages[0];
-    const html = await expandSnippets(siteId, page.content || "");
+    const html = await expandPageContent(siteId, page.content || "");
     // Usa override tracking della pagina di base (homepage) per la 404
     const effectiveTracking = await getEffectiveTrackingConfig(siteId, page.id);
     const trackingLocals = { ...themeVars, ...effectiveTracking };

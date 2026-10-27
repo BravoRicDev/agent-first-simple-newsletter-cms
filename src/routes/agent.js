@@ -10,7 +10,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { requireTokenWrite } from "../middleware/scopes.js";
 import { syncBlogListingPages } from "../services/blog-index.js";
 import { syncHomepageSections, isHomepageDynamicEnabled, activateHomepageDynamic, deactivateHomepageDynamic } from "../services/homepage-sections.js";
-import { expandSnippets } from "../services/page-renderer.js";
+import { expandPageContent } from "../services/page-renderer.js";
 import { auditLog } from "../services/audit.js";
 import { z } from "zod";
 // archiver@8 è ESM-only e non espone più una funzione factory di default
@@ -1641,7 +1641,7 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/rendered", requireAuth, requi
     )).rows[0];
     if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
 
-    const rendered = await expandSnippets(siteId, page.content);
+    const rendered = await expandPageContent(siteId, page.content);
 
     res.json({
       page_id: page.id,

@@ -2,7 +2,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { query } from "../db.js";
 import { resolveSite } from "../middleware/resolve-site.js";
-import { expandSnippets } from "../services/page-renderer.js";
+import { expandPageContent } from "../services/page-renderer.js";
 import { requireAuth } from "../middleware/auth.js";
 import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js";
 import { getSiteTrackingConfigMasked, getEffectiveTrackingConfig, renderTrackingBlocks, injectTrackingIntoStandalone } from "../services/tracking.js";
@@ -312,12 +312,12 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
           const trackingLocals = { ...themeVars, ...effectiveTracking };
           if (page.layout_mode === "standalone") {
             if (seoLocals.noindex) res.setHeader("X-Robots-Tag", "noindex");
-            let html = await expandSnippets(siteId, page.content);
+            let html = await expandPageContent(siteId, page.content);
             html = injectSeoIntoStandalone(html, seoLocals);
             html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(trackingLocals));
             return sendPublicHtml(res, html);
           }
-          const renderedContent = await expandSnippets(siteId, page.content);
+          const renderedContent = await expandPageContent(siteId, page.content);
           return renderPublicPage(res, next, layoutName, {
             ...trackingLocals,
             title: page.title,
@@ -352,13 +352,13 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
 
     if (page.layout_mode === "standalone") {
       if (seoLocals.noindex) res.setHeader("X-Robots-Tag", "noindex");
-      let html = await expandSnippets(siteId, page.content);
+      let html = await expandPageContent(siteId, page.content);
       html = injectSeoIntoStandalone(html, seoLocals);
       html = injectTrackingIntoStandalone(html, await renderTrackingBlocks(trackingLocals));
       return sendPublicHtml(res, html);
     }
 
-    const renderedContent = await expandSnippets(siteId, page.content);
+    const renderedContent = await expandPageContent(siteId, page.content);
     return renderPublicPage(res, next, layoutName, {
       ...trackingLocals,
       title: page.title,
