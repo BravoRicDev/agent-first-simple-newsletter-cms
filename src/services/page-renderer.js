@@ -768,24 +768,36 @@ export async function expandSnippets(siteId, html) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Persistenza UTM attraverso un funnel a più pagine + iframe di terze parti
-// incollati a mano (es. GoHighLevel: <iframe src="https://api.
-// leadconnectorhq.com/widget/form/...">).
+// Persistenza UTM attraverso un funnel a più pagine (es. landing -> contatto
+// -> iframe di terze parti incollato a mano, tipo GoHighLevel: <iframe
+// src="https://api.leadconnectorhq.com/widget/form/...">).
 //
-// Il meccanismo già esistente in expandForms() inietta gli UTM come campi
-// hidden SOLO dentro un <form> nativo generato da {{form:slug}} — un
-// iframe cross-origin non ha accesso all'URL della pagina che lo ospita
-// (niente da fare lato server: gli UTM sono del VISITATORE, cambiano per
-// ogni richiesta, non si possono "cuocere" nell'export statico), quindi
-// l'unico punto dove possono arrivare al form embeddato è lato client,
-// appendendoli al `src` dell'iframe prima che carichi.
+// IMPORTANTE (corretto dopo un primo tentativo sbagliato): form_embed.js di
+// GHL (script ufficiale caricato da chi incolla l'iframe) legge GIÀ DA SOLO
+// gli UTM da location.search della pagina che OSPITA l'iframe e li inoltra
+// al form via postMessage, UNA SOLA VOLTA al caricamento della pagina
+// (verificato leggendo il sorgente di form_embed.js: funzione interna,
+// chiamata De(), eseguita subito dopo l'init dello script). Un primo
+// tentativo di questo fix aggiungeva ANCHE un nostro script che riscriveva
+// `iframe.src` per forzarne il ricaricamento — ridondante con GHL E
+// probabilmente controproducente: forzare un reload dell'iframe DOPO che
+// form_embed.js ha già fatto il suo handshake iniziale lascia l'iframe
+// ricaricato scollegato da quell'handshake (De() non viene richiamata su un
+// semplice reload dell'iframe). Rimosso: niente da fare lato iframe, GHL ci
+// pensa già da sé.
 //
-// Secondo problema distinto: un CTA interno (<a href="/pagina-successiva">)
-// in un funnel a più pagine (landing -> contatto -> iframe) azzera gli UTM
-// alla prima navigazione, anche se la pagina di arrivo ha un iframe pronto
-// a riceverli. Senza riportarli avanti ad ogni hop, il primo problema da
-// solo non basta: l'iframe sulla pagina finale si troverebbe comunque un
-// location.search vuoto.
+// Il problema REALE che resta (e che questo fix risolve davvero): un CTA
+// interno (<a href="/pagina-successiva">) in un funnel a più pagine azzera
+// gli UTM alla prima navigazione — quindi quando il visitatore arriva sulla
+// pagina che ospita l'iframe, il SUO location.search è già vuoto, e
+// form_embed.js (per quanto corretto) non ha nulla da leggere. Serve quindi
+// riportare avanti gli UTM ad ogni hop interno del funnel, non toccare
+// l'iframe in sé.
+//
+// Resta comunque VERO (e fuori dal controllo di questo CMS) che il form su
+// GHL deve avere i campi hidden utm_source/utm_medium/ecc. configurati per
+// leggere dal query param dell'URL — quella è una configurazione lato GHL
+// (form builder), non qualcosa che il CMS possa impostare da qui.
 //
 // GENERALE E RIUSABILE: non specifico per nessun sito/pagina. Si applica
 // automaticamente a QUALUNQUE pagina (standalone o wrapped, live o export
@@ -794,37 +806,6 @@ export async function expandSnippets(siteId, html) {
 // applicato a newsletter.js: gli script <script> sono inerti nella stragrande
 // maggioranza dei client email, iniettarli lì sarebbe solo peso morto.
 // ─────────────────────────────────────────────────────────────────────────
-
-const GHL_IFRAME_MARKERS = ["leadconnectorhq.com", "msgsndr.com"];
-
-function hasGhlIframeMarker(html) {
-  return GHL_IFRAME_MARKERS.some((m) => html.includes(m));
-}
-
-// Appeso UNA VOLTA per pagina (non per iframe): rilegge tutti gli iframe GHL
-// presenti nel DOM al momento dell'esecuzione, quindi funziona anche se ce
-// n'è più di uno. data-utm-forwarded evita un doppio append se lo script
-// finisse eseguito due volte per qualche motivo.
-function ghlIframeUtmScript() {
-  return `<script>
-(function () {
-  var keys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
-  var params = new URLSearchParams(location.search);
-  var extra = [];
-  keys.forEach(function (k) {
-    var v = params.get(k);
-    if (v) extra.push(k + "=" + encodeURIComponent(v.length > 255 ? v.slice(0, 255) : v));
-  });
-  if (extra.length === 0) return;
-  var qs = extra.join("&");
-  document.querySelectorAll('iframe[src*="leadconnectorhq.com"], iframe[src*="msgsndr.com"]').forEach(function (f) {
-    if (!f.src || f.dataset.utmForwarded === "1") return;
-    f.dataset.utmForwarded = "1";
-    f.src = f.src + (f.src.indexOf("?") === -1 ? "?" : "&") + qs;
-  });
-})();
-</script>`;
-}
 
 // Riporta avanti gli UTM della pagina corrente sui link INTERNI (path
 // relativo, stesso sito) che non hanno già una propria query string —
@@ -859,11 +840,10 @@ function utmLinkForwardScript() {
 
 // Punto d'ingresso per QUALUNQUE pagina servita a un browser (live, export
 // statico, preview admin, risposta API agente): fa expandSnippets() e poi
-// appende i due script sopra. newsletter.js continua a usare expandSnippets()
+// appende lo script sopra. newsletter.js continua a usare expandSnippets()
 // direttamente, senza passare da qui.
 export async function expandPageContent(siteId, html) {
   let result = await expandSnippets(siteId, html);
-  if (hasGhlIframeMarker(result)) result += ghlIframeUtmScript();
   result += utmLinkForwardScript();
   return result;
 }
