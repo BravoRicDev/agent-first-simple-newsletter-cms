@@ -148,6 +148,20 @@ const agentPerTokenLimiter = rateLimit({
   message: (req, res) => ({ error: res.locals.t("api.common.tooManyRequestsPerToken") }),
 });
 
+// Limite per token su /api/mcp (il proxy MCP fa fetch interni a /api/agent,
+// che hanno il proprio limite per token): stesso schema di agentPerTokenLimiter.
+const mcpPerTokenLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const match = (req.headers.authorization || "").match(/^Bearer\s+([a-zA-Z0-9_-]+)/);
+    return match ? match[1] : req.ip || "unknown";
+  },
+  message: (req, res) => ({ error: res.locals.t("api.common.tooManyRequestsPerToken") }),
+});
+
 const previewLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -304,6 +318,7 @@ async function start() {
   app.use("/api/agent", agentLimiter);
   app.use("/api/agent", agentPerTokenLimiter);
   app.use("/api/mcp", agentLimiter);
+  app.use("/api/mcp", mcpPerTokenLimiter);
   app.use(authRoutes);
   app.use(agentInstructionsRoutes);
   app.use(humanGuideRoutes);

@@ -5,28 +5,43 @@ Il CMS espone anche un server MCP (Streamable HTTP) come alternativa all'uso dir
 ## Connessione
 
 - **Endpoint**: `POST https://<dominio-cms>/api/mcp` (transport Streamable HTTP, stateless — nessuna sessione da gestire).
-- **Autenticazione**: stesso token JWT agente usato per l'API REST (`Authorization: Bearer <token>`), ottenuto con il flusso descritto in `AGENT.md` (`POST /api/auth/login` → OTP → `POST /api/agent/verify-otp`). Un client MCP che supporta un header `Authorization` statico funziona senza altro setup.
+- **Autenticazione**: stesso token JWT agente usato per l'API REST (`Authorization: Bearer <token>`), ottenuto con il flusso descritto in `AGENT.md` (`POST /api/auth/login` → OTP → `POST /api/agent/verify-otp`). Un client MCP che supporta un header `Authorization` statico funziona senza altro setup. Un token Bearer esplicito ha la precedenza su un cookie di sessione. I tool di scrittura richiedono un token con scope di scrittura.
 - Senza token valido: `401` (non un redirect HTML — il montaggio sotto `/api/mcp` garantisce risposta JSON anche per client non-browser).
 
-## Tool set
+## Tool Set & Flusso di Navigazione
 
-312 tool, uno per ogni endpoint `/api/agent/...` esistente, con nomi e
-schemi leggibili (es. `pages_find_replace`, `newsletter_campaigns_send`,
-`media_upload`, `calendars_list`, `quizzes_create`, `segments_create`,
-`workflows_create`, `scoring_rules_create`, `tasks_create`, `contact_merge`,
-`pipelines_list`, `contact_note_add`, `conversation_message_send`,
-`opportunities_create`, `quotes_create`, `clients_list`,
-`client_services_set`, `client_access_check`). Per un endpoint aggiunto in futuro senza
-un nome/schema dedicato, il tool esiste comunque con schema generico (campi
-path riconosciuti singolarmente, resto in un oggetto `extra`) — mai
-assente, solo meno comodo da usare finché qualcuno non gli aggiunge una
-entry dedicata in `src/services/mcp-tools.js`.
+`tools/list` restituisce ORA SOLI 6 tool di navigazione: `agent_guide`, `tools_tree`, `tools_in_category`, `tools_describe`, `tools_run_read` (solo GET) e `tools_run` (qualsiasi tool).
+
+Flusso di scoperta:
+1. `tools_tree`
+2. `tools_in_category {category}`
+3. `tools_describe {name}`
+4. `tools_run_read` / `tools_run {name, args}`
+
+Tutti i tool precedenti restano richiamabili direttamente per nome (con gli stessi argomenti di prima). `GET /api/mcp` non viene usato. Effettuando una richiesta a `POST /api/mcp?tools=all`, `tools/list` restituisce l'elenco piatto completo (con annotazioni `readOnlyHint`/`destructiveHint`).
+
+## Errori & Limiti
+
+- **Errori**: I tool sconosciuti restituiscono un risultato `isError` con suggerimenti "Did you mean ..." e un puntatore a `tools_tree`/`tools_in_category`/`tools_describe`. Argomenti non validi restituiscono la lista dei campi non validi + un puntatore a `tools_describe`.
+- **Limiti**:
+  - Le richieste batch JSON-RPC vengono rifiutate (`-32600`, una richiesta per chiamata).
+  - Rate limit: 120 richieste/min per token su `/api/mcp` (oltre al limite per-IP).
+  - Risposte di testo limitate a 1.000.000 di caratteri (troncate con una nota: usare limit/offset/fields).
+  - Risposte binarie massimo 15 MB.
+  - Dimensione massima del corpo della richiesta 50 MB (le immagini vengono caricate in base64 tramite il tool di caricamento media `content_base64`, ~1.33x la dimensione del file, file massimo 20 MB).
+
+## Sicurezza & Audit
+
+- Un token Bearer esplicito ha la precedenza su un cookie di sessione.
+- Ogni chiamata viene registrata nell'audit log (utente, tool, stato; gli argomenti non vengono registrati).
+- I tool di scrittura richiedono un token con scope di scrittura.
 
 Le regole operative (MAI fare loop, preferire bulk/find-replace, non depubblicare mentre si lavora, ecc.) restano quelle di `AGENT.md` — si applicano identiche indipendentemente dal protocollo usato per chiamarle.
 
 ## Dettagli tecnici (per chi tocca il codice)
 
 - `src/services/mcp-tools.js`: introspezione del router `agent.js` (`agentRouter.stack`) + tabella di arricchimento `TOOL_META` + handler proxy generico.
-- `src/routes/mcp.js`: monta `/api/mcp`, un `McpServer` + transport nuovi per ogni richiesta (nessuno stato condiviso).
+- `src/services/mcp-tree.js`: generatore dell'albero di navigazione, categorie, aree e logica di gestione.
+- `src/routes/mcp.js`: monta `/api/mcp`, un `Server` MCP + transport nuovi per ogni richiesta (nessuno stato condiviso), rate limiting, rifiuto batch e precedenza di autenticazione.
 - Il proxy inoltra l'header `Authorization` originale alla chiamata interna (`http://127.0.0.1:<porta>/api/agent/...`) — stessa identità, nessun nuovo meccanismo di autenticazione da mantenere.
 - Risposte binarie (es. lo ZIP di backup) arrivano come blocco `resource` in base64, non come testo.

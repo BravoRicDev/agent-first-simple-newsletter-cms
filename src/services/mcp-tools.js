@@ -2,6 +2,9 @@ import { z } from "zod";
 import agentRouter from "../routes/agent.js";
 import { logger } from "./logger.js";
 import config from "../config.js";
+import { META as CONTENT_META } from "./mcp-meta-content.js";
+import { META as SYNC_META } from "./mcp-meta-sync.js";
+import { META as MISC_META } from "./mcp-meta-misc.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Tool set MCP = introspezione del router /api/agent reale + arricchimento
@@ -61,8 +64,8 @@ const TOOL_META = {
   },
   "GET /api/agent/sites/:siteId/pages/search": {
     name: "pages_search",
-    description: { en: "Searches text in the title/content of ONE site's pages (1 call, never loop manually).", it: "Cerca testo nel titolo/contenuto delle pagine di UN sito (1 chiamata, mai loop manuale)." },
-    inputSchema: { site_id: z.number(), q: z.string().min(2) },
+    description: { en: "Searches text in the title/content of ONE site's pages (1 call, never loop manually). Optional filters: post_type (page|article) and category_id.", it: "Cerca testo nel titolo/contenuto delle pagine di UN sito (1 chiamata, mai loop manuale). Filtri opzionali: post_type (page|article) e category_id." },
+    inputSchema: { site_id: z.number(), q: z.string().min(2), post_type: z.enum(["page", "article"]).optional(), category_id: z.number().optional() },
   },
   "POST /api/agent/sites/:siteId/pages/bulk-publish": {
     name: "pages_bulk_publish",
@@ -74,7 +77,7 @@ const TOOL_META = {
   "GET /api/agent/sites/:siteId/pages": {
     name: "pages_list",
     description: { en: "Lists a site's pages (use 'fields' to limit the returned columns).", it: "Elenca le pagine di un sito (usa 'fields' per limitare le colonne restituite)." },
-    inputSchema: { site_id: z.number(), fields: z.string().optional().describe("CSV of columns, e.g. 'id,url_path,title'") },
+    inputSchema: { site_id: z.number(), limit: z.number().optional(), offset: z.number().optional(), post_type: z.enum(["page", "article"]).optional(), category_id: z.number().optional(), published: z.boolean().optional(), fields: z.string().optional().describe("CSV of columns, e.g. 'id,url_path,title'") },
   },
   "GET /api/agent/sites/:siteId/pages/:pageId": {
     name: "pages_get",
@@ -1528,11 +1531,6 @@ const TOOL_META = {
     description: { en: "Activates or deactivates a workflow (no body: toggles; body {active:true|false}: sets explicitly).", it: "Attiva o disattiva un workflow (senza body: inverte; con body {active:true|false}: imposta esplicitamente)." },
     inputSchema: { site_id: z.number(), workflow_id: z.number(), active: z.boolean().optional() },
   },
-  "POST /api/agent/sites/:siteId/workflows/:workflowId/test": {
-    name: "workflows_test",
-    description: { en: "Dry-run: lists the actions that would run for an email without executing them.", it: "Dry-run: elenca le azioni che partirebbero per una email senza eseguirle." },
-    inputSchema: { site_id: z.number(), workflow_id: z.number(), email: z.string() },
-  },
 
   // ── OAuth Google (Advanced features) ──────────────────────────────────────────
   "GET /api/agent/sites/:siteId/oauth-apps": {
@@ -1547,12 +1545,12 @@ const TOOL_META = {
   },
   "PUT /api/agent/sites/:siteId/oauth-apps/:appId": {
     name: "oauth_update_app",
-    description: { en: "Updates an OAuth app.", it: "Aggiorna un'app OAuth." },
+    description: { en: "Updates OAuth app settings for the site, identified by site_id and app_id; supplied client credentials, redirect URI, scopes, or enabled state replace saved values.", it: "Aggiorna le impostazioni dell'app OAuth del sito, identificata da site_id e app_id; le credenziali, redirect URI, scope o stato enabled inviati sostituiscono i valori salvati." },
     inputSchema: { site_id: z.number(), app_id: z.number(), client_id: z.string().optional(), client_secret: z.string().optional(), redirect_uri: z.string().optional(), scopes: z.array(z.string()).optional(), enabled: z.boolean().optional() },
   },
   "DELETE /api/agent/sites/:siteId/oauth-apps/:appId": {
     name: "oauth_delete_app",
-    description: { en: "Deletes an OAuth app.", it: "Elimina un'app OAuth." },
+    description: { en: "Deletes the configured OAuth app identified by site_id and app_id from the site; this removes its saved client configuration and prevents new authorization flows using it.", it: "Elimina dal sito l'app OAuth configurata, identificata da site_id e app_id; rimuove la configurazione client salvata e impedisce nuovi flussi di autorizzazione con essa." },
     inputSchema: { site_id: z.number(), app_id: z.number() },
   },
   "POST /api/agent/sites/:siteId/oauth/auth-url": {
@@ -1562,7 +1560,7 @@ const TOOL_META = {
   },
   "POST /api/agent/sites/:siteId/oauth/exchange": {
     name: "oauth_exchange_code",
-    description: { en: "Exchanges the authorization code for access/refresh tokens.", it: "Scambia il codice di autorizzazione con access/refresh token." },
+    description: { en: "Exchanges the OAuth authorization code for access and refresh tokens using the site_id and app_id; code is required and optional state is checked before saving the connection.", it: "Scambia il codice di autorizzazione OAuth con access e refresh token usando site_id e app_id; code è obbligatorio e l'eventuale state viene verificato prima di salvare la connessione." },
     inputSchema: { site_id: z.number(), app_id: z.number(), code: z.string(), state: z.string().optional() },
   },
   "GET /api/agent/sites/:siteId/oauth/connections": {
@@ -1577,7 +1575,7 @@ const TOOL_META = {
   },
   "POST /api/agent/sites/:siteId/oauth/refresh": {
     name: "oauth_refresh_token",
-    description: { en: "Refreshes an expired access token using the saved refresh token.", it: "Rinnova l'access_token scaduto usando il refresh_token salvato." },
+    description: { en: "Refreshes an expired OAuth access token for the app identified by site_id and app_id using its saved refresh token, then stores the renewed credentials for subsequent API calls.", it: "Rinnova un access token OAuth scaduto per l'app identificata da site_id e app_id usando il refresh token salvato, quindi memorizza le credenziali aggiornate per le chiamate successive." },
     inputSchema: { site_id: z.number(), connection_id: z.number() },
   },
 
@@ -1753,7 +1751,7 @@ const TOOL_META = {
     inputSchema: { site_id: z.number(), kind: z.enum(["segment", "workflow", "agent", "quote"]), input: z.record(z.any()) },
   },
   "GET /api/agent/sites/:siteId/sandbox/runs": {
-    name: "sandbox_runs_list",
+    name: "sandbox_dryrun_logs_list",
     description: { en: "Lists dry-run execution logs (sandbox_runs) for a site, optionally filtered by kind.", it: "Elenca i log delle esecuzioni dry-run (sandbox_runs) di un sito, con filtro opzionale per kind." },
     inputSchema: { site_id: z.number(), kind: z.enum(["segment", "workflow", "agent", "quote"]).optional(), limit: z.number().int().min(1).max(200).optional() },
   },
@@ -1986,6 +1984,9 @@ const TOOL_META = {
   },
 };
 
+// Metadati aggiuntivi (route recenti) in file separati per area.
+Object.assign(TOOL_META, CONTENT_META, SYNC_META, MISC_META);
+
 // ── Generic fallback for routes not (yet) in TOOL_META ──────────────────────
 
 function autoName(method, path) {
@@ -2030,6 +2031,15 @@ export function discoverTools(lang = "en") {
         multipart: meta?.multipart || false,
         enriched: !!meta,
       });
+    }
+  }
+  const names = new Map();
+  for (const tool of tools) {
+    const count = (names.get(tool.name) || 0) + 1;
+    names.set(tool.name, count);
+    if (count > 1) {
+      logger.error(`MCP duplicate tool name ${tool.name}; renaming duplicate #${count}`);
+      tool.name = `${tool.name}_${count}`;
     }
   }
   return tools;
@@ -2081,18 +2091,28 @@ async function buildRequestBody(tool, rest) {
   return { body: form, headers: {} };
 }
 
+const MAX_TEXT_CHARS = 1_000_000;
+const MAX_BINARY_BYTES = 15 * 1024 * 1024;
+function capText(text) {
+  if (typeof text !== "string" || text.length <= MAX_TEXT_CHARS) return text;
+  return text.slice(0, MAX_TEXT_CHARS) + "\n[truncated: use limit/offset/fields params to narrow the result]";
+}
+
 async function contentFromResponse(resp) {
   const contentType = resp.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
     const data = await resp.json().catch(() => null);
-    return { content: [{ type: "text", text: JSON.stringify(data) }], isError: !resp.ok };
+    return { content: [{ type: "text", text: capText(JSON.stringify(data)) }], isError: !resp.ok };
   }
   if (contentType.startsWith("text/")) {
     const text = await resp.text();
-    return { content: [{ type: "text", text }], isError: !resp.ok };
+    return { content: [{ type: "text", text: capText(text) }], isError: !resp.ok };
   }
   // Binary (e.g. the site_backup zip): base64 as an embedded resource.
   const buf = Buffer.from(await resp.arrayBuffer());
+  if (buf.length > MAX_BINARY_BYTES) {
+    return { content: [{ type: "text", text: JSON.stringify({ error: `Binary response too large for MCP (${buf.length} bytes, max ${MAX_BINARY_BYTES}): use the REST download endpoint instead.` }) }], isError: true };
+  }
   return {
     content: [{
       type: "resource",
@@ -2129,7 +2149,7 @@ export function makeToolHandler(tool) {
       fetchOptions.body = body;
       fetchOptions.headers = { ...fetchOptions.headers, ...headers };
     } else if (Object.keys(rest).length > 0) {
-      url += "?" + new URLSearchParams(Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, String(v)]))).toString();
+      url += "?" + new URLSearchParams(Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, v !== null && typeof v === "object" ? JSON.stringify(v) : String(v)]))).toString();
     }
 
     try {
@@ -2137,7 +2157,7 @@ export function makeToolHandler(tool) {
       return await contentFromResponse(resp);
     } catch (err) {
       logger.error(`MCP proxy: call to ${tool.method} ${resolved} failed: ${err.message}`);
-      return { content: [{ type: "text", text: JSON.stringify({ error: "Internal call failed: " + err.message }) }], isError: true };
+      return { content: [{ type: "text", text: JSON.stringify({ error: "Internal call failed (details in server log)" }) }], isError: true };
     }
   };
 }
