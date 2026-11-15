@@ -81,7 +81,7 @@ export function buildCatalog(tools) {
 }
 
 export function suggestNames(catalog, name, max = 3) {
-  const q = String(name || "").toLowerCase();
+  const q = String(name || "").slice(0, 80).toLowerCase();
   const scored = [];
   for (const n of catalog.byName.keys()) {
     const lower = n.toLowerCase();
@@ -100,8 +100,12 @@ function textResult(obj, isError = false) {
 const NAV_HINT = 'Call tools_tree to see the areas, tools_in_category {"category":"..."} to list the tools of a category, tools_describe {"name":"..."} for the input schema.';
 
 export function unknownToolResult(catalog, name) {
+  if (name === undefined || name === null || String(name).trim() === "") {
+    return textResult(`Missing tool "name". ${NAV_HINT}`, true);
+  }
+  const shown = String(name).slice(0, 80);
   const sugg = suggestNames(catalog, name);
-  return textResult(`Unknown tool "${name}". ${sugg.length ? `Did you mean: ${sugg.join(", ")}? ` : ""}${NAV_HINT}`, true);
+  return textResult(`Unknown tool "${shown}". ${sugg.length ? `Did you mean: ${sugg.join(", ")}? ` : ""}${NAV_HINT}`, true);
 }
 
 function invalidArgsResult(name, issues) {
@@ -206,7 +210,7 @@ export async function handleNavigation(catalog, lang, name, args, extra) {
       });
     }
     case "tools_describe": {
-      const tool = catalog.byName.get(String(a.name || "").trim());
+      const tool = catalog.byName.get(String(a.name ?? "").trim());
       if (!tool) return unknownToolResult(catalog, a.name);
       return textResult({
         name: tool.name, method: tool.method, path: tool.path, area: tool.area, category: tool.category, read_only: tool.readOnly,

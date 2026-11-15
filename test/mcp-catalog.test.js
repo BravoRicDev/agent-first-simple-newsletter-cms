@@ -157,6 +157,14 @@ describe("MCP: albero di navigazione + tool diretti + errori guidati", () => {
     assert.notEqual(page.post_type, "article");
   });
 
+  test("nome mancante o enorme: errore breve, nessun eco di 100 KB", async () => {
+    const missing = await call(rwToken, "tools_describe", {});
+    assert.match(missing.body.result.content[0].text, /Missing tool "name"/);
+    const huge = await call(rwToken, "tools_run", { name: "x".repeat(100000), args: {} });
+    assert.equal(huge.body.result.isError, true);
+    assert.ok(huge.body.result.content[0].text.length < 1000);
+  });
+
   test("404 legittimo: nessun hint fuorviante verso tools_describe", async () => {
     const r = await call(rwToken, "pages_delete", { site_id: site.id, page_id: 99999999 });
     assert.equal(r.body.result.isError, true);
