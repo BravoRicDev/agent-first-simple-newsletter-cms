@@ -45,3 +45,26 @@ The operating rules (NEVER loop, prefer bulk/find-replace, don't unpublish while
 - `src/routes/mcp.js`: mounts `/api/mcp`, a fresh MCP `Server` + transport for every request (no shared state), rate limiting, batch rejection, and authentication precedence.
 - The proxy forwards the original `Authorization` header to the internal call (`http://127.0.0.1:<port>/api/agent/...`) — same identity, no new authentication mechanism to maintain.
 - Binary responses (e.g. the backup ZIP) arrive as a base64 `resource` content block, not as text.
+
+## New areas and tools
+
+Categories added to the navigation tree (`src/services/mcp-tree.js`):
+
+- `feeds`, `search`, `editorial`, `releases`: area **Content & site** (`content`).
+- `openapi.json`: area **Admin, reports & system** (`admin`).
+- Routes under `pages/:pageId/...` and `media/...` stay in the existing `pages` and `media` categories.
+
+New tools (by name):
+
+- **Feeds**: `feeds_list`.
+- **Search**: `search_pages`, `search_reindex`.
+- **Editorial workflow**: `editorial_queue`, `pages_editorial_get`, `pages_editorial_transition` (actions: `submit`, `withdraw`, `approve`, `reject`, `publish`, `unpublish`, `reopen`).
+- **Releases**: `releases_list`, `releases_create`, `releases_get`, `releases_update`, `releases_delete`, `releases_items_add`, `releases_item_remove`, `releases_preview`, `releases_schedule`, `releases_cancel`, `releases_rebase`, `releases_run`.
+- **OpenAPI**: `agent_openapi_get`.
+- **Page versions**: `pages_version_get`, `pages_version_diff`, `pages_version_checkpoint`, `pages_restore_version`.
+- **Media variants**: `media_variants_get`, `media_focal_set`, `media_variants_regenerate`.
+
+Settings and page fields:
+
+- `blog_settings_update` now accepts `feed_enabled`, `feed_item_limit`, `feed_full_content`, `search_enabled`, `search_language`, `editorial_workflow_enabled` and `images_srcset_mode`. Flags are the strings `"1"` / `"0"`.
+- `pages_create` and `pages_replace` accept `unpublish_at` (automatic expiry, ISO 8601 with offset; `null` clears it; omitted on replace = unchanged) and the article fields `post_type`, `category_id`, `excerpt`, `featured_image`, `published_at`.

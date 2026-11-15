@@ -1,0 +1,5 @@
+{
+  "pages.unpublishAt": "Rimuovi automaticamente il",
+  "pages.unpublishAtHint": "Facoltativo. Deve essere nel futuro e successiva alla pubblicazione programmata.",
+  "api.pages.scheduleInvalid": "Date di pubblicazione non valide: la rimozione deve essere futura e successiva alla pubblicazione."
+}

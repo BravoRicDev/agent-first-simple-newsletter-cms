@@ -45,3 +45,26 @@ Le regole operative (MAI fare loop, preferire bulk/find-replace, non depubblicar
 - `src/routes/mcp.js`: monta `/api/mcp`, un `Server` MCP + transport nuovi per ogni richiesta (nessuno stato condiviso), rate limiting, rifiuto batch e precedenza di autenticazione.
 - Il proxy inoltra l'header `Authorization` originale alla chiamata interna (`http://127.0.0.1:<porta>/api/agent/...`) — stessa identità, nessun nuovo meccanismo di autenticazione da mantenere.
 - Risposte binarie (es. lo ZIP di backup) arrivano come blocco `resource` in base64, non come testo.
+
+## Nuove aree e strumenti
+
+Categorie aggiunte all'albero di navigazione (`src/services/mcp-tree.js`):
+
+- `feeds`, `search`, `editorial`, `releases`: area **Contenuti e sito** (`content`).
+- `openapi.json`: area **Amministrazione, report e sistema** (`admin`).
+- Le route sotto `pages/:pageId/...` e `media/...` restano nelle categorie esistenti `pages` e `media`.
+
+Nuovi tool (per nome):
+
+- **Feed**: `feeds_list`.
+- **Ricerca**: `search_pages`, `search_reindex`.
+- **Workflow editoriale**: `editorial_queue`, `pages_editorial_get`, `pages_editorial_transition` (azioni: `submit`, `withdraw`, `approve`, `reject`, `publish`, `unpublish`, `reopen`).
+- **Release**: `releases_list`, `releases_create`, `releases_get`, `releases_update`, `releases_delete`, `releases_items_add`, `releases_item_remove`, `releases_preview`, `releases_schedule`, `releases_cancel`, `releases_rebase`, `releases_run`.
+- **OpenAPI**: `agent_openapi_get`.
+- **Versioni pagina**: `pages_version_get`, `pages_version_diff`, `pages_version_checkpoint`, `pages_restore_version`.
+- **Varianti immagine**: `media_variants_get`, `media_focal_set`, `media_variants_regenerate`.
+
+Impostazioni e campi pagina:
+
+- `blog_settings_update` ora accetta `feed_enabled`, `feed_item_limit`, `feed_full_content`, `search_enabled`, `search_language`, `editorial_workflow_enabled` e `images_srcset_mode`. I flag sono le stringhe `"1"` / `"0"`.
+- `pages_create` e `pages_replace` accettano `unpublish_at` (scadenza automatica, ISO 8601 con offset; `null` lo annulla; omesso in replace = invariato) e i campi articolo `post_type`, `category_id`, `excerpt`, `featured_image`, `published_at`.

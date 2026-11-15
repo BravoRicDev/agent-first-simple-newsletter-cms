@@ -128,6 +128,12 @@
           value="<%= page.publish_at ? new Date(page.publish_at).toISOString().slice(0,16) : '' %>">
       </div>
       <div class="form-group">
+        <label><%= t('pages.unpublishAt') %></label>
+        <input type="datetime-local" name="unpublish_at"
+          value="<%= page.unpublish_at ? new Date(page.unpublish_at).toISOString().slice(0,16) : '' %>">
+        <small style="color:#666;"><%= t('pages.unpublishAtHint') %></small>
+      </div>
+      <div class="form-group">
         <label>Promemoria revisione il</label>
         <input type="datetime-local" name="review_at"
           value="<%= page.review_at ? new Date(page.review_at).toISOString().slice(0,16) : '' %>">
@@ -320,6 +326,32 @@
   </div>
 </div>
 
+<div id="editorial-panel" style="display:none;background:#fff;border-radius:8px;padding:16px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+  <h3 style="font-size:15px;margin-bottom:8px;"><%= t('editorial.title') %>: <span id="ed-status"></span></h3>
+  <div id="ed-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
+  <input type="text" id="ed-comment" placeholder="<%= t('editorial.comment') %>" style="width:100%;max-width:480px;margin-bottom:8px;">
+  <h4 style="font-size:13px;margin:8px 0 4px;"><%= t('editorial.history') %></h4>
+  <ul id="ed-history" style="font-size:13px;color:#444;padding-left:18px;"></ul>
+</div>
+<script>
+(function(){
+  var panel=document.getElementById('editorial-panel');if(!panel)return;
+  var id=<%= page.id %>;
+  var L=<%- JSON.stringify({status:{draft:t('editorial.status.draft'),in_review:t('editorial.status.in_review'),approved:t('editorial.status.approved'),rejected:t('editorial.status.rejected'),published:t('editorial.status.published')},action:{submit:t('editorial.action.submit'),withdraw:t('editorial.action.withdraw'),approve:t('editorial.action.approve'),reject:t('editorial.action.reject'),publish:t('editorial.action.publish'),unpublish:t('editorial.action.unpublish'),reopen:t('editorial.action.reopen')},empty:t('editorial.empty')}).replace(/</g,'\\u003c') %>;
+  function load(){fetch('/admin/pages/'+id+'/editorial/state',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(s){
+    if(!s.enabled)return;panel.style.display='block';
+    document.getElementById('ed-status').textContent=L.status[s.status]||s.status;
+    var box=document.getElementById('ed-actions');box.innerHTML='';
+    s.allowed_actions.forEach(function(a){var b=document.createElement('button');b.type='button';b.className='btn';b.textContent=L.action[a]||a;b.onclick=function(){
+      fetch('/admin/pages/'+id+'/editorial/'+a,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({comment:document.getElementById('ed-comment').value})})
+        .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});}).then(function(x){if(x.ok){location.reload();}else{alert(x.j.message||x.j.error);}});};box.appendChild(b);});
+    var ul=document.getElementById('ed-history');ul.innerHTML='';
+    if(!s.history.length){var li=document.createElement('li');li.textContent=L.empty;ul.appendChild(li);}
+    s.history.forEach(function(h){var li=document.createElement('li');li.textContent=new Date(h.created_at).toLocaleString()+' - '+h.actor_label+': '+(L.status[h.from_status]||h.from_status||'-')+' -> '+(L.status[h.to_status]||h.to_status)+(h.comment?' ('+h.comment+')':'');ul.appendChild(li);});
+  });}
+  load();
+})();
+</script>
 <script>
 async function rewriteContent() {
   const ta = document.getElementById('pageContent');

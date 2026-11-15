@@ -10,6 +10,10 @@ import { runScheduledBackup } from "./backup.js";
 import { sendCallReminders } from "./calls.js";
 import { cleanupExpiredAudio } from "./call-recordings.js";
 import { exportPublishedPages } from "./static-export.js";
+import { runUnpublishDue } from "./scheduled-unpublish.js";
+import { runReleasesDue } from "./scheduled-releases.js";
+import { runMediaVariantsBackfill } from "./scheduled-media-variants.js";
+import { afterContentChange } from "./site-sync.js";
 import { translate } from "../middleware/i18n.js";
 import config from "../config.js";
 
@@ -24,15 +28,23 @@ let tickRunning = false;
 // tutto il tick (acquisita in schedulerTick, rilasciata in finally).
 const TICK_LOCK_KEY = 72700123;
 
-async function publishDuePages() {
+export async function publishDuePages() {
   try {
+    // Con editorial_workflow_enabled=1 sul sito, la pubblicazione pianificata scatta SOLO se la pagina e' 'approved'.
     const result = await query(
       `UPDATE pages
-       SET published = true, updated_at = NOW(), publish_at = NULL
+       SET published = true, updated_at = NOW(), publish_at = NULL,
+           published_at = CASE WHEN post_type = 'article' THEN COALESCE(published_at, NOW()) ELSE published_at END,
+           editorial_status = CASE WHEN editorial_status = 'approved' THEN 'published' ELSE editorial_status END,
+           unpublish_at = CASE WHEN unpublish_at IS NOT NULL AND unpublish_at <= NOW() THEN NULL ELSE unpublish_at END
        WHERE publish_at IS NOT NULL
          AND publish_at <= NOW()
          AND published = false
-       RETURNING id, site_id, url_path, title`
+         AND (
+           editorial_status = 'approved'
+           OR NOT EXISTS (SELECT 1 FROM settings st WHERE st.site_id = pages.site_id AND st.key = 'editorial_workflow_enabled' AND st.value = '1')
+         )
+       RETURNING id, site_id, url_path, title, post_type`
     );
 
     for (const page of result.rows) {
@@ -48,15 +60,14 @@ async function publishDuePages() {
       });
     }
 
-    // Un solo export per sito, non uno per pagina: N pagine scadute nello
-    // stesso tick lanciavano N export completi concorrenti dello stesso sito.
+    // Un solo sync/export per sito (listing blog + homepage + statico).
     if (result.rowCount > 0) {
       const siteIds = [...new Set(result.rows.map((r) => r.site_id))];
       for (const siteId of siteIds) {
         try {
-          await exportPublishedPages({ siteId });
+          await afterContentChange(siteId, { articleChanged: result.rows.some((r) => r.site_id === siteId && r.post_type === "article") });
         } catch (err) {
-          logger.error(`Scheduler export fallito per site ${siteId}: ${err.message}`);
+          logger.error(`Scheduler sync fallito per site ${siteId}: ${err.message}`);
         }
       }
       logger.info(`Scheduler: pubblicate ${result.rowCount} pagine pianificate (${siteIds.length} siti)`);
@@ -131,6 +142,9 @@ async function schedulerTick({ webhookAllowPrivate = false } = {}) {
       return;
     }
     await publishDuePages();
+    try { await runUnpublishDue(); } catch (err) { logger.error(`Unpublish tick fallito: ${err.message}`); }
+    try { await runReleasesDue(); } catch (err) { logger.error(`Releases tick fallito: ${err.message}`); }
+    try { await runMediaVariantsBackfill(); } catch (err) { logger.error(`Media variants tick fallito: ${err.message}`); }
     await postScheduled();
     await sendReviewReminders();
     await sendCampaignBatch();

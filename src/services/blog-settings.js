@@ -18,6 +18,13 @@ export const DEFAULTS = {
   blog_index_intro_html: "",
   homepage_custom_css: "",
   homepage_custom_js: "",
+  feed_enabled: "0",
+  feed_item_limit: "20",
+  feed_full_content: "0",
+  search_enabled: "0",
+  search_language: "italian",
+  editorial_workflow_enabled: "0",
+  images_srcset_mode: "0",
 };
 
 export async function getBlogConfig(siteId) {
@@ -45,4 +52,26 @@ export async function setBlogConfig(siteId, fields) {
       await query("DELETE FROM settings WHERE site_id = $1 AND key = $2", [siteId, key]);
     }
   }
+  invalidateBlogSettingCache(siteId);
+  if ("search_language" in fields) {
+    import("./search.js").then((m) => m.reindexSite?.(siteId)).catch(() => {});
+  }
+}
+
+const settingCache = new Map(); // `${siteId}:${key}` -> { value, at }
+
+export function invalidateBlogSettingCache(siteId) {
+  for (const k of [...settingCache.keys()]) if (!siteId || k.startsWith(`${siteId}:`)) settingCache.delete(k);
+}
+
+// Lettura singola con cache breve (15s): usata sui percorsi caldi (serve.js, guard).
+export async function getBlogSetting(siteId, key, { ttlMs = 15000 } = {}) {
+  if (!siteId || !(key in DEFAULTS)) return DEFAULTS[key] ?? "";
+  const ck = `${siteId}:${key}`;
+  const hit = settingCache.get(ck);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value;
+  const row = (await query("SELECT value FROM settings WHERE site_id = $1 AND key = $2", [siteId, key])).rows[0];
+  const value = row ? row.value : DEFAULTS[key];
+  settingCache.set(ck, { value, at: Date.now() });
+  return value;
 }

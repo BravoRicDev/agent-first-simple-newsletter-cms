@@ -90,7 +90,7 @@ export async function syncBlogListingPages(siteId) {
   const perPage = parsedPerPage || 10;
   const articles = (await query(
     `SELECT id, title, card_title, excerpt, featured_image, published_at, url_path, category_id, content, reading_time_minutes, card_html_override
-     FROM pages WHERE site_id = $1 AND post_type = 'article' AND published = true
+     FROM pages WHERE site_id = $1 AND post_type = 'article' AND published = true AND (unpublish_at IS NULL OR unpublish_at > NOW())
      ORDER BY published_at DESC NULLS LAST, id DESC`,
     [siteId]
   )).rows;

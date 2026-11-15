@@ -17,6 +17,7 @@ import { resolveLayoutName, getSiteThemeVars } from "../services/site-render.js"
 import { getPageTrackingOverride, setPageTrackingOverride } from "../services/tracking.js";
 import { syncBlogListingPages } from "../services/blog-index.js";
 import { syncHomepageSections } from "../services/homepage-sections.js";
+import { validateSchedule, ScheduleError } from "../services/page-schedule.js";
 // Niente tracking (GA4/Pixel/consenso) nelle route di preview qui sotto:
 // sono anteprime interne nell'iframe dell'admin, non traffico pubblico —
 // iniettarlo inquinerebbe le statistiche con le visualizzazioni dell'admin
@@ -126,7 +127,7 @@ router.get("/admin/pages", requireAuth, resolveSite, authorize("pages", "read"),
       where += ` AND p.category_id = $${filters.length}`;
     }
     const pages = (await query(
-      `SELECT p.id, p.url_path, p.title, p.layout_mode, p.published, p.publish_at, p.created_at, p.updated_at,
+      `SELECT p.id, p.url_path, p.title, p.layout_mode, p.published, p.publish_at, p.unpublish_at, p.editorial_status, p.created_at, p.updated_at,
               p.post_type, p.category_id, c.name AS category_name
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
        WHERE ${where} ORDER BY p.url_path`,
@@ -166,7 +167,9 @@ router.post("/admin/pages", requireAuth, resolveSite, authorize("pages", "create
     // Non-superadmin: SOLO il proprio site_id (mai Host header)
     const siteId = req.user.role === "superadmin" ? (parseInt(req.body.site_id, 10) || req.user.site_id) : req.user.site_id;
     if (!siteId) return res.status(403).render("error", { message: res.locals.t("api.common.forbidden") });
-    const publish_at = req.body.publish_at ? new Date(req.body.publish_at) : null;
+    const sched = validateSchedule({ publish_at: req.body.publish_at, unpublish_at: req.body.unpublish_at });
+    const publish_at = sched.publish_at;
+    const unpublish_at = sched.unpublish_at;
     const review_at = req.body.review_at ? new Date(req.body.review_at) : null;
     const categoryId = optionalId(data.category_id);
     await assertCategoryBelongsToSite(categoryId, siteId);
@@ -178,11 +181,11 @@ router.post("/admin/pages", requireAuth, resolveSite, authorize("pages", "create
 await query(
       `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at, review_at,
                            post_type, category_id, excerpt, featured_image, published_at, author_id,
-                           card_title, reading_time_minutes, card_html_override)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+                           card_title, reading_time_minutes, card_html_override, unpublish_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
       [siteId, data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
        data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId,
-       data.card_title, readingTimeMinutes, data.card_html_override || null]
+       data.card_title, readingTimeMinutes, data.card_html_override || null, unpublish_at]
     );
     if (data.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
     await syncHomepageSections(siteId).catch(() => {});
@@ -192,6 +195,7 @@ await query(
     if (err instanceof z.ZodError) return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.code === "CATEGORY_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.categoryInvalid") });
     if (err.code === "AUTHOR_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.authorInvalid") });
+    if (err instanceof ScheduleError) return res.status(400).render("error", { message: res.locals.t("api.pages.scheduleInvalid") });
     if (err.message === "Invalid published_at") return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.message === "URL non valido") return res.status(400).render("error", { message: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(400).render("error", { message: res.locals.t("api.pages.urlExists") });
@@ -309,7 +313,7 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     data.url_path = normalizeUrlPath(data.url_path);
 
     const page = (await query(
-      "SELECT site_id, url_path, title, content, layout_mode, published, post_type, category_id, excerpt, featured_image, published_at, author_id FROM pages WHERE id = $1",
+      "SELECT site_id, url_path, title, content, layout_mode, published, post_type, category_id, excerpt, featured_image, published_at, author_id, unpublish_at FROM pages WHERE id = $1",
       [req.params.id]
     )).rows[0];
     if (!page) return res.status(404).render("error", { message: res.locals.t("api.pages.notFound") });
@@ -332,17 +336,19 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
       data.content = finalContent;
     }
 
-    const publish_at = req.body.publish_at ? new Date(req.body.publish_at) : null;
+    const sched = validateSchedule({ publish_at: req.body.publish_at, unpublish_at: req.body.unpublish_at }, { existingUnpublishAt: page.unpublish_at });
+    const publish_at = sched.publish_at;
+    const unpublish_at = sched.unpublish_at;
     const review_at = req.body.review_at ? new Date(req.body.review_at) : null;
     const readingTimeMinutes = optionalId(data.reading_time_minutes);
     await query(
       `UPDATE pages SET url_path = $1, title = $2, content = $3, layout_mode = $4, published = $5,
        publish_at = $6, review_at = $7, post_type = $8, category_id = $9, excerpt = $10,
        featured_image = $11, published_at = $12, author_id = $13, card_title = $14,
-       reading_time_minutes = $15, card_html_override = $16, updated_at = NOW() WHERE id = $17 AND site_id = $18`,
+       reading_time_minutes = $15, card_html_override = $16, unpublish_at = $19, updated_at = NOW() WHERE id = $17 AND site_id = $18`,
       [data.url_path, data.title, data.content, data.layout_mode, publishedBool, publish_at, review_at,
        data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, authorId,
-       data.card_title, readingTimeMinutes, data.card_html_override || null, req.params.id, siteId]
+       data.card_title, readingTimeMinutes, data.card_html_override || null, req.params.id, siteId, unpublish_at]
     );
 
     if (data.post_type === 'article' || page.post_type === 'article') await syncBlogListingPages(siteId).catch(() => {});
@@ -425,6 +431,7 @@ router.post("/admin/pages/:id", requireAuth, resolveSite, authorize("pages", "up
     if (err instanceof z.ZodError) return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.code === "CATEGORY_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.categoryInvalid") });
     if (err.code === "AUTHOR_SITE_MISMATCH") return res.status(400).render("error", { message: res.locals.t("api.pages.authorInvalid") });
+    if (err instanceof ScheduleError) return res.status(400).render("error", { message: res.locals.t("api.pages.scheduleInvalid") });
     if (err.message === "Invalid published_at") return res.status(400).render("error", { message: res.locals.t("api.common.invalidData") });
     if (err.message === "URL non valido") return res.status(400).render("error", { message: res.locals.t("api.common.invalidUrl") });
     if (err.code === "23505") return res.status(400).render("error", { message: res.locals.t("api.pages.urlExists") });
@@ -445,7 +452,7 @@ router.post("/admin/pages/:id/publish-toggle", requireAuth, authorize("pages", "
       : !existing.published;
 
     await query(
-      "UPDATE pages SET published = $1, updated_at = NOW() WHERE id = $2",
+      "UPDATE pages SET published = $1, updated_at = NOW(), unpublish_at = CASE WHEN $1 AND unpublish_at <= NOW() THEN NULL ELSE unpublish_at END WHERE id = $2",
       [newPublished, req.params.id]
     );
     if (existing.post_type === 'article') await syncBlogListingPages(existing.site_id).catch(() => {});

@@ -1532,3 +1532,111 @@ agent routes + MCP tools (301 total tools). Overview:
 Unchanged constraint: **WhatsApp is never native** — the CMS only records
 messages; sending remains with external Baileys engines (ExampleBot) via
 agent/MCP APIs.
+
+## CMS EXPANSION (feeds, expiry, versions, OpenAPI, search, editorial workflow, releases, images, security)
+
+### 1. Feeds
+Public RSS 2.0 and Atom feeds: `/feed.xml`, `/atom.xml`, `/feed/<category-slug>.xml`, `/feed/<category-slug>.atom.xml`.
+- Requires blog setting `feed_enabled="1"` (default `"0"` = 404, no files, no `<link>`).
+- `feed_item_limit` 1..100 (default 20). `feed_full_content` `"1"` adds the full HTML of each item.
+- Only published articles with `published_at <= now`, not expired, not noindex.
+- ETag / Last-Modified / 304 supported.
+- Static export writes the same files. When enabled, a `<link rel="alternate">` autodiscovery tag is injected into every page.
+- Agent: `GET /api/agent/sites/{siteId}/feeds` (tool `feeds_list`). Enable with `PUT /api/agent/sites/{siteId}/blog-settings` (tool `blog_settings_update`, `feed_enabled="1"`).
+
+### 2. Scheduled expiry (unpublish_at)
+- Pages and articles accept `unpublish_at` (ISO 8601 with offset) on POST/PUT page. It must be in the future and after `publish_at`. PUT with the field omitted = unchanged; `null` clears it.
+- Error: `400 invalid_schedule {field, reason}` with `reason` = `unpublish_in_past | unpublish_before_publish | invalid_date`.
+- Expired pages are treated as absent immediately (live pages, sitemap, blog, search, feeds). Static files may lag: up to 60 s (scheduler tick) or 5 min (periodic full export); live paths are exact.
+- The scheduler then sets `published=false` and clears `unpublish_at` (audit action `unpublish`, `source: scheduler`).
+- Publish-toggle and bulk-publish with `published:true` clear an already-expired `unpublish_at`.
+- `GET .../pages?fields=` accepts `publish_at,unpublish_at,editorial_status`. They are NOT in the default field list.
+- Behavior fix: scheduled (`publish_at`) articles now refresh blog listings and homepage and get `published_at`.
+
+### 3. Versions
+| Method and path | Tool | Notes |
+|---|---|---|
+| `GET .../pages/{pageId}/versions/{versionId}` | `pages_version_get` | `max_chars` |
+| `GET .../pages/{pageId}/version-diff?from=&to=&context=&max_chars=` | `pages_version_diff` | `from` = `<id>` or `current`; `to` = `<id>` or `current`. Default from = newest version, to = current. Response `{changed_fields[], content:{added_lines,removed_lines,hunks[],truncated}}` |
+| `POST .../pages/{pageId}/versions` body `{label}` | `pages_version_checkpoint` | manual checkpoint |
+| `POST .../pages/{pageId}/versions/{versionId}/restore` body `{expected_updated_at?}` | `pages_restore_version` | atomic restore after a full snapshot; syncs blog, homepage and static files; `409 stale_page` on mismatch; `409 conflict` when the path is taken |
+| `POST .../pages/{pageId}/restore-last` | | same engine |
+| `POST .../pages/{pageId}/undo` | | same engine |
+
+- Versions written by the new code carry `source`. Legacy rows restore only `url_path`, `title`, `content`, `layout_mode`, `published`.
+- Scheduling fields are never restored.
+- Maximum 50 versions per page.
+
+### 4. OpenAPI
+- `GET /api/agent/openapi.json?area=&lang=` (auth required, tool `agent_openapi_get`). Generates OpenAPI 3.1 from the MCP catalog.
+- `operationId` = tool name; `tags` = area ids; security `bearerAuth`.
+- GET/DELETE arguments become query parameters; POST/PUT/PATCH arguments become a JSON body.
+- Path parameters keep REST names with `x-mcp-argument`. ETag supported. No public variant.
+
+### 5. Search
+- Public: `GET /api/public/search?q=&limit=&offset=`. Requires `search_enabled="1"`. Rate limit 30 requests/min per IP. Host resolves the site.
+- Response: `{q, results:[{id,title,url,snippet,score}], total, limit, offset}`. `snippet` is HTML-escaped with `<mark>` around matches.
+- `search_language`: `italian | english | simple`. Changing it reindexes the site.
+- Shortcode `{{search}}` or `{{search:Placeholder}}` renders a search box that calls the live endpoint (works on static exports).
+- Agent: `GET /api/agent/sites/{siteId}/search?q=&include_unpublished=` (tool `search_pages`); `POST /api/agent/sites/{siteId}/search/reindex` (tool `search_reindex`).
+- Admin JSON: `GET /admin/api/search?q=`.
+- Excluded from results: unpublished, expired, noindex, generated blog listings.
+- The index (table `page_search_index`, per-site language) is maintained automatically by a DB trigger.
+
+### 6. Editorial workflow
+- Blog setting `editorial_workflow_enabled` (default `"0"`).
+- Statuses: `draft`, `in_review`, `approved`, `rejected`, `published`.
+- Actions: `submit | withdraw | approve | reject | publish | unpublish | reopen`.
+- Roles: publisher = admin/superadmin or custom role permission `pages:["publish"]`; reviewer = publisher or `pages:["approve"]`.
+- With the workflow ON, non-publishers get `403 editorial_review_required` on any unpublished-to-published change (create/update with `published:true`, publish-toggle, bulk-publish, restore).
+- Scheduled publication only fires for `approved` pages.
+- Changing title or content resets `in_review` or `approved` to `draft`.
+- Changing `editorial_workflow_enabled` itself requires admin/superadmin (or `pages:["publish"]`).
+- A page with `editorial_status` NULL (legacy) is never published by the scheduler while the workflow is ON, until approved.
+- Endpoints:
+  - `GET /api/agent/sites/{siteId}/editorial/queue` (tool `editorial_queue`, default `status=in_review`).
+  - `GET /api/agent/sites/{siteId}/pages/{pageId}/editorial` (tool `pages_editorial_get`): status, allowed_actions, history.
+  - `POST /api/agent/sites/{siteId}/pages/{pageId}/editorial/{action}` body `{comment}` (tool `pages_editorial_transition`). Reject requires a comment.
+- Errors: `invalid_action`, `workflow_disabled`, `editorial_forbidden`, `comment_required`, `page_not_found`, `invalid_transition`.
+- Admin UI: `/admin/editorial` and a panel in the page editor. Email notifications when SMTP is configured.
+- Known limitation: editing the content of an already published page is not blocked.
+
+### 7. Releases
+- A release bundles pages with target action `publish` or `unpublish`, executed atomically at `scheduled_at`.
+- Statuses: `draft`, `scheduled`, `running`, `done`, `failed`, `cancelled`.
+- Tools: `releases_list | releases_create | releases_get | releases_update | releases_delete | releases_items_add | releases_item_remove | releases_preview | releases_schedule | releases_cancel | releases_rebase | releases_run`. REST under `/api/agent/sites/{siteId}/releases`.
+- `preview` is the dry run: `will_change`, `no_op`, `conflicts`.
+- Conflicts:
+  - `page_changed`: page updated after being added to the release.
+  - `not_approved`: workflow ON and page not approved.
+  - On conflict nothing is applied; the release becomes `failed` with `result.conflicts`.
+- `rebase` accepts the current state (needs publish rights).
+- `run` with `force:true` ignores only `page_changed`.
+- Precedence: release publish clears `publish_at` and expired `unpublish_at`; the editorial gate applies; scheduling and running need publish rights.
+- Maximum 200 items per release.
+- Admin UI: `/admin/releases`.
+
+### 8. Images
+- Blog setting `images_srcset_mode`: `"0"` (default, HTML unchanged, nothing generated on upload) | `"srcset"` | `"picture"`.
+- Variants stored under `/media/_variants/{siteId}/{file}.{w}w.webp|avif`.
+- On-demand transform: `GET /img/{siteId}/{file}?w=&h=&fmt=&q=`.
+  - `w`: 160, 240, 320, 480, 640, 800, 1024, 1280, 1600, 1920, 2560.
+  - `h`: only with ratios 1:1, 4:3, 3:2, 16:9, 2:3, 3:4, 9:16.
+  - `fmt`: webp | avif | jpeg | png | auto.
+  - `q`: 40..90 step 10.
+  - Errors: `invalid_width | invalid_height | invalid_aspect | invalid_format | invalid_quality | unsupported_type | not_found | too_many_variants | busy`.
+- Focal point: `PUT /api/agent/sites/{siteId}/media/{filename}/focal` body `{x,y}` (0..1; tool `media_focal_set`). Used by crops.
+- `GET /api/agent/sites/{siteId}/media/{filename}/variants` (tool `media_variants_get`).
+- `POST /api/agent/sites/{siteId}/media/{filename}/variants/regenerate` (tool `media_variants_regenerate`).
+- Rendered pages get `srcset`, `sizes`, `loading` (no `width`/`height`) for local `/media/{siteId}/...` images that have variants.
+
+### 9. Security (admin web login, not the agent API)
+- Optional TOTP 2FA and passkeys per user: `/admin/security`.
+- Login second step: `POST /api/auth/verify` returns `{mfa_required:true, ticket, methods}`, then `POST /api/auth/mfa/verify`.
+- Agent CLI login `POST /api/agent/verify-otp` additionally needs `totp_code` or `backup_code` for 2FA users.
+- Users whose only factor is a passkey cannot use CLI `verify-otp` login (enable TOTP too).
+- `REQUIRE_2FA_ADMINS=1` (env) or site setting `require_2fa_admins=1` forces admins to enroll. Set the setting with `POST /admin/settings` or `PUT /api/agent/sites/{siteId}/settings/require_2fa_admins`.
+- OIDC SSO providers: `/admin/security/sso`, login buttons, PKCE (S256), verified email required, links existing users only, never creates users.
+- Second-factor verification locks for 15 minutes after 8 consecutive failures.
+- Admin/superadmin can reset a user's 2FA: `POST /admin/api/users/{id}/mfa-reset`.
+- API tokens are unaffected.

@@ -6,6 +6,8 @@ import { query } from "../db.js";
 import { generateAndSend, verify } from "../services/magic-link.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validateRedirectUri } from "../services/satellites.js";
+import { signSessionToken, setSessionCookie } from "../services/session.js";
+import { getLoginSecondFactor, createLoginChallenge, verifySecondFactor } from "../services/mfa.js";
 
 const router = Router();
 
@@ -54,20 +56,13 @@ router.post("/api/auth/verify", async (req, res, next) => {
     if (user.status === "disabled") {
       return res.status(403).json({ error: res.locals.t("api.auth.userDisabled"), disabled: true });
     }
-    const jwtToken = jwt.sign(
-      { sub: user.id, email: user.email, name: user.name, role: user.role, site_id: user.site_id, token_version: user.token_version },
-      config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn, algorithm: "HS256" }
-    );
-    res.cookie("token", jwtToken, {
-      httpOnly: true,
-      secure: config.nodeEnv === "production",
-      sameSite: "lax",
-      path: "/",
-      // maxAge fisso a 24h: se JWT_EXPIRES_IN > 24h (es. "7d"), il token
-      // restava valido via header Authorization oltre la vita del cookie.
-      maxAge: jwtExpiryToMs(config.jwtExpiresIn),
-    });
+    // 2FA opt-in: con secondo fattore attivo NON si emette la sessione qui; ticket monouso di 5 minuti.
+    const second = await getLoginSecondFactor(user);
+    if (second.required) {
+      const ticket = await createLoginChallenge(user, { redirect_uri: req.body?.redirect_uri || "" });
+      return res.json({ mfa_required: true, ticket, methods: second.methods });
+    }
+    setSessionCookie(res, signSessionToken(user));
     // redirect_uri: solo verso un origin registrato in sso_satellites (SSO
     // moduli satellite) — previene open-redirect. null se assente/non valido/
     // non registrato: il chiamante (frontend) ricade sul comportamento
@@ -107,7 +102,7 @@ router.get("/login", (req, res) => {
 });
 
 router.get("/login/verify", (req, res) => {
-  res.render("auth/verify", { token: req.query.token || "", redirect_uri: req.query.redirect_uri || "", layout: false });
+  res.render("auth/verify", { token: req.query.token || "", redirect_uri: req.query.redirect_uri || "", ticket: /^[0-9a-f-]{36}$/i.test(String(req.query.ticket || "")) ? String(req.query.ticket) : "", layout: false });
 });
 
 // Verifica OTP da CLI: richiede sia il token della magic-link (48 byte random,
@@ -129,6 +124,11 @@ router.post("/api/agent/verify-otp", async (req, res, next) => {
     }
     if (user.status === "disabled") {
       return res.status(403).json({ error: res.locals.t("api.auth.userDisabled") });
+    }
+    const sf = await getLoginSecondFactor(user);
+    if (sf.required) {
+      const okSecond = await verifySecondFactor(user.id, { totp_code: req.body.totp_code, backup_code: req.body.backup_code });
+      if (!okSecond) return res.status(401).json({ error: "mfa_required", code: "mfa_required", methods: ["totp", "backup"] });
     }
 
     const jwtToken = jwt.sign(

@@ -1,0 +1,19 @@
+{
+  "security.title": "Sicurezza account",
+  "security.totp": "Autenticazione a due fattori (app)",
+  "security.enable": "Attiva",
+  "security.disable": "Disattiva",
+  "security.codePlaceholder": "Codice a 6 cifre o codice di backup",
+  "security.backupCodes": "Codici di backup",
+  "security.backupWarning": "Conservali in un posto sicuro: ogni codice funziona una sola volta. Non verranno mostrati di nuovo.",
+  "security.regenerate": "Rigenera codici di backup",
+  "security.passkeys": "Passkey",
+  "security.addPasskey": "Aggiungi passkey",
+  "security.passkeyName": "Nome del dispositivo",
+  "security.delete": "Elimina",
+  "security.enrollRequired": "Per il tuo ruolo è obbligatorio attivare l'autenticazione a due fattori.",
+  "security.enabled": "attiva",
+  "security.disabled": "non attiva",
+  "security.lastUsed": "ultimo utilizzo",
+  "security.error": "Operazione non riuscita. Riprova."
+}

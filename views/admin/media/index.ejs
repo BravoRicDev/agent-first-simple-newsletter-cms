@@ -54,6 +54,7 @@
       <a href="<%= f.url %>" target="_blank" class="btn btn-sm" style="background:#6b7280;">Apri</a>
       <% if (isTranscribable) { %>
         <button type="button" class="btn btn-sm transcribe-btn" data-site-id="<%= selectedSiteId %>" data-filename="<%= f.name %>" style="background:#0891b2;">🎙️ Trascrivi</button>
+        <% if (/\.(jpe?g|png|webp)$/i.test(f.name)) { %><button type="button" class="btn btn-sm focal-btn" data-site-id="<%= selectedSiteId %>" data-filename="<%= f.name %>" data-url="<%= f.url %>" style="background:#7c3aed;"><%= t('media.focalPoint') %></button><% } %>
       <% } %>
       <form method="POST" action="/admin/media/delete?site_id=<%= selectedSiteId %>" style="display:inline;" onsubmit="return confirm('Eliminare questo file?')">
         <input type="hidden" name="filename" value="<%= f.name %>">
@@ -86,4 +87,72 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => transcribeMedia(btn.dataset.siteId, btn.dataset.filename, btn));
   });
 });
+</script>
+<script>
+(function () {
+  var T = <%- JSON.stringify({saved:t('media.focalSaved'),clear:t('media.focalClear'),close:t('media.focalClose')}).replace(/</g,'\\u003c') %>;
+  function post(payload, okText, statusEl) {
+    statusEl.textContent = '';
+    fetch('/admin/media/focal', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      statusEl.textContent = okText;
+    }).catch(function (err) {
+      statusEl.textContent = err.message;
+    });
+  }
+  function openModal(btn) {
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:9999;padding:16px;box-sizing:border-box;';
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;display:inline-block;max-width:90vw;';
+    var img = document.createElement('img');
+    img.src = btn.dataset.url;
+    img.style.cssText = 'max-width:90vw;max-height:80vh;display:block;cursor:crosshair;';
+    var dot = document.createElement('div');
+    dot.style.cssText = 'position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:red;border:2px solid #fff;display:none;pointer-events:none;';
+    wrap.appendChild(img);
+    wrap.appendChild(dot);
+    var statusEl = document.createElement('div');
+    statusEl.style.cssText = 'color:#fff;font-size:14px;min-height:20px;';
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:8px;';
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'btn btn-sm';
+    clearBtn.textContent = T.clear;
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'btn btn-sm';
+    closeBtn.textContent = T.close;
+    bar.appendChild(clearBtn);
+    bar.appendChild(closeBtn);
+    overlay.appendChild(wrap);
+    overlay.appendChild(statusEl);
+    overlay.appendChild(bar);
+    document.body.appendChild(overlay);
+    img.addEventListener('click', function (e) {
+      var x = Math.min(1, Math.max(0, e.offsetX / img.clientWidth));
+      var y = Math.min(1, Math.max(0, e.offsetY / img.clientHeight));
+      dot.style.left = (x * 100) + '%';
+      dot.style.top = (y * 100) + '%';
+      dot.style.display = 'block';
+      post({ site_id: btn.dataset.siteId, filename: btn.dataset.filename, x: x, y: y }, T.saved, statusEl);
+    });
+    clearBtn.addEventListener('click', function () {
+      dot.style.display = 'none';
+      post({ site_id: btn.dataset.siteId, filename: btn.dataset.filename, clear: true }, T.saved, statusEl);
+    });
+    closeBtn.addEventListener('click', function () {
+      overlay.remove();
+    });
+  }
+  document.querySelectorAll('.focal-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () { openModal(btn); });
+  });
+})();
 </script>

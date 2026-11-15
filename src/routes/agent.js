@@ -40,6 +40,10 @@ import { getBlogConfig, setBlogConfig, DEFAULTS as BLOG_SETTINGS_DEFAULTS } from
 import { getSiteSeoConfig, setSiteSeoConfig } from "../services/site-seo.js";
 import { formatBytes, formatKb, formatMb } from "../services/format.js";
 import { normalizeUrlPath } from "../services/urls.js";
+import { validateSchedule, ScheduleError } from "../services/page-schedule.js";
+import { snapshotPage, restoreVersion, restoreLastVersion, mapVersionError } from "../services/page-versions.js";
+import { afterContentChange } from "../services/site-sync.js";
+import { queueVariants, deleteVariants } from "../services/image-variants.js";
 import { sanitizeSvgFileIfNeeded } from "../services/svg-sanitize.js";
 import { getSiteEmailConfig, resetSiteTransporter } from "../services/email.js";
 import { EMAIL_TEMPLATE_KINDS, listEmailTemplates, setEmailTemplate, deleteEmailTemplate } from "../services/email-templates.js";
@@ -215,6 +219,7 @@ function sendValidationError(res, err) {
 // il pattern try/catch in ogni endpoint. Ritorna il messaggio generic-consistent
 // per 404/409 e structured per validation.
 function handleAgentError(err, req, res, next) {
+  if (err instanceof ScheduleError) return res.status(400).json({ error: "invalid_schedule", code: "invalid_schedule", field: err.field, reason: err.code });
   if (err instanceof z.ZodError) return sendValidationError(res, err);
   if (err.message === "URL non valido") {
     return res.status(400).json({ error: "invalid_url", code: "invalid_url" });
@@ -497,7 +502,8 @@ router.post("/api/agent/sites/:siteId/pages/bulk-publish", requireAuth, requireA
 
     const placeholders = page_ids.map((_, i) => `$${i + 3}`).join(",");
     const result = await query(
-      `UPDATE pages SET published = $1, updated_at = NOW()
+      `UPDATE pages SET published = $1, updated_at = NOW(),
+         unpublish_at = CASE WHEN $1 AND unpublish_at <= NOW() THEN NULL ELSE unpublish_at END
        WHERE site_id = $2 AND id IN (${placeholders})
        RETURNING id, url_path, published, post_type`,
       [published, siteId, ...page_ids]
@@ -639,7 +645,7 @@ router.get("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (r
     }
     const allowedFields = ["id", "url_path", "title", "layout_mode", "published", "created_at", "updated_at", "post_type", "category_id", "excerpt", "featured_image", "published_at", "card_title", "reading_time_minutes"];
     const fields = req.query.fields
-      ? req.query.fields.split(",").filter(f => allowedFields.includes(f.trim()))
+      ? req.query.fields.split(",").filter(f => allowedFields.includes(f.trim()) || ["publish_at", "unpublish_at", "editorial_status"].includes(f.trim()))
       : allowedFields;
     if (fields.length === 0) return res.status(400).json({ error: res.locals.t("api.pages.noValidFieldsRequested") });
 
@@ -821,6 +827,7 @@ const agentPageSchema = z.object({
   layout_mode: z.enum(["standalone", "wrapped"]).optional().default("wrapped"),
   published: z.boolean().optional().default(false),
   publish_at: z.string().datetime({ offset: true }).nullable().optional(),
+  unpublish_at: z.string().datetime({ offset: true }).nullable().optional(),
   post_type: z.enum(["page", "article"]).optional().default("page"),
   category_id: z.union([z.coerce.number().int().nonnegative(), z.literal(""), z.null()]).optional(),
   excerpt: z.string().optional().default(""),
@@ -849,16 +856,17 @@ router.post("/api/agent/sites/:siteId/pages", requireAuth, requireAgent, async (
     await assertCategoryBelongsToSite(categoryId, siteId);
     const readingTimeMinutes = optionalId(data.reading_time_minutes);
 
-    const publishAt = data.publish_at ? new Date(data.publish_at) : null;
+    const sched = validateSchedule({ publish_at: data.publish_at, unpublish_at: data.unpublish_at });
+    const publishAt = sched.publish_at;
     const effectivePublished = publishAt ? false : data.published;
     const publishedAt = resolvePublishedAt(req.body, data.post_type, effectivePublished);
 
     const result = await query(
       `INSERT INTO pages (site_id, url_path, title, content, layout_mode, published, publish_at,
-                          post_type, category_id, excerpt, featured_image, published_at, card_title, reading_time_minutes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+                          post_type, category_id, excerpt, featured_image, published_at, card_title, reading_time_minutes, unpublish_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
       [siteId, data.url_path, data.title, data.content, data.layout_mode, effectivePublished, publishAt,
-       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, data.card_title, readingTimeMinutes]
+       data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt, data.card_title, readingTimeMinutes, sched.unpublish_at]
     );
     const page = result.rows[0];
 
@@ -917,26 +925,22 @@ router.put("/api/agent/sites/:siteId/pages/:pageId", requireAuth, requireAgent, 
     await assertCategoryBelongsToSite(categoryId, siteId);
     const readingTimeMinutes = optionalId(data.reading_time_minutes);
 
-    const publishAt = data.publish_at ? new Date(data.publish_at) : null;
+    const unpubInput = data.unpublish_at === undefined ? existing.unpublish_at : data.unpublish_at;
+    const sched = validateSchedule({ publish_at: data.publish_at, unpublish_at: unpubInput }, { existingUnpublishAt: existing.unpublish_at });
+    const publishAt = sched.publish_at;
     const effectivePublished = publishAt ? false : data.published;
     const publishedAt = resolvePublishedAt(req.body, data.post_type, effectivePublished);
 
-    await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published,
-                                  post_type, category_id, excerpt, featured_image, published_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [existing.id, req.user.sub, existing.url_path, existing.title, existing.content, existing.layout_mode, existing.published,
-       existing.post_type, existing.category_id, existing.excerpt, existing.featured_image, existing.published_at]
-    );
+    await snapshotPage(existing.id, req.user.sub, { source: "agent" });
 
     const result = await query(
       `UPDATE pages SET url_path = $1, title = $2, content = $3, layout_mode = $4,
        published = $5, publish_at = $6, post_type = $7, category_id = $8, excerpt = $9,
        featured_image = $10, published_at = $11, card_title = $12, reading_time_minutes = $13,
-       updated_at = NOW() WHERE id = $14 AND site_id = $15 RETURNING *`,
+       unpublish_at = $16, updated_at = NOW() WHERE id = $14 AND site_id = $15 RETURNING *`,
       [data.url_path, data.title, data.content, data.layout_mode, effectivePublished, publishAt,
        data.post_type, categoryId, data.excerpt, data.featured_image, publishedAt,
-       data.card_title, readingTimeMinutes, req.params.pageId, siteId]
+       data.card_title, readingTimeMinutes, req.params.pageId, siteId, sched.unpublish_at]
     );
 
     const updatedPage = result.rows[0];
@@ -1054,7 +1058,7 @@ router.post("/api/agent/sites/:siteId/pages/:pageId/publish-toggle", requireAuth
       : !existing.published;
 
     const result = await query(
-      "UPDATE pages SET published = $1, updated_at = NOW() WHERE id = $2 RETURNING id, url_path, published",
+      "UPDATE pages SET published = $1, updated_at = NOW(), unpublish_at = CASE WHEN $1 AND unpublish_at <= NOW() THEN NULL ELSE unpublish_at END WHERE id = $2 RETURNING id, url_path, published",
       [newPublished, existing.id]
     );
     res.json({ page: result.rows[0] });
@@ -1454,144 +1458,41 @@ router.get("/api/agent/sites/:siteId/pages/:pageId/versions", requireAuth, requi
   } catch (err) { next(err); }
 });
 
-router.post("/api/agent/sites/:siteId/pages/:pageId/versions/:versionId/restore", requireAuth, requireAgent, async (req, res, next) => {
+async function agentRestoreFlow(req, res, next, { action, run }) {
   try {
     const siteId = parseInt(req.params.siteId, 10);
     if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbiddenSite") });
-
-    const page = (await query(
-      "SELECT id FROM pages WHERE id = $1 AND site_id = $2",
-      [req.params.pageId, siteId]
-    )).rows[0];
-    if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
-
-    const version = (await query(
-      "SELECT id FROM page_versions WHERE id = $1 AND page_id = $2",
-      [req.params.versionId, page.id]
-    )).rows[0];
-    if (!version) return res.status(404).json({ error: res.locals.t("api.pages.versionNotFound") });
-
-    await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       SELECT id, $2, url_path, title, content, layout_mode, published FROM pages WHERE id = $1`,
-      [page.id, req.user.sub]
-    );
-
-    const result = await query(
-      `UPDATE pages SET url_path = v.url_path, title = v.title, content = v.content,
-       layout_mode = v.layout_mode, published = v.published, updated_at = NOW()
-       FROM page_versions v WHERE pages.id = $1 AND v.id = $2 RETURNING pages.*`,
-      [page.id, version.id]
-    );
-
-    await auditLog({
-      userId: req.user.sub, siteId,
-      entityType: "page", entityId: page.id,
-      action: "restore",
-      newData: { restored_version_id: version.id, source: "agent" },
-      ipAddress: req.ip,
-    });
-
-    res.json({ page: result.rows[0] });
-    exportPublishedPages({ siteId }).catch(() => {});
+    const pageId = parseInt(req.params.pageId, 10);
+    const out = await run(siteId, pageId);
+    await auditLog({ userId: req.user.sub, siteId, entityType: "page", entityId: pageId, action,
+      newData: { restored_version_id: out.restored_version_id, snapshot_id: out.snapshot_id, source: "agent" }, ipAddress: req.ip });
+    const staticToDelete = [];
+    if (out.oldUrlPath && out.oldUrlPath !== out.page.url_path) staticToDelete.push(out.oldUrlPath);
+    if (!out.page.published) staticToDelete.push(out.page.url_path);
+    afterContentChange(siteId, { articleChanged: out.touchedArticle, deleteStaticPaths: staticToDelete, awaitExport: false }).catch(() => {});
+    return res.json({ ok: true, page: out.page, restored_version_id: out.restored_version_id, snapshot_id: out.snapshot_id, restored_at: out.restored_at });
   } catch (err) {
-    // url_path della versione già occupato da un'altra pagina → 409, non 500
-    if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
+    const m = mapVersionError(err, res.locals.t);
+    if (m) return res.status(m.status).json(m.body);
     next(err);
   }
-});
+}
+
+router.post("/api/agent/sites/:siteId/pages/:pageId/versions/:versionId/restore", requireAuth, requireAgent, requireTokenWrite, (req, res, next) =>
+  agentRestoreFlow(req, res, next, { action: "restore", run: (siteId, pageId) =>
+    restoreVersion(siteId, pageId, parseInt(req.params.versionId, 10), req.user.sub, { source: "agent", expectedUpdatedAt: req.body?.expected_updated_at || null }) }));
 
 // ── Restore last ────────────────────────────────────────────────────────────
 
-router.post("/api/agent/sites/:siteId/pages/:pageId/restore-last", requireAuth, requireAgent, async (req, res, next) => {
-  try {
-    const siteId = parseInt(req.params.siteId, 10);
-    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
-
-    const page = (await query("SELECT id, site_id FROM pages WHERE id = $1 AND site_id = $2", [req.params.pageId, siteId])).rows[0];
-    if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
-
-    const lastVersion = (await query(
-      "SELECT id, created_at FROM page_versions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1",
-      [page.id]
-    )).rows[0];
-    if (!lastVersion) return res.status(400).json({ error: res.locals.t("api.pages.noPreviousVersion") });
-
-    await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       SELECT id, $2, url_path, title, content, layout_mode, published FROM pages WHERE id = $1`,
-      [page.id, req.user.sub]
-    );
-
-    await query(
-      `UPDATE pages SET url_path = v.url_path, title = v.title, content = v.content,
-       layout_mode = v.layout_mode, published = v.published, updated_at = NOW()
-       FROM page_versions v WHERE pages.id = $1 AND v.id = $2`,
-      [page.id, lastVersion.id]
-    );
-
-    await auditLog({
-      userId: req.user.sub, siteId,
-      entityType: "page", entityId: page.id,
-      action: "restore-last",
-      newData: { restored_version_id: lastVersion.id },
-      ipAddress: req.ip,
-    });
-
-    res.json({ ok: true, restored_version_id: lastVersion.id, restored_at: lastVersion.created_at });
-    exportPublishedPages({ siteId }).catch(() => {});
-  } catch (err) {
-    // url_path della versione già occupato da un'altra pagina → 409, non 500
-    if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
-    next(err);
-  }
-});
+router.post("/api/agent/sites/:siteId/pages/:pageId/restore-last", requireAuth, requireAgent, requireTokenWrite, (req, res, next) =>
+  agentRestoreFlow(req, res, next, { action: "restore-last", run: (siteId, pageId) =>
+    restoreLastVersion(siteId, pageId, req.user.sub, { source: "agent" }) }));
 
 // ── Undo ────────────────────────────────────────────────────────────────────
 
-router.post("/api/agent/sites/:siteId/pages/:pageId/undo", requireAuth, requireAgent, async (req, res, next) => {
-  try {
-    const siteId = parseInt(req.params.siteId, 10);
-    if (!await canAccessSite(req.user, siteId)) return res.status(403).json({ error: res.locals.t("api.common.forbidden") });
-
-    const page = (await query("SELECT id, site_id FROM pages WHERE id = $1 AND site_id = $2", [req.params.pageId, siteId])).rows[0];
-    if (!page) return res.status(404).json({ error: res.locals.t("api.pages.notFound") });
-
-    const lastVersion = (await query(
-      "SELECT id, created_at FROM page_versions WHERE page_id = $1 ORDER BY created_at DESC LIMIT 1",
-      [page.id]
-    )).rows[0];
-    if (!lastVersion) return res.status(400).json({ error: res.locals.t("api.pages.noPreviousVersion") });
-
-    await query(
-      `INSERT INTO page_versions (page_id, user_id, url_path, title, content, layout_mode, published)
-       SELECT id, $2, url_path, title, content, layout_mode, published FROM pages WHERE id = $1`,
-      [page.id, req.user.sub]
-    );
-
-    await query(
-      `UPDATE pages SET url_path = v.url_path, title = v.title, content = v.content,
-       layout_mode = v.layout_mode, published = v.published, updated_at = NOW()
-       FROM page_versions v WHERE pages.id = $1 AND v.id = $2`,
-      [page.id, lastVersion.id]
-    );
-
-    await auditLog({
-      userId: req.user.sub, siteId,
-      entityType: "page", entityId: page.id,
-      action: "undo",
-      newData: { restored_version_id: lastVersion.id },
-      ipAddress: req.ip,
-    });
-
-    res.json({ ok: true, restored_version_id: lastVersion.id, restored_at: lastVersion.created_at });
-    exportPublishedPages({ siteId }).catch(() => {});
-  } catch (err) {
-    // url_path della versione già occupato da un'altra pagina → 409, non 500
-    if (err.code === "23505") return res.status(409).json({ error: res.locals.t("api.pages.urlExists") });
-    next(err);
-  }
-});
+router.post("/api/agent/sites/:siteId/pages/:pageId/undo", requireAuth, requireAgent, requireTokenWrite, (req, res, next) =>
+  agentRestoreFlow(req, res, next, { action: "undo", run: (siteId, pageId) =>
+    restoreLastVersion(siteId, pageId, req.user.sub, { source: "agent" }) }));
 
 // ── Pagine — utility ───────────────────────────────────────────────────────
 
@@ -2763,6 +2664,7 @@ router.post("/api/agent/sites/:siteId/media/upload", requireAuth, requireAgent, 
       sanitizeSvgFileIfNeeded(req.file.path);
       const finalSize = fs.statSync(req.file.path).size;
       compressVideo(req.file.path).catch(() => {});
+      queueVariants(siteId, req.file.filename);
       res.status(201).json({
         file: {
           filename: req.file.filename,
@@ -2805,6 +2707,7 @@ router.delete("/api/agent/sites/:siteId/media/:filename", requireAuth, requireAg
     if (filename.includes("..") || filename.includes("/")) return res.status(400).json({ error: res.locals.t("api.media.invalidFilename") });
     const filePath = path.join(getSiteDir(siteId), filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    deleteVariants(siteId, filename).catch(() => {});
     res.json({ deleted: filename });
   } catch (err) { next(err); }
 });
@@ -2848,6 +2751,7 @@ router.post("/api/agent/sites/:siteId/media/cleanup", requireAuth, requireAgent,
         if (fs.existsSync(fp)) {
           freedBytes += fs.statSync(fp).size;
           fs.unlinkSync(fp);
+          deleteVariants(siteId, name).catch(() => {});
           deleted.push(name);
         }
       } catch (e) {
@@ -5233,6 +5137,13 @@ import { registerAccessGrantsRoutes } from "./agent-access-grants.js";
 import { registerTickRoutes } from "./agent-tick.js";
 import { registerSourceSyncRoutes } from "./agent-source-sync.js";
 import { registerSourcePushRoutes } from "./agent-source-push.js";
+import { registerVersionsRoutes } from "./agent-versions.js";
+import { registerOpenapiRoutes } from "./agent-openapi.js";
+import { registerSearchRoutes } from "./agent-search.js";
+import { registerEditorialRoutes } from "./agent-editorial.js";
+import { registerReleasesRoutes } from "./agent-releases.js";
+import { registerMediaVariantsRoutes } from "./agent-media-variants.js";
+import { registerFeedsRoutes } from "./agent-feeds.js";
 registerCrmRoutes(router);
 registerRecurringRoutes(router);
 registerTickRoutes(router);
@@ -5258,6 +5169,13 @@ registerTrackedLinksRoutes(router);
 registerSourceSyncRoutes(router);
 registerSourcePushRoutes(router);
 registerAccessGrantsRoutes(router);
+registerVersionsRoutes(router);
+registerOpenapiRoutes(router);
+registerSearchRoutes(router);
+registerEditorialRoutes(router);
+registerReleasesRoutes(router);
+registerMediaVariantsRoutes(router);
+registerFeedsRoutes(router);
 
 // ── Server-Sent Events ─────────────────────────────────────────────────────
 // Endpoint SSE per notifiche in tempo reale su modifiche a pagine, snippet e

@@ -31,7 +31,7 @@ export async function suggestInternalLinks(siteId, content, excludePageId) {
   if (keywords.length === 0) return [];
 
   const otherPages = await query(
-    "SELECT id, url_path, title FROM pages WHERE site_id = $1 AND id != $2 AND published = true ORDER BY url_path",
+    "SELECT id, url_path, title FROM pages WHERE site_id = $1 AND id != $2 AND published = true AND (unpublish_at IS NULL OR unpublish_at > NOW()) ORDER BY url_path",
     [siteId, excludePageId]
   );
 

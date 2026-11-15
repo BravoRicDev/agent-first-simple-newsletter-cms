@@ -18,6 +18,17 @@ function loadLocale(lang) {
   } catch {
     strings = {};
   }
+  // Frammenti: locales/<lang>.d/*.json (ordine alfabetico). Possono SOLO aggiungere
+  // chiavi: una chiave gia' presente in <lang>.json non viene mai sovrascritta.
+  try {
+    const dir = path.join(LOCALES_DIR, `${lang}.d`);
+    for (const f of fs.readdirSync(dir).filter((n) => n.endsWith(".json")).sort()) {
+      try {
+        const frag = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+        for (const [k, v] of Object.entries(frag)) if (!(k in strings)) strings[k] = v;
+      } catch { /* frammento malformato: ignorato */ }
+    }
+  } catch { /* nessuna directory di frammenti */ }
   cache.set(lang, strings);
   return strings;
 }

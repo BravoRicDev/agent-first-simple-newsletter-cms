@@ -1,0 +1,38 @@
+<h1><%= t('security.sso.title') %></h1>
+<p><%= t('security.sso.redirectUri') %>: <code><%= redirectUri %></code></p>
+<table id="sso-table" style="width:100%;margin-bottom:16px;"><tbody></tbody></table>
+<form id="sso-form" style="background:#fff;border-radius:8px;padding:16px;max-width:560px;">
+  <input type="hidden" name="id">
+  <div class="form-group"><label><%= t('security.sso.name') %></label><input name="name" required maxlength="100"></div>
+  <div class="form-group"><label><%= t('security.sso.slug') %></label><input name="slug" required pattern="[a-z0-9][a-z0-9-]*" maxlength="59"></div>
+  <div class="form-group"><label><%= t('security.sso.issuer') %></label><input name="issuer" required placeholder="https://accounts.example.com"></div>
+  <div class="form-group"><label><%= t('security.sso.clientId') %></label><input name="client_id" required></div>
+  <div class="form-group"><label><%= t('security.sso.clientSecret') %></label><input name="client_secret" type="password" autocomplete="new-password" placeholder="<%= t('security.sso.keepSecret') %>"></div>
+  <div class="form-group"><label><%= t('security.sso.scopes') %></label><input name="scopes" value="openid email profile"></div>
+  <div class="form-group"><label><%= t('security.sso.domains') %></label><input name="domains" placeholder="example.com, example.org"></div>
+  <div class="form-group"><label><input type="checkbox" name="trust_idp_mfa"> <%= t('security.sso.trustMfa') %></label></div>
+  <div class="form-group"><label><input type="checkbox" name="enabled" checked> <%= t('security.sso.enabled') %></label></div>
+  <% if (isSuper) { %><div class="form-group"><label>site_id (empty = global)</label><input name="site_id" inputmode="numeric"></div><% } %>
+  <button type="submit" class="btn"><%= t('security.sso.save') %></button>
+  <div id="sso-msg" style="color:#dc2626;margin-top:8px;"></div>
+</form>
+<script>
+(function(){
+  var f=document.getElementById('sso-form'),tb=document.querySelector('#sso-table tbody'),msg=document.getElementById('sso-msg');
+  var L=<%- JSON.stringify({del:t('security.sso.delete')}).replace(/</g,'\\u003c') %>;
+  function api(p,m,b){return fetch(p,{method:m||'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});}
+  function load(){api('/admin/api/oidc-providers').then(function(x){tb.innerHTML='';(x.j.providers||[]).forEach(function(p){
+    var tr=document.createElement('tr'),td=document.createElement('td');td.textContent=p.name+' ('+p.slug+') '+p.issuer;tr.appendChild(td);
+    var td2=document.createElement('td'),e=document.createElement('button');e.type='button';e.className='btn';e.textContent='...';e.onclick=function(){f.id.value=p.id;f.name.value=p.name;f.slug.value=p.slug;f.issuer.value=p.issuer;f.client_id.value=p.client_id;f.client_secret.value='';f.scopes.value=p.scopes;f.domains.value=p.allowed_email_domains.join(', ');f.trust_idp_mfa.checked=p.trust_idp_mfa;f.enabled.checked=p.enabled;if(f.site_id)f.site_id.value=p.site_id===null?'':p.site_id;};
+    var d=document.createElement('button');d.type='button';d.className='btn';d.textContent=L.del;d.onclick=function(){api('/admin/api/oidc-providers/'+p.id,'DELETE').then(load);};
+    td2.appendChild(e);td2.appendChild(d);tr.appendChild(td2);tb.appendChild(tr);});});}
+  f.onsubmit=function(ev){ev.preventDefault();
+    var b={name:f.name.value,slug:f.slug.value,issuer:f.issuer.value,client_id:f.client_id.value,scopes:f.scopes.value,trust_idp_mfa:f.trust_idp_mfa.checked,enabled:f.enabled.checked,
+      allowed_email_domains:f.domains.value.split(',').map(function(s){return s.trim().toLowerCase();}).filter(Boolean)};
+    if(f.client_secret.value)b.client_secret=f.client_secret.value;
+    if(f.site_id)b.site_id=f.site_id.value===''?null:Number(f.site_id.value);
+    var id=f.id.value;api(id?'/admin/api/oidc-providers/'+id:'/admin/api/oidc-providers',id?'PUT':'POST',b).then(function(x){
+      if(x.ok){msg.textContent='';f.reset();f.id.value='';load();}else msg.textContent=(x.j.error||'error')+(x.j.field?': '+x.j.field:'');});};
+  load();
+})();
+</script>

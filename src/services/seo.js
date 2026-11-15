@@ -11,7 +11,7 @@ export async function getPublishedPagesForSitemap(siteId) {
     `SELECT p.url_path, p.updated_at, p.title, s.meta_title, s.meta_description, s.og_image
      FROM pages p
      LEFT JOIN page_seo s ON s.page_id = p.id
-     WHERE p.site_id = $1 AND p.published = true AND s.noindex IS NOT TRUE
+     WHERE p.site_id = $1 AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW()) AND s.noindex IS NOT TRUE
      ORDER BY p.url_path`,
     [siteId]
   )).rows;

@@ -1,0 +1,127 @@
+<% const canEdit = release.status === 'draft' || release.status === 'scheduled'; %>
+<p style="margin-bottom:10px;"><a href="/admin/releases?site_id=<%= selectedSiteId %>">&larr; <%= t('releases.title') %></a></p>
+<h1><%= release.name %></h1>
+<p style="margin-bottom:15px;">
+  <span class="badge badge-wrapped"><%= t('releases.status.' + release.status) %></span>
+  <% if (release.scheduled_at) { %>
+    <span style="font-size:13px;color:#666;margin-left:8px;"><%= t('releases.scheduledAt') %>: <%= new Date(release.scheduled_at).toLocaleString('it-IT') %></span>
+  <% } %>
+</p>
+<% if (release.description) { %>
+<p style="font-size:14px;color:#444;margin-bottom:15px;"><%= release.description %></p>
+<% } %>
+
+<% if (query && query.msg) { %>
+<div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#065f46;font-size:14px;">
+  <%= t('releases.msg.' + query.msg) %>
+</div>
+<% } %>
+<% if (query && query.err) { %>
+<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#991b1b;font-size:14px;">
+  <%= t('api.releases.' + query.err) %>
+</div>
+<% } %>
+
+<% if (release.status === 'failed') { %>
+<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:20px;color:#991b1b;font-size:14px;">
+  <% if (release.error) { %><div><strong><%= release.error %></strong></div><% } %>
+  <% if (release.result && release.result.conflicts) { %>
+    <ul style="margin-top:8px;">
+      <% release.result.conflicts.forEach(c => { %>
+        <li><code><%= c.url_path %></code>: <%= (c.conflicts || []).map(k => t('releases.conflict.' + k)).join(', ') %></li>
+      <% }) %>
+    </ul>
+  <% } %>
+</div>
+<% } %>
+
+<h3 style="font-size:15px;margin-bottom:10px;"><%= t('releases.items') %></h3>
+<table style="margin-bottom:20px;">
+  <thead>
+    <tr><th>URL</th><th><%= t('releases.action.publish') %> / <%= t('releases.action.unpublish') %></th><th>Stato</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% if (!items || items.length === 0) { %>
+      <tr><td colspan="4" style="text-align:center;color:#999;"><%= t('releases.empty') %></td></tr>
+    <% } %>
+    <% (items || []).forEach(i => { %>
+      <tr>
+        <td><code><%= i.url_path %></code><% if (i.title) { %><div style="font-size:12px;color:#666;"><%= i.title %></div><% } %></td>
+        <td>
+          <%= i.current_published ? 'Pubblicata' : 'Bozza' %>
+          &rarr;
+          <%= i.target_published ? 'Pubblicata' : 'Bozza' %>
+          <span class="badge badge-wrapped" style="margin-left:6px;"><%= i.action === 'publish' ? t('releases.action.publish') : t('releases.action.unpublish') %></span>
+        </td>
+        <td>
+          <% if (i.will_change) { %>
+            <span class="badge badge-wrapped"><%= t('releases.willChange') %></span>
+          <% } else { %>
+            <span class="badge badge-standalone"><%= t('releases.noOp') %></span>
+          <% } %>
+          <% (i.conflicts || []).forEach(c => { %>
+            <div style="font-size:12px;color:#991b1b;margin-top:4px;"><%= t('releases.conflict.' + c) %></div>
+          <% }) %>
+        </td>
+        <td>
+          <% if (canEdit) { %>
+          <form method="POST" action="/admin/releases/<%= release.id %>/items/<%= i.page_id %>/remove" style="display:inline;">
+            <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+            <button type="submit" class="btn btn-sm btn-danger">&times;</button>
+          </form>
+          <% } %>
+        </td>
+      </tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<% if (canEdit) { %>
+<form method="POST" action="/admin/releases/<%= release.id %>/items" style="background:#fff;border-radius:8px;padding:20px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);max-width:700px;">
+  <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+  <h3 style="font-size:15px;margin-bottom:10px;"><%= t('releases.addPages') %></h3>
+  <div class="form-group">
+    <label><%= t('releases.addPages') %></label>
+    <select multiple name="page_ids" size="8" required>
+      <% (pages || []).forEach(p => { %>
+        <option value="<%= p.id %>"><%= p.url_path %><%= p.title ? ' — ' + p.title : '' %></option>
+      <% }) %>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Azione</label>
+    <select name="action">
+      <option value="publish"><%= t('releases.action.publish') %></option>
+      <option value="unpublish"><%= t('releases.action.unpublish') %></option>
+    </select>
+  </div>
+  <button type="submit" class="btn"><%= t('releases.addPages') %></button>
+</form>
+
+<div style="display:flex;flex-wrap:wrap;gap:15px;margin-bottom:20px;">
+  <form method="POST" action="/admin/releases/<%= release.id %>/schedule" style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+    <div class="form-group">
+      <label><%= t('releases.schedule') %></label>
+      <input type="datetime-local" name="scheduled_at" required>
+    </div>
+    <button type="submit" class="btn"><%= t('releases.schedule') %></button>
+  </form>
+
+  <form method="POST" action="/admin/releases/<%= release.id %>/run" style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+    <label style="display:block;font-size:13px;margin-bottom:10px;"><input type="checkbox" name="force" value="1"> <%= t('releases.force') %></label>
+    <button type="submit" class="btn" style="background:#059669;"><%= t('releases.runNow') %></button>
+  </form>
+
+  <form method="POST" action="/admin/releases/<%= release.id %>/rebase" style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+    <button type="submit" class="btn" style="background:#6b7280;"><%= t('releases.rebase') %></button>
+  </form>
+
+  <form method="POST" action="/admin/releases/<%= release.id %>/cancel" style="background:#fff;border-radius:8px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+    <input type="hidden" name="site_id" value="<%= selectedSiteId %>">
+    <button type="submit" class="btn btn-danger"><%= t('releases.cancel') %></button>
+  </form>
+</div>
+<% } %>

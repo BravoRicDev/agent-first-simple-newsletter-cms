@@ -16,6 +16,7 @@
     .btn { width: 100%; padding: 12px; background: #4f46e5; color: #fff; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; }
     .btn:hover { background: #4338ca; }
     .msg { text-align: center; font-size: 14px; margin-top: 15px; }
+    .sso-link { display: block; text-align: center; padding: 10px; margin-top: 8px; border: 1px solid #ddd; border-radius: 8px; color: #111; text-decoration: none; font-size: 14px; }
   </style>
 </head>
 <body>
@@ -31,12 +32,21 @@
       <button type="submit" class="btn"><%= t('auth.login.submit') %></button>
     </form>
     <div class="msg" id="msg"></div>
+    <div id="ssoBox" style="margin-top:16px;display:none;"></div>
+    <button type="button" id="passkeyLogin" class="btn" style="display:none;margin-top:12px;background:#0f766e;"><%= t('auth.mfa.passkeyLogin') %></button>
   </div>
+  <script src="/js/webauthn-client.js"></script>
   <script>
     const i18n = <%- JSON.stringify({
       sending: t('auth.login.sending'),
       checkEmailFallback: t('auth.login.check_email_fallback'),
       connectionError: t('auth.login.connection_error'),
+      ssoWith: t('auth.mfa.ssoWith'),
+      errors: {
+        oidc_failed: t('auth.error.oidc_failed'), state_mismatch: t('auth.error.state_mismatch'), nonce_mismatch: t('auth.error.nonce_mismatch'),
+        email_not_verified: t('auth.error.email_not_verified'), domain_not_allowed: t('auth.error.domain_not_allowed'),
+        no_local_user: t('auth.error.no_local_user'), user_disabled: t('auth.error.user_disabled'), site_mismatch: t('auth.error.site_mismatch'),
+      },
     }).replace(/</g, '\\u003c') %>;
     document.getElementById('loginForm').onsubmit = async (e) => {
       e.preventDefault();
@@ -49,6 +59,35 @@
         msg.textContent = d.message || i18n.checkEmailFallback;
       } catch { msg.textContent = i18n.connectionError; }
     };
+    (function () {
+      const redirectUri = document.querySelector('#loginForm input[name=redirect_uri]').value;
+      const errKey = new URLSearchParams(location.search).get('error');
+      if (errKey && Object.prototype.hasOwnProperty.call(i18n.errors, errKey)) document.getElementById('msg').textContent = i18n.errors[errKey];
+      fetch('/auth/oidc/providers', { credentials: 'same-origin' }).then((r) => r.json()).then((d) => {
+        const box = document.getElementById('ssoBox');
+        (d.providers || []).forEach((p) => {
+          const a = document.createElement('a');
+          a.className = 'sso-link';
+          a.href = '/auth/oidc/' + encodeURIComponent(p.id) + '/start' + (redirectUri ? '?redirect_uri=' + encodeURIComponent(redirectUri) : '');
+          a.textContent = i18n.ssoWith + ' ' + p.name;
+          box.appendChild(a);
+        });
+        if (box.children.length) box.style.display = 'block';
+      }).catch(() => {});
+      if (window.cmsWebauthn && window.cmsWebauthn.supported) {
+        const b = document.getElementById('passkeyLogin');
+        b.style.display = 'block';
+        b.onclick = async () => {
+          try {
+            const o = await fetch('/api/auth/passkey/options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((r) => r.json());
+            const response = await window.cmsWebauthn.get(o.options);
+            const d = await fetch('/api/auth/passkey/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ challenge_id: o.challenge_id, response, redirect_uri: redirectUri }) }).then((r) => r.json());
+            if (d.user) location.href = d.redirect_to || '/admin/dashboard';
+            else document.getElementById('msg').textContent = i18n.connectionError;
+          } catch { document.getElementById('msg').textContent = i18n.connectionError; }
+        };
+      }
+    })();
   </script>
 </body>
 </html>

@@ -73,6 +73,16 @@ import bugReportsRoutes from "./routes/bug-reports.js";
 import agentInstructionsRoutes from "./routes/agent-instructions.js";
 import humanGuideRoutes from "./routes/human-guide.js";
 import opportunitiesStatsRoutes from "./routes/opportunities-stats.js";
+import feedPublicRoutes from "./routes/feed-public.js";
+import searchPublicRoutes from "./routes/search-public.js";
+import imageTransformRoutes from "./routes/image-transform.js";
+import authMfaRoutes from "./routes/auth-mfa.js";
+import authOidcRoutes from "./routes/auth-oidc.js";
+import adminEditorialRoutes from "./routes/admin-editorial.js";
+import adminReleasesRoutes from "./routes/admin-releases.js";
+import adminSecurityRoutes from "./routes/admin-security.js";
+import { editorialGuard } from "./middleware/editorial-guard.js";
+import { mfaEnrollGuard } from "./middleware/mfa-enroll-guard.js";
 import { startScheduler } from "./services/scheduler.js";
 
 // message è una funzione (non un oggetto statico): express-rate-limit la
@@ -319,7 +329,11 @@ async function start() {
   app.use("/api/agent", agentPerTokenLimiter);
   app.use("/api/mcp", agentLimiter);
   app.use("/api/mcp", mcpPerTokenLimiter);
+  app.use("/admin", mfaEnrollGuard);
+  app.use(editorialGuard);
   app.use(authRoutes);
+  app.use(authMfaRoutes);
+  app.use(authOidcRoutes);
   app.use(agentInstructionsRoutes);
   app.use(humanGuideRoutes);
   app.use(i18nRoutes);
@@ -377,6 +391,12 @@ async function start() {
   app.use(accessGrantsPublicRoutes);
   app.use(agentRoutes);
   app.use(opportunitiesStatsRoutes);
+  app.use(feedPublicRoutes);
+  app.use(searchPublicRoutes);
+  app.use(imageTransformRoutes);
+  app.use(adminEditorialRoutes);
+  app.use(adminReleasesRoutes);
+  app.use(adminSecurityRoutes);
 
   // Surface API compatibile ("API compatibili con CRM diffusi") su /v1:
   // tenancy via Location-Id + Bearer API key, header Version ignorato. Deve

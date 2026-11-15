@@ -100,6 +100,10 @@
           <% } else { %>
             <%= p.layout_mode === 'standalone' ? 'Standalone' : 'Con layout' %>
           <% } %>
+          <% if (p.unpublish_at && p.published) { %>
+            <span class="badge badge-standalone" title="<%= t('pages.unpublishAt') %>">&#9203; <%= new Date(p.unpublish_at).toLocaleString('it-IT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) %></span>
+          <% } %>
+          <% if (p.editorial_status) { %><span class="badge badge-wrapped" title="<%= t('editorial.title') %>"><%= t('editorial.status.' + p.editorial_status) %></span><% } %>
         </td>
         <td>
           <form method="POST" action="/admin/pages/<%= p.id %>/publish-toggle" style="display:inline;">

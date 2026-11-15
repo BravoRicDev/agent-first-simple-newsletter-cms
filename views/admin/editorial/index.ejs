@@ -1,0 +1,48 @@
+<h1><%= t('editorial.queue') %> - <%= site ? site.name : '' %></h1>
+
+<% if (!enabled) { %>
+<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;padding:12px 16px;margin-bottom:15px;color:#1e3a8a;font-size:14px;">
+  <%= t('blogSettings.editorialEnabled') %>
+</div>
+<% } %>
+
+<form method="GET" style="margin-bottom:15px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+  <% if (site) { %><input type="hidden" name="site_id" value="<%= site.id %>"><% } %>
+  <div class="form-group" style="margin-bottom:0;">
+    <label><%= t('editorial.title') %></label>
+    <select name="status">
+      <% statuses.forEach(s => { %>
+        <option value="<%= s %>" <%= query && query.status === s ? 'selected' : '' %>><%= t('editorial.status.' + s) %></option>
+      <% }) %>
+    </select>
+  </div>
+  <button type="submit" class="btn" style="background:#6b7280;">OK</button>
+</form>
+
+<% if (items && items.length > 0) { %>
+<table>
+  <thead>
+    <tr>
+      <th>Titolo</th>
+      <th><%= t('editorial.title') %></th>
+      <th><%= t('editorial.comment') %></th>
+      <th>Aggiornato</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% items.forEach(p => { %>
+    <tr>
+      <td>
+        <a href="/admin/pages/<%= p.id %>/edit"><%= p.title %></a>
+        <div style="font-size:12px;color:#6b7280;"><%= p.url_path %></div>
+      </td>
+      <td><span class="badge badge-wrapped"><%= t('editorial.status.' + p.editorial_status) %></span></td>
+      <td style="font-size:13px;"><%= p.last_comment || '' %></td>
+      <td style="font-size:13px;"><%= new Date(p.updated_at).toLocaleString('it-IT') %></td>
+    </tr>
+    <% }) %>
+  </tbody>
+</table>
+<% } else { %>
+<p style="color:#6b7280;"><%= t('editorial.empty') %></p>
+<% } %>

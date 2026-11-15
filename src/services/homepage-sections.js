@@ -73,10 +73,10 @@ export async function syncHomepageSections(siteId) {
       case "category_band": {
         const categoriesWithArticles = (await query(
           `SELECT c.id, c.name, c.slug, c.color, c.icon,
-           (SELECT count(*) FROM pages p WHERE p.category_id = c.id AND p.post_type = 'article' AND p.published = true) AS article_count
+           (SELECT count(*) FROM pages p WHERE p.category_id = c.id AND p.post_type = 'article' AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW())) AS article_count
            FROM categories c
            WHERE c.site_id = $1
-           AND EXISTS (SELECT 1 FROM pages p WHERE p.category_id = c.id AND p.post_type = 'article' AND p.published = true)
+           AND EXISTS (SELECT 1 FROM pages p WHERE p.category_id = c.id AND p.post_type = 'article' AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW()))
            ORDER BY c.name`,
           [siteId]
         )).rows;
@@ -102,7 +102,7 @@ export async function syncHomepageSections(siteId) {
             p.reading_time_minutes, p.card_html_override, c.slug AS category_slug, c.icon AS category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
-           WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND p.category_id = $2
+           WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW()) AND p.category_id = $2
            ORDER BY p.published_at DESC NULLS LAST, p.id DESC
            LIMIT $3`,
           [siteId, section.category_id, section.articles_limit]
@@ -138,7 +138,7 @@ export async function syncHomepageSections(siteId) {
           `SELECT p.id, p.title, p.card_title, p.excerpt, p.featured_image, p.published_at, p.url_path, p.content, p.reading_time_minutes, p.card_html_override, c.slug as category_slug, c.icon as category_icon
            FROM pages p
            LEFT JOIN categories c ON c.id = p.category_id
-           WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true
+           WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW())
            ORDER BY p.published_at DESC NULLS LAST, p.id DESC
            LIMIT $2`,
           [siteId, section.articles_limit]

@@ -16,6 +16,7 @@ import { formatBytes } from "../services/format.js";
 import { safeFetch } from "../services/ssrf.js";
 import { sanitizeSvgBuffer, sanitizeSvgFileIfNeeded } from "../services/svg-sanitize.js";
 import { logger } from "../services/logger.js";
+import { queueVariants, deleteVariants } from "../services/image-variants.js";
 import config from "../config.js";
 
 const router = Router();
@@ -146,6 +147,7 @@ export function saveBufferToMedia(siteId, buffer, ext) {
   ensureSiteDir(siteId);
   const toWrite = cleanExt.toLowerCase() === "svg" ? sanitizeSvgBuffer(buffer) : buffer;
   fs.writeFileSync(path.join(dir, filename), toWrite);
+  queueVariants(siteId, filename);
 
   const result = { filename, url: `/media/${siteId}/${filename}`, size: toWrite.length, size_formatted: formatBytes(toWrite.length), hash, reused: false, _cachedAt: Date.now() };
   hashCache.set(`${siteId}:${hash}`, result);
@@ -271,6 +273,7 @@ export async function fetchUrlToMedia(siteId, remoteUrl, force = false) {
   const destPath = path.join(dir, filename);
   const toWrite = path.extname(filename).toLowerCase() === ".svg" ? sanitizeSvgBuffer(buffer) : buffer;
   fs.writeFileSync(destPath, toWrite);
+  queueVariants(siteId, filename);
 
   // Compressione video in background (fire-and-forget)
   compressVideo(destPath).catch(() => {});
@@ -398,6 +401,7 @@ router.post("/admin/media/cleanup", requireAuth, resolveSite, resolveSiteId, asy
     for (const name of filesToDelete) {
       const fp = path.join(dir, name);
       try { if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch { /* continua con gli altri */ }
+      deleteVariants(siteId, name).catch(() => {});
     }
     res.redirect(`/admin/media/unused?site_id=${siteId}`);
   } catch (err) { next(err); }
@@ -454,6 +458,7 @@ router.post("/admin/media/upload", requireAuth, resolveSite, resolveSiteId, (req
 
     sanitizeSvgFileIfNeeded(req.file.path);
     await compressVideo(req.file.path);
+    queueVariants(req.resolvedSiteId, req.file.filename);
     generateAltTextForMedia(req.file.path, req.resolvedSiteId, req.file.filename).catch(() => {});
     res.redirect(`/admin/media?site_id=${req.resolvedSiteId}`);
   });
@@ -558,6 +563,7 @@ router.post("/admin/media/delete", requireAuth, resolveSite, resolveSiteId, (req
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
+    deleteVariants(req.resolvedSiteId, filename).catch(() => {});
     res.redirect(`/admin/media?site_id=${req.resolvedSiteId}`);
   } catch (err) { next(err); }
 });

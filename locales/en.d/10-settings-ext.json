@@ -1,0 +1,13 @@
+{
+  "common.on": "On",
+  "common.off": "Off",
+  "blogSettings.feedEnabled": "RSS/Atom feed enabled",
+  "blogSettings.feedItemLimit": "Items in feed",
+  "blogSettings.feedFullContent": "Feed with full content",
+  "blogSettings.searchEnabled": "Site search enabled",
+  "blogSettings.searchLanguage": "Search language",
+  "blogSettings.editorialEnabled": "Editorial workflow (draft, review, publish) enabled",
+  "blogSettings.imagesSrcsetMode": "Responsive images (srcset/picture)",
+  "blogSettings.imgModeSrcset": "srcset",
+  "blogSettings.imgModePicture": "picture"
+}

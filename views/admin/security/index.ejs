@@ -1,0 +1,59 @@
+<h1><%= t('security.title') %></h1>
+<% if (enroll) { %><div style="background:#fef3c7;padding:12px;border-radius:8px;margin-bottom:16px;"><%= t('security.enrollRequired') %></div><% } %>
+<div id="sec-root" style="max-width:640px;">
+  <section style="background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;">
+    <h3><%= t('security.totp') %>: <span id="totp-state"></span></h3>
+    <div id="totp-setup" style="display:none;margin:12px 0;">
+      <img id="totp-qr" alt="QR" style="max-width:200px;"><p>Secret: <code id="totp-secret"></code></p>
+      <input id="totp-code" type="text" inputmode="numeric" maxlength="6" placeholder="<%= t('security.codePlaceholder') %>">
+      <button type="button" class="btn" id="totp-confirm"><%= t('security.enable') %></button>
+    </div>
+    <div id="totp-codes" style="display:none;margin:12px 0;"><strong><%= t('security.backupCodes') %></strong><p><%= t('security.backupWarning') %></p><pre id="totp-codes-pre"></pre></div>
+    <button type="button" class="btn" id="totp-begin"><%= t('security.enable') %></button>
+    <div id="totp-manage" style="display:none;margin-top:12px;">
+      <input id="totp-manage-code" type="text" maxlength="20" placeholder="<%= t('security.codePlaceholder') %>">
+      <button type="button" class="btn" id="totp-disable"><%= t('security.disable') %></button>
+      <button type="button" class="btn" id="totp-regen"><%= t('security.regenerate') %></button>
+    </div>
+  </section>
+  <section style="background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;">
+    <h3><%= t('security.passkeys') %></h3>
+    <ul id="pk-list"></ul>
+    <input id="pk-name" type="text" maxlength="100" placeholder="<%= t('security.passkeyName') %>">
+    <button type="button" class="btn" id="pk-add"><%= t('security.addPasskey') %></button>
+  </section>
+  <div id="sec-msg" style="color:#dc2626;"></div>
+</div>
+<script src="/js/webauthn-client.js"></script>
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i);};
+  var L=<%- JSON.stringify({enabled:t('security.enabled'),disabled:t('security.disabled'),del:t('security.delete'),last:t('security.lastUsed'),err:t('security.error')}).replace(/</g,'\\u003c') %>;
+  function api(path,method,body){return fetch(path,{method:method||'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});}
+  function err(x){$('sec-msg').textContent=(x&&x.j&&x.j.error)||L.err;}
+  function load(){api('/api/auth/security').then(function(x){
+    if(!x.ok){err(x);return;}
+    var s=x.j;$('totp-state').textContent=s.totp_enabled?L.enabled:L.disabled;
+    $('totp-begin').style.display=s.totp_enabled?'none':'inline-block';$('totp-manage').style.display=s.totp_enabled?'block':'none';
+    var ul=$('pk-list');ul.innerHTML='';
+    s.passkeys_list.forEach(function(p){var li=document.createElement('li');li.textContent=p.name+' ('+L.last+': '+(p.last_used_at?new Date(p.last_used_at).toLocaleString():'-')+') ';
+      var b=document.createElement('button');b.type='button';b.className='btn';b.textContent=L.del;b.onclick=function(){api('/api/auth/security/passkeys/'+p.id,'DELETE').then(function(r){if(r.ok)load();else err(r);});};li.appendChild(b);ul.appendChild(li);});
+  });}
+  $('totp-begin').onclick=function(){api('/api/auth/security/totp/begin','POST',{}).then(function(x){
+    if(!x.ok){err(x);return;}
+    if(String(x.j.qr_data_url).indexOf('data:image/png;base64,')===0)$('totp-qr').src=x.j.qr_data_url;
+    $('totp-secret').textContent=x.j.secret;$('totp-setup').style.display='block';});};
+  $('totp-confirm').onclick=function(){api('/api/auth/security/totp/confirm','POST',{code:$('totp-code').value}).then(function(x){
+    if(!x.ok){err(x);return;}
+    $('totp-setup').style.display='none';$('totp-codes').style.display='block';$('totp-codes-pre').textContent=x.j.backup_codes.join('\n');load();});};
+  $('totp-disable').onclick=function(){var c=$('totp-manage-code').value;api('/api/auth/security/totp/disable','POST',/^\d{6}$/.test(c)?{totp_code:c}:{backup_code:c}).then(function(x){if(x.ok)load();else err(x);});};
+  $('totp-regen').onclick=function(){api('/api/auth/security/backup-codes/regenerate','POST',{totp_code:$('totp-manage-code').value}).then(function(x){
+    if(!x.ok){err(x);return;}$('totp-codes').style.display='block';$('totp-codes-pre').textContent=x.j.backup_codes.join('\n');});};
+  $('pk-add').onclick=function(){api('/api/auth/security/passkeys/options','POST',{}).then(function(x){
+    if(!x.ok){err(x);return;}
+    return window.cmsWebauthn.create(x.j.options).then(function(resp){
+      return api('/api/auth/security/passkeys/register','POST',{challenge_id:x.j.challenge_id,response:resp,name:$('pk-name').value}).then(function(r){if(r.ok)load();else err(r);});
+    });}).catch(function(){$('sec-msg').textContent=L.err;});};
+  load();
+})();
+</script>

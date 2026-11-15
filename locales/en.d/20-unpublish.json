@@ -1,0 +1,5 @@
+{
+  "pages.unpublishAt": "Unpublish automatically on",
+  "pages.unpublishAtHint": "Optional. Must be in the future and after the scheduled publication.",
+  "api.pages.scheduleInvalid": "Invalid schedule: unpublish date must be in the future and after the publish date."
+}

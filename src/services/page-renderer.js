@@ -1,6 +1,8 @@
 import { query } from "../db.js";
 import { renderCardTemplate, deriveExcerptFromContent, estimateReadingTime, formatShortDate } from "./blog-index.js";
 import { getBlogConfig } from "./blog-settings.js";
+import { expandSearch } from "./search-widget.js";
+import { rewriteImagesForSite } from "./img-rewrite.js";
 
 const SNIPPET_RE = /\{\{snippet:([a-zA-Z0-9_-]+)\}\}/g;
 const VARIABLE_RE = /\{\{var:([a-zA-Z0-9_-]+)\}\}/g;
@@ -590,7 +592,7 @@ export async function expandArticleLists(siteId, html) {
        c.slug AS category_slug, c.name AS category_name, c.color AS category_color, c.icon AS category_icon,
        c.custom_css AS category_custom_css
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
-       WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true`;
+       WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW())`;
     const queryParams = [siteId];
     if (categoryIds) {
       queryParams.push(categoryIds);
@@ -691,7 +693,7 @@ export async function expandSingleArticles(siteId, html) {
          c.slug AS category_slug, c.name AS category_name, c.color AS category_color,
          c.icon AS category_icon, c.custom_css AS category_custom_css
        FROM pages p LEFT JOIN categories c ON c.id = p.category_id
-       WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND p.url_path = $2`,
+       WHERE p.site_id = $1 AND p.post_type = 'article' AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW()) AND p.url_path = $2`,
       [siteId, urlPath]
     )).rows[0];
     if (row) map[urlPath] = row;
@@ -844,6 +846,8 @@ function utmLinkForwardScript() {
 // direttamente, senza passare da qui.
 export async function expandPageContent(siteId, html) {
   let result = await expandSnippets(siteId, html);
+  result = await expandSearch(siteId, result);
+  result = await rewriteImagesForSite(siteId, result);
   result += utmLinkForwardScript();
   return result;
 }

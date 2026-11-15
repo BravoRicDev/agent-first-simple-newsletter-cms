@@ -1,0 +1,19 @@
+{
+  "security.title": "Account security",
+  "security.totp": "Two-factor authentication (app)",
+  "security.enable": "Enable",
+  "security.disable": "Disable",
+  "security.codePlaceholder": "6-digit code or backup code",
+  "security.backupCodes": "Backup codes",
+  "security.backupWarning": "Store them in a safe place: each code works only once. They will not be shown again.",
+  "security.regenerate": "Regenerate backup codes",
+  "security.passkeys": "Passkeys",
+  "security.addPasskey": "Add passkey",
+  "security.passkeyName": "Device name",
+  "security.delete": "Delete",
+  "security.enrollRequired": "Your role requires enabling two-factor authentication.",
+  "security.enabled": "enabled",
+  "security.disabled": "not enabled",
+  "security.lastUsed": "last used",
+  "security.error": "Operation failed. Please try again."
+}

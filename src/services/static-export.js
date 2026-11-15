@@ -17,6 +17,7 @@ import { getCanonicalBaseUrl } from "./urls.js";
 import config from "../config.js";
 import ejs from "ejs";
 import { stripAllComments } from "./comment-strip.js";
+import { writeFeedFiles, makeFeedLinkResolver, injectFeedLinks } from "./feed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const STATIC_ROOT = path.resolve(__dirname, "../../static");
@@ -100,6 +101,8 @@ async function exportPage(siteId, page, layoutName, themeVars, seoContext) {
     // salvare — stesso strip applicato dal live (serve.js) per la parità
     // pagina servita = pagina esportata.
     finalHtml = stripAllComments(finalHtml);
+    // Autodiscovery feed (stringa vuota = feed disattivo => HTML invariato).
+    finalHtml = injectFeedLinks(finalHtml, seoContext?.feedLinksFor ? seoContext.feedLinksFor(page.url_path) : "");
 
     const filename = urlPathToFilename(page.url_path);
     const dir = getSiteStaticDir(siteId);
@@ -158,7 +161,7 @@ export async function cleanupOrphanedFiles(siteId, { hasHomepage = true } = {}) 
 
   const publishedPaths = new Set();
   const pages = (await query(
-    "SELECT url_path FROM pages WHERE site_id = $1 AND published = true",
+    "SELECT url_path FROM pages WHERE site_id = $1 AND published = true AND (unpublish_at IS NULL OR unpublish_at > NOW())",
     [siteId]
   )).rows;
   for (const p of pages) {
@@ -253,7 +256,7 @@ export async function generate404Page(siteId) {
               s.canonical_url, s.og_image, s.schema_type, s.schema_json
        FROM pages p
        LEFT JOIN page_seo s ON s.page_id = p.id
-       WHERE p.site_id = $1 AND p.url_path = $2 AND p.published = true`,
+       WHERE p.site_id = $1 AND p.url_path = $2 AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW())`,
       [siteId, targetPath]
     )).rows;
 
@@ -349,7 +352,7 @@ async function exportPublishedPagesInner(siteId, pageIds) {
            s.schema_type, s.schema_json
     FROM pages p
     LEFT JOIN page_seo s ON s.page_id = p.id
-    WHERE p.site_id = $1 AND p.published = true
+    WHERE p.site_id = $1 AND p.published = true AND (p.unpublish_at IS NULL OR p.unpublish_at > NOW())
   `;
   const params = [siteId];
   if (pageIds && pageIds.length > 0) {
@@ -381,7 +384,7 @@ async function exportPublishedPagesInner(siteId, pageIds) {
   const themeVars = { ...(await getSiteThemeVars(siteId)), ...(await getSiteTrackingConfigMasked(siteId)) };
   const baseUrl = await getCanonicalBaseUrl(siteId);
   const siteSeo = await getSiteSeoConfig(siteId);
-  const seoContext = { baseUrl, siteSeo, brandName: themeVars.brandName };
+  const seoContext = { baseUrl, siteSeo, brandName: themeVars.brandName, feedLinksFor: await makeFeedLinkResolver(siteId) };
 
   const results = [];
   for (const page of pages) {
@@ -404,6 +407,7 @@ async function exportPublishedPagesInner(siteId, pageIds) {
   await cleanupOrphanedFiles(siteId, { hasHomepage: hasRealRootPage || (!!site?.homepage_path && pages.some(p => p.url_path === site.homepage_path)) });
   await generate404Page(siteId);
   await generateSeoFiles(siteId, baseUrl);
+  try { await writeFeedFiles(siteId, baseUrl, getSiteStaticDir(siteId)); } catch (err) { logger.error(`Feed files generation failed: site=${siteId}`, { error: err.message }); }
 
   const exported = results.filter(r => r.ok).length;
   const errors = results.filter(r => !r.ok);

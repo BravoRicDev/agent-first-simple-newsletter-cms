@@ -17,7 +17,7 @@ export const AREAS = [
   { id: "content", en: "Content & site", it: "Contenuti e sito", categories: [
     "pages", "categories", "blog_settings", "homepage_sections", "snippets", "variables", "templates", "media",
     "redirects", "seo", "sitemap", "sites", "new_path", "deprecated_path", "validate_path", "rewrite",
-    "root", "export_static", "export_static_all", "deploy", "forms", "tracking", "tracked_links", "social_posts", "settings", "modules", "quizzes",
+    "root", "export_static", "export_static_all", "deploy", "forms", "tracking", "tracked_links", "social_posts", "settings", "modules", "quizzes", "feeds", "search", "editorial", "releases",
   ] },
   { id: "newsletter", en: "Newsletter & email", it: "Newsletter ed email", categories: [
     "newsletter", "email_templates", "email_stats", "reply_suggestions",
@@ -36,7 +36,7 @@ export const AREAS = [
   ] },
   { id: "admin", en: "Admin, reports & system", it: "Amministrazione, report e sistema", categories: [
     "dashboard", "stats", "report_configs", "roles", "users", "me", "audit_log", "audit_events", "backup", "backup_jobs", "bug_reports",
-    "changelog", "capabilities", "guide", "verify_token", "verify_otp", "refresh_token",
+    "changelog", "capabilities", "guide", "verify_token", "verify_otp", "refresh_token", "openapi.json",
   ] },
 ];
 

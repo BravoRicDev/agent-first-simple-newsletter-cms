@@ -32,14 +32,34 @@
       </div>
       <button type="submit" class="btn"><%= t('auth.verify.submit') %></button>
     </form>
+    <form id="mfaForm" style="display:none">
+      <div class="form-group">
+        <label><%= t('auth.mfa.label') %></label>
+        <input type="text" name="code" autocomplete="one-time-code" maxlength="24" required>
+      </div>
+      <button type="submit" class="btn"><%= t('auth.verify.submit') %></button>
+      <button type="button" id="passkeyBtn" class="btn" style="display:none;margin-top:8px;background:#0f766e;"><%= t('auth.mfa.usePasskey') %></button>
+    </form>
+    <input type="hidden" id="ticketInit" value="<%= typeof ticket !== 'undefined' ? ticket : '' %>">
     <div class="msg" id="msg"></div>
   </div>
+  <script src="/js/webauthn-client.js"></script>
   <script>
     const i18n = <%- JSON.stringify({
       invalidCodeFallback: t('auth.verify.invalid_code_fallback'),
       requestNewCode: t('auth.verify.request_new_code'),
       connectionError: t('auth.verify.connection_error'),
+      mfaInvalid: t('auth.mfa.invalid'),
     }).replace(/</g, '\\u003c') %>;
+    let currentTicket = '';
+    function showError(text) { const msg = document.getElementById('msg'); msg.textContent = ''; const s = document.createElement('span'); s.className = 'error'; s.textContent = text; msg.appendChild(s); }
+    function postJson(url, body) { return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json()); }
+    function showMfa(ticket, methods) {
+      currentTicket = ticket;
+      document.getElementById('verifyForm').style.display = 'none';
+      document.getElementById('mfaForm').style.display = 'block';
+      if (methods.indexOf('webauthn') >= 0 && window.cmsWebauthn && window.cmsWebauthn.supported) document.getElementById('passkeyBtn').style.display = 'block';
+    }
     document.getElementById('verifyForm').onsubmit = async (e) => {
       e.preventDefault();
       const token = e.target.token.value;
@@ -49,6 +69,7 @@
       try {
         const r = await fetch('/api/auth/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, otp, redirect_uri }) });
         const d = await r.json();
+        if (d.mfa_required) { showMfa(d.ticket, d.methods || []); return; }
         if (d.user) { location.href = d.redirect_to || '/admin/dashboard'; }
         else {
           const errMsg = d.error || i18n.invalidCodeFallback;
@@ -59,6 +80,25 @@
         }
       } catch { msg.innerHTML = '<span class="error">' + i18n.connectionError + '</span>'; }
     };
+    document.getElementById('mfaForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const code = e.target.code.value.trim();
+      try {
+        const d = await postJson('/api/auth/mfa/verify', /^\d{6}$/.test(code) ? { ticket: currentTicket, totp_code: code } : { ticket: currentTicket, backup_code: code });
+        if (d.user) { location.href = d.redirect_to || '/admin/dashboard'; } else { showError(i18n.mfaInvalid); }
+      } catch { showError(i18n.connectionError); }
+    };
+    document.getElementById('passkeyBtn').onclick = async () => {
+      try {
+        const o = await postJson('/api/auth/mfa/webauthn/options', { ticket: currentTicket });
+        if (!o.options) { showError(i18n.mfaInvalid); return; }
+        const response = await window.cmsWebauthn.get(o.options);
+        const d = await postJson('/api/auth/mfa/webauthn/verify', { ticket: currentTicket, challenge_id: o.challenge_id, response });
+        if (d.user) { location.href = d.redirect_to || '/admin/dashboard'; } else { showError(i18n.mfaInvalid); }
+      } catch { showError(i18n.mfaInvalid); }
+    };
+    const initTicket = document.getElementById('ticketInit').value;
+    if (initTicket) showMfa(initTicket, ['totp', 'backup', 'webauthn']);
   </script>
 </body>
 </html>

@@ -5,6 +5,14 @@ import config from "../config.js";
 import { META as CONTENT_META } from "./mcp-meta-content.js";
 import { META as SYNC_META } from "./mcp-meta-sync.js";
 import { META as MISC_META } from "./mcp-meta-misc.js";
+import { META as UNPUBLISH_META } from "./mcp-meta-unpublish.js";
+import { META as VERSIONS_META } from "./mcp-meta-versions.js";
+import { META as OPENAPI_META } from "./mcp-meta-openapi.js";
+import { META as SEARCH_META } from "./mcp-meta-search.js";
+import { META as EDITORIAL_META } from "./mcp-meta-editorial.js";
+import { META as RELEASES_META } from "./mcp-meta-releases.js";
+import { META as MEDIA_VARIANTS_META } from "./mcp-meta-media-variants.js";
+import { META as FEEDS_META } from "./mcp-meta-feeds.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Tool set MCP = introspezione del router /api/agent reale + arricchimento
@@ -1986,6 +1994,8 @@ const TOOL_META = {
 
 // Metadati aggiuntivi (route recenti) in file separati per area.
 Object.assign(TOOL_META, CONTENT_META, SYNC_META, MISC_META);
+// Meta delle estensioni CMS: assegnate DOPO, quindi possono sovrascrivere voci esistenti (es. pages_create).
+Object.assign(TOOL_META, UNPUBLISH_META, VERSIONS_META, OPENAPI_META, SEARCH_META, EDITORIAL_META, RELEASES_META, MEDIA_VARIANTS_META, FEEDS_META);
 
 // ── Generic fallback for routes not (yet) in TOOL_META ──────────────────────
 

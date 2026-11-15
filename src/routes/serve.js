@@ -15,6 +15,7 @@ import {
 import { getCanonicalBaseUrl } from "../services/urls.js";
 import { createApiToken, listApiTokens, revokeApiToken } from "../services/api-tokens.js";
 import { stripAllComments } from "../services/comment-strip.js";
+import { getFeedLinkTags, injectFeedLinks } from "../services/feed.js";
 import config from "../config.js";
 
 const router = Router();
@@ -38,7 +39,7 @@ export const publicLimiter = rateLimit({
 // completo") e wrapped ("renderizzato dal layout EJS"). L'admin NON passa da
 // qui (ha le proprie route) quindi non viene toccato.
 function sendPublicHtml(res, html) {
-  return res.send(stripAllComments(html));
+  return res.send(injectFeedLinks(stripAllComments(html), res.locals.feedLinkTags));
 }
 
 function renderPublicPage(res, next, view, options) {
@@ -46,7 +47,7 @@ function renderPublicPage(res, next, view, options) {
   // (dopo layout) e lo strippa prima di inviarlo.
   return res.render(view, options, (err, rendered) => {
     if (err) return next(err);
-    return res.send(stripAllComments(rendered));
+    return res.send(injectFeedLinks(stripAllComments(rendered), res.locals.feedLinkTags));
   });
 }
 
@@ -250,6 +251,7 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
   const themeVars = { ...(await getSiteThemeVars(siteId)) };
 
   const urlPath = req.path === "/" ? "/" : req.path.replace(/\/$/, "") || "/";
+  try { res.locals.feedLinkTags = await getFeedLinkTags(siteId, urlPath); } catch { res.locals.feedLinkTags = ""; }
 
   // Locali SEO (canonical, OG/Twitter, JSON-LD) condivisi tra il branch
   // "pagina trovata direttamente" e quello "homepage via homepage_path" —
@@ -295,14 +297,14 @@ publicCatchAllRouter.get("/*", publicLimiter, resolveSite, async (req, res, next
 
     // 2. Pagina pubblicata
     const result = await query(
-      "SELECT id, title, content, layout_mode FROM pages WHERE site_id = $1 AND url_path = $2 AND published = true",
+      "SELECT id, title, content, layout_mode FROM pages WHERE site_id = $1 AND url_path = $2 AND published = true AND (unpublish_at IS NULL OR unpublish_at > NOW())",
       [siteId, urlPath]
     );
 
     if (result.rows.length === 0) {
       if (urlPath === "/" && req.site?.homepage_path) {
         const homeResult = await query(
-          "SELECT id, title, content, layout_mode FROM pages WHERE site_id = $1 AND url_path = $2 AND published = true",
+          "SELECT id, title, content, layout_mode FROM pages WHERE site_id = $1 AND url_path = $2 AND published = true AND (unpublish_at IS NULL OR unpublish_at > NOW())",
           [siteId, req.site.homepage_path]
         );
         if (homeResult.rows.length > 0) {
