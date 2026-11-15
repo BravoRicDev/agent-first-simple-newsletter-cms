@@ -83,12 +83,12 @@ router.post("/api/mcp", preferBearerOverCookie, rejectBatch, requireAuth, requir
     req.auth = { token: "", clientId: String(req.user?.sub ?? ""), scopes: req.user?.scopes || [] };
     const server = buildServer(res.locals.lang || "en", { flat: req.query.tools === "all" });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
     res.on("close", () => {
       transport.close();
       server.close();
     });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
   } catch (err) {
     logger.error(`MCP: errore richiesta: ${err.message}`);
     if (!res.headersSent) {

@@ -141,6 +141,28 @@ describe("MCP: albero di navigazione + tool diretti + errori guidati", () => {
     assert.match(text, /tools_describe/);
   });
 
+  test("args come stringa JSON e nome con spazi vengono tollerati", async () => {
+    const r = await call(rwToken, "tools_run_read", { name: " pages_list ", args: JSON.stringify({ site_id: site.id }) });
+    assert.notEqual(r.body.result.isError, true, JSON.stringify(r.body));
+    const bad = await call(rwToken, "tools_run_read", { name: "pages_list", args: "{not json" });
+    assert.equal(bad.body.result.isError, true);
+    assert.match(bad.body.result.content[0].text, /JSON object/);
+  });
+
+  test("chiavi sconosciute negli args non arrivano alla route (niente mass-assignment)", async () => {
+    const r = await call(rwToken, "tools_run", { name: "pages_create", args: { site_id: site.id, url_path: "/mcp-strip", title: "strip", published: true, extra: { post_type: "article" }, bogus_field: 1 } });
+    assert.notEqual(r.body.result.isError, true, JSON.stringify(r.body));
+    const created = JSON.parse(r.body.result.content[0].text);
+    const page = created.page || created;
+    assert.notEqual(page.post_type, "article");
+  });
+
+  test("404 legittimo: nessun hint fuorviante verso tools_describe", async () => {
+    const r = await call(rwToken, "pages_delete", { site_id: site.id, page_id: 99999999 });
+    assert.equal(r.body.result.isError, true);
+    assert.doesNotMatch(r.body.result.content[0].text, /tools_describe/);
+  });
+
   test("categoria sconosciuta: elenca le categorie valide", async () => {
     const r = await call(rwToken, "tools_in_category", { category: "nope" });
     assert.equal(r.body.result.isError, true);

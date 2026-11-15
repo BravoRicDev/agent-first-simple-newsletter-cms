@@ -2033,14 +2033,15 @@ export function discoverTools(lang = "en") {
       });
     }
   }
-  const names = new Map();
+  const used = new Set();
   for (const tool of tools) {
-    const count = (names.get(tool.name) || 0) + 1;
-    names.set(tool.name, count);
-    if (count > 1) {
-      logger.error(`MCP duplicate tool name ${tool.name}; renaming duplicate #${count}`);
-      tool.name = `${tool.name}_${count}`;
+    if (used.has(tool.name)) {
+      let n = 2;
+      while (used.has(`${tool.name}_${n}`) || tools.some((x) => x !== tool && x.name === `${tool.name}_${n}`)) n++;
+      logger.error(`MCP duplicate tool name ${tool.name}; renaming to ${tool.name}_${n}`);
+      tool.name = `${tool.name}_${n}`;
     }
+    used.add(tool.name);
   }
   return tools;
 }

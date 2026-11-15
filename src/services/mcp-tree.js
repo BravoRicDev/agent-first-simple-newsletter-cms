@@ -17,7 +17,7 @@ export const AREAS = [
   { id: "content", en: "Content & site", it: "Contenuti e sito", categories: [
     "pages", "categories", "blog_settings", "homepage_sections", "snippets", "variables", "templates", "media",
     "redirects", "seo", "sitemap", "sites", "new_path", "deprecated_path", "validate_path", "rewrite",
-    "export_static", "export_static_all", "deploy", "forms", "tracking", "tracked_links", "social_posts", "settings", "modules", "quizzes",
+    "root", "export_static", "export_static_all", "deploy", "forms", "tracking", "tracked_links", "social_posts", "settings", "modules", "quizzes",
   ] },
   { id: "newsletter", en: "Newsletter & email", it: "Newsletter ed email", categories: [
     "newsletter", "email_templates", "email_stats", "reply_suggestions",
@@ -112,20 +112,31 @@ function invalidArgsResult(name, issues) {
 function addHint(result, name) {
   if (!result?.isError) return result;
   const first = result.content?.[0];
-  if (first?.type === "text" && /"(error|message)"/.test(first.text || "") && !/tools_describe/.test(first.text)) {
+  // Hint solo per errori che sembrano di parametri (non per un 404 legittimo).
+  if (first?.type === "text" && /"(error|message)"/.test(first.text || "") && /invalid|required|missing|obbligator|non valid|mancant|validation/i.test(first.text) && !/tools_describe/.test(first.text)) {
     return { ...result, content: [{ type: "text", text: `${first.text} (If unsure about the parameters, call tools_describe {"name":"${name}"}.)` }, ...result.content.slice(1)] };
   }
   return result;
 }
 
 // Esegue un tool del catalogo per nome: validazione args + proxy interno.
-export async function executeTool(catalog, name, args, extra, { readOnlyOnly = false } = {}) {
+export async function executeTool(catalog, rawName, rawArgs, extra, { readOnlyOnly = false } = {}) {
+  const name = String(rawName ?? "").trim();
+  let args = rawArgs;
+  // Molti LLM passano args come stringa JSON invece che come oggetto.
+  if (typeof args === "string") {
+    try { args = JSON.parse(args); } catch { return textResult(`"args" must be a JSON object, got an unparseable string. Call tools_describe {"name":"${name}"} to see the expected input schema.`, true); }
+  }
+  if (args === undefined || args === null) args = {};
+  if (typeof args !== "object" || Array.isArray(args)) {
+    return textResult(`"args" must be a JSON object. Call tools_describe {"name":"${name}"} to see the expected input schema.`, true);
+  }
   const tool = catalog.byName.get(name);
   if (!tool) return unknownToolResult(catalog, name);
   if (readOnlyOnly && !tool.readOnly) {
     return textResult(`Tool "${name}" is not read-only (${tool.method}). Use tools_run instead of tools_run_read.`, true);
   }
-  const parsed = z.object(tool.inputSchema).passthrough().safeParse(args && typeof args === "object" ? args : {});
+  const parsed = z.object(tool.inputSchema).safeParse(args);
   if (!parsed.success) return invalidArgsResult(name, parsed.error.issues);
   return addHint(await makeToolHandler(tool)(parsed.data, extra), name);
 }
@@ -136,8 +147,10 @@ export function annotationsFor(tool) {
   return { readOnlyHint: false, destructiveHint: false };
 }
 
+const schemaCache = new WeakMap();
 export function schemaOf(tool) {
-  return zodToJsonSchema(z.object(tool.inputSchema), { target: "jsonSchema7", $refStrategy: "none" });
+  if (!schemaCache.has(tool)) schemaCache.set(tool, zodToJsonSchema(z.object(tool.inputSchema), { target: "jsonSchema7", $refStrategy: "none" }));
+  return schemaCache.get(tool);
 }
 
 const GUIDE = [
@@ -193,7 +206,7 @@ export async function handleNavigation(catalog, lang, name, args, extra) {
       });
     }
     case "tools_describe": {
-      const tool = catalog.byName.get(String(a.name || ""));
+      const tool = catalog.byName.get(String(a.name || "").trim());
       if (!tool) return unknownToolResult(catalog, a.name);
       return textResult({
         name: tool.name, method: tool.method, path: tool.path, area: tool.area, category: tool.category, read_only: tool.readOnly,
