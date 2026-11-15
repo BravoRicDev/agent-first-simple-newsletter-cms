@@ -12,7 +12,7 @@
     <label><%= t('editorial.title') %></label>
     <select name="status">
       <% statuses.forEach(s => { %>
-        <option value="<%= s %>" <%= query && query.status === s ? 'selected' : '' %>><%= t('editorial.status.' + s) %></option>
+        <option value="<%= s %>" <%= status === s ? 'selected' : '' %>><%= t('editorial.status.' + s) %></option>
       <% }) %>
     </select>
   </div>
